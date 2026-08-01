@@ -23,6 +23,29 @@ from .rng import key64, pick, weighted, zipf_cum
 _COMPLETE = ("ов", "ев", "ин", "ый", "ий", "ко", "ых", "их", "ов", "ёв")
 
 
+#: Мягкие и шипящие окончания основы: после них идёт «-ев», а не «-ов».
+#: «ц» сюда не входит: Кузнецов, Скворцов, Стрельцов — все на «-ов».
+_SOFT = ("ь", "й", "ч", "ш", "щ", "ж", "е", "и", "я")
+
+
+def _suffix_fits(root: str, suffix: str) -> bool:
+    """Сочетается ли суффикс с основой.
+
+    Без этого правила выходят «Иванев» и «Кириллко»: комбинаторика даёт объём
+    словаря, но морфология решает, какие сочетания вообще бывают. Для корпуса,
+    где имена читает и цитирует агент, неправдоподобная фамилия — такой же
+    дефект, как неправдоподобное число.
+    """
+    soft = root.endswith(_SOFT)
+    if suffix == "ев":
+        return soft
+    if suffix == "ов":
+        return not soft
+    if suffix in ("ко", "енко"):
+        return not soft and len(root) > 4
+    return True
+
+
 def _feminine(surname: str) -> str:
     """Женская форма фамилии."""
     if surname.endswith(("ский", "цкий", "ской")):
@@ -44,7 +67,8 @@ def build_surnames() -> list[tuple[str, str]]:
     seen: set[str] = set()
     for root in dicts.SURNAME_ROOTS:
         forms = [root] if root.endswith(_COMPLETE) else [
-            root + suffix for suffix, _ in dicts.SURNAME_SUFFIXES]
+            root + suffix for suffix, _ in dicts.SURNAME_SUFFIXES
+            if _suffix_fits(root, suffix)]
         for masculine in forms:
             if masculine in seen:
                 continue
