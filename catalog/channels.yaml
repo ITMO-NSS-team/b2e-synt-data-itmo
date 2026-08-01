@@ -1,0 +1,31 @@
+# Курируемое дополнение к снимку каталога: то, чего нет в OpenAPI.
+#
+# ТРЕБУЕТ ПОДТВЕРЖДЕНИЯ КОМАНДОЙ СЕРВИСА. Пока не подтверждено, значения ниже —
+# рабочее допущение, и линтер помечает опору на них как INFO, а не как факт.
+
+# Видимость модели в канале. Канал v2 видит всё, поэтому здесь его нет.
+#
+# v1 — замороженный снимок. Приём getting_started (живой корпус) утверждает, что
+# «схема dm_core содержит две основные модели», и перечисляет ровно эти две.
+v1:
+  - dm_core.employee_actual
+  - dm_core.employee_hist
+
+# orion — список ORION_MODELS. Восстановлен по именам моделей.
+orion:
+  - dm_core.employee_actual_orion
+  - anagent.employee_actual_orion_dep
+
+# Физическое имя таблицы: lineage «рецепт → витрина → владелец данных».
+# Известно из эталонных рецептов живого корпуса.
+tables:
+  dm_core.employee_actual: dm_core.staff_employee_digital_profile_actual_dm
+  dm_core.employee_education: dm_core.staff_employee_digital_profile_actual_dm
+  dm_core.employee_oshs: dm_core.staff_employee_digital_profile_actual_dm
+
+# Ширина окна истории. 5 лет — из текста приёма history.
+default_lookback_years:
+  dm_core.employee: 5
+  dm_core.employee_hist: 5
+  dm_core.candidate_hist: 5
+  anagent.employee_hist_dep: 5

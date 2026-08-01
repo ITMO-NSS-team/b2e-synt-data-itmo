@@ -1,0 +1,193 @@
+# Определения метрик каталога.
+#
+# ЗАЧЕМ ЭТОТ ФАЙЛ. Спека OpenAPI перечисляет все 148 метрик по именам и даёт им
+# русские описания, но НЕ даёт определений: у каждой метрики тип указан как
+# «(String)» — это заглушка генератора спеки, а не настоящий тип, и агрегата в
+# спеке нет вовсе. Значит определение либо выписывается руками, либо выводится
+# по имени. Здесь выписаны руками те витрины, на которых работают скиллы;
+# остальное резолвер выводит по суффиксу имени и помечает `approximate: true`.
+# Правило линтера, опирающееся на приблизительную метрику, не может блокировать.
+#
+# ТРЕБУЕТ ПОДТВЕРЖДЕНИЯ КОМАНДОЙ СЕРВИСА. Определения восстановлены по русским
+# описаниям метрик и по составу колонок витрины.
+#
+# ФОРМА ЗАПИСИ
+#   agg:    count | count_distinct | sum | min | max | avg | ratio
+#   column: колонка-аргумент (для sum/min/max/avg/count_distinct)
+#   where:  предикат отбора строк:
+#             {column, equals: <литерал>}     — равенство
+#             {column, in: [<литерал>, …]}    — вхождение
+#             {column, not_null: true}        — значение задано
+#             {column, in_range: [<имя_параметра_от>, <имя_параметра_до>]}
+#                                             — окно [from, to) по значениям args
+#   numerator / denominator: вложенные определения (для agg: ratio)
+#
+# ЗАМЕЧАНИЕ ПРО ИЕРАРХИИ. Метрики вида oshs_*/agile_*/fg_*/fos_* различаются не
+# предикатом на строке, а тем, по какой оргструктуре ведётся обход дерева. На
+# плоской выборке этой разницы нет, поэтому определения совпадают. Так и должно
+# быть: расхождение появляется только вместе с параметром подразделения, а он
+# есть только у параметрической oshs_indicator_count.
+
+models:
+
+  # ─────────────────────────────────────────────── dm_core.employee_actual (30)
+  dm_core.employee_actual:
+    fact_count:      {agg: count, where: {column: fact_flag, equals: 1}}
+    oshs_fact_count:  {agg: count, where: {column: fact_flag, equals: 1}}
+    agile_fact_count: {agg: count, where: {column: fact_flag, equals: 1}}
+    fg_fact_count:    {agg: count, where: {column: fact_flag, equals: 1}}
+    fos_fact_count:   {agg: count, where: {column: fact_flag, equals: 1}}
+
+    # Форма работы различает штатных, совместителей и заштатных.
+    oshs_ext_emp_count:  {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    agile_ext_emp_count: {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    fg_ext_emp_count:    {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    fos_ext_emp_count:   {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    oshs_int_emp_count:  {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    agile_int_emp_count: {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    fg_int_emp_count:    {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    fos_int_emp_count:   {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    oshs_outstaff_count:  {agg: count, where: {column: form_work, equals: За штатом}}
+    agile_outstaff_count: {agg: count, where: {column: form_work, equals: За штатом}}
+    fg_outstaff_count:    {agg: count, where: {column: form_work, equals: За штатом}}
+    fos_outstaff_count:   {agg: count, where: {column: form_work, equals: За штатом}}
+
+    # Движение персонала без периода: на актуальном срезе это состояние, а не
+    # событие. Уволенные видны по статусу, принятые — по заполненной дате приёма.
+    fired_count:            {agg: count, where: {column: employee_status, equals: уволен}}
+    flag_fired_staff_count: {agg: count, where: {column: employee_status, equals: уволен}}
+    flag_fired_count:       {agg: count, where: {column: employee_status, equals: уволен}}
+    hired_count:            {agg: count, where: {column: last_hire_date, not_null: true}}
+    transfer_count:         {agg: count, where: {column: position_start_date, not_null: true}}
+
+    child_age_max: {agg: max, column: children_qty}
+    child_age_min: {agg: min, column: children_qty}
+
+    # Параметрические: окно берётся из args вызова param_metrics.
+    oshs_indicator_count:  {agg: count, where: {column: fact_flag, equals: 1}}
+    hired_count_on_period: {agg: count,
+                            where: {column: last_hire_date, in_range: [date_from, date_to]}}
+    fired_count_on_period: {agg: count,
+                            where: {column: last_fired_date, in_range: [date_from, date_to]}}
+    flag_fired_staff_count_on_period: {agg: count,
+                            where: {column: last_fired_date, in_range: [date_from, date_to]}}
+    flag_fired_on_period:  {agg: count,
+                            where: {column: last_fired_date, in_range: [date_from, date_to]}}
+    transfer_count_on_period: {agg: count,
+                            where: {column: position_start_date, in_range: [date_from, date_to]}}
+
+  # ──────────────────────────────────── dm_core.employee / employee_hist (18×2)
+  # Историческая пара: headcount — все в актуальном состоянии на дату среза,
+  # fact_count — только фактическая численность.
+  dm_core.employee_hist: &employee_hist_metrics
+    headcount:  {agg: count_distinct, column: person_id}
+    fact_count: {agg: count, where: {column: fact_flag, equals: 1}}
+    oshs_fact_count:  {agg: count, where: {column: fact_flag, equals: 1}}
+    agile_fact_count: {agg: count, where: {column: fact_flag, equals: 1}}
+    fg_fact_count:    {agg: count, where: {column: fact_flag, equals: 1}}
+    fos_fact_count:   {agg: count, where: {column: fact_flag, equals: 1}}
+    oshs_ext_emp_count:  {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    agile_ext_emp_count: {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    fg_ext_emp_count:    {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    fos_ext_emp_count:   {agg: count, where: {column: form_work, equals: Внешнее совместительство}}
+    oshs_int_emp_count:  {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    agile_int_emp_count: {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    fg_int_emp_count:    {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    fos_int_emp_count:   {agg: count, where: {column: form_work, equals: Внутреннее совместительство}}
+    oshs_outstaff_count:  {agg: count, where: {column: form_work, equals: За штатом}}
+    agile_outstaff_count: {agg: count, where: {column: form_work, equals: За штатом}}
+    fg_outstaff_count:    {agg: count, where: {column: form_work, equals: За штатом}}
+    fos_outstaff_count:   {agg: count, where: {column: form_work, equals: За штатом}}
+
+  dm_core.employee: *employee_hist_metrics
+
+  # ──────────────────────────────────────────── dm_core.position_actual (9)
+  # vacancy и position_free — Float32-коэффициенты (доля ставки), поэтому
+  # считаются суммой, а не количеством строк. Это ровно та деталь, которую
+  # нельзя угадать по имени метрики: cnt_* выглядит как count.
+  dm_core.position_actual:
+    cnt_pos:      {agg: count}
+    cnt_pos_free: {agg: sum, column: position_free}
+    cnt_vacancy:  {agg: sum, column: vacancy}
+    cnt_clear_vacancy: {agg: count, where: {column: vacancy_clear_flag, equals: 1}}
+    cnt_decr_vacancy:  {agg: count, where: {column: vacancy_decr_flag, equals: 1}}
+    cnt_without_recruitment_vacancy:
+      {agg: count, where: {column: vacancy_without_recruitment_flag, equals: 1}}
+    cnt_with_recruitment_vacancy:
+      {agg: count, where: {column: vacancy_without_recruitment_flag, equals: 0}}
+    staffing:
+      agg: ratio
+      numerator:   {agg: count, where: {column: vacancy_clear_flag, equals: 0}}
+      denominator: {agg: count}
+    staffing_with_recruitment_application:
+      agg: ratio
+      numerator:   {agg: count, where: {column: vacancy_without_recruitment_flag, equals: 0}}
+      denominator: {agg: count}
+
+  # ─────────────────────────────────────────── dm_core.employee_education (3)
+  dm_core.employee_education:
+    assignments_count: {agg: count}
+    employees_count:   {agg: count_distinct, column: person_id}
+    earliest_deadline: {agg: min, column: item_deadline_dt}
+
+  dm_core.employee_oshs:
+    unit_rows: {agg: count}
+
+  dm_core.org_structure:
+    unit_count: {agg: count_distinct, column: unit_id}
+
+  dm_core.evolution_item:
+    item_count: {agg: count}
+    avg_score:  {agg: avg, column: score}
+    avg_nps:    {agg: avg, column: nps}
+    avg_csi:    {agg: avg, column: csi}
+
+  dm_core.candidate_actual:
+    candidate_count: {agg: count}
+
+  dm_core.candidate_hist:
+    candidate_count: {agg: count}
+
+  dm_core.recruitment_actual:
+    requisition_count: {agg: count_distinct, column: requisition_id}
+    # Открытая заявка — та, у которой не проставлена дата закрытия.
+    open_requisition_count:
+      {agg: count, where: {column: requisition_close_date, is_null: true}}
+
+  # ───────────────────────────────── dm_special.employee_competence_actual (9)
+  # Групповой балл — среднее по одноимённой колонке-компоненте. Обрати внимание
+  # на `life_intelligenc` без «e» на конце: это опечатка витрины, а не наша.
+  dm_special.employee_competence_actual:
+    personality_traits_group_avg: {agg: avg, column: personality_traits_group_score}
+    cognitive_features_group_avg: {agg: avg, column: cognitive_features_group_score}
+    motivation_group_avg:         {agg: avg, column: extrinsic_motivation}
+    soft_skills_competency_avg:   {agg: avg, column: soft_skills_competency_score}
+    management_competency_avg:    {agg: avg, column: management_competency_score}
+    wide_context_avg:             {agg: avg, column: wide_context}
+    influence_scale_avg:          {agg: avg, column: influence_scale}
+    reflection_avg:               {agg: avg, column: reflection}
+    life_intelligence_avg:        {agg: avg, column: life_intelligenc}
+
+  dm_special.talent_radar_people:
+    people_count: {agg: count}
+
+  dm_special.churn_model_metrics:
+    employee_count: {agg: count_distinct, column: person_id}
+
+  dm_special.competence_digital_trail:
+    employee_count: {agg: count_distinct, column: person_id}
+
+  dm_special.staff_employee_digital_profile_top_600:
+    employee_count: {agg: count_distinct, column: person_id}
+
+  dm_special.top_600_stats:
+    employee_count:        {agg: count_distinct, column: person_id}
+    # Витрина несёт четыре вектора; наличие эмбеддингов видно по has_skills.
+    with_embeddings:       {agg: count, where: {column: has_skills, equals: 1}}
+    avg_grade:             {agg: avg, column: grade_level}
+    avg_motivation:        {agg: avg, column: motivation_score}
+    avg_management_skills: {agg: avg, column: management_score}
+
+  stable.agentic_skill_level:
+    employee_count:        {agg: count_distinct, column: tn}
+    avg_ai_code_flow_curr: {agg: avg, column: ai_code_flow_curr}

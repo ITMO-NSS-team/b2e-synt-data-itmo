@@ -1,0 +1,66 @@
+# Аргументы параметрических членов каталога.
+#
+# Спека OpenAPI размечает САМИ параметрические члены (секции «Виртуальные колонки
+# с параметрами» и «Доступные параметризованные метрики»), но не их аргументы:
+# поле `parameters` есть только в ответе describe_model. Здесь — то, что удалось
+# восстановить из живого корпуса рецептов и приёмов.
+#
+# ТРЕБУЕТ ПОДТВЕРЖДЕНИЯ КОМАНДОЙ СЕРВИСА. Члены без записи ниже попадают в
+# снимок с пустым parameters; линтер про них говорит «аргументы неизвестны,
+# уточни через describe_model», а не выдумывает их.
+
+members:
+  dm_special.talent_radar_people:
+    distance:
+      - name: query_vector
+        type: Array(Float)
+        description: >-
+          Вектор запроса для cosineDistance. Размерность должна совпадать с
+          размерностью embedding витрины, иначе ClickHouse падает на исполнении.
+
+  anagent.oss_ebase_embs:
+    distance:
+      - name: query_vector
+        type: Array(Float)
+        description: Вектор запроса для cosineDistance.
+
+  dm_core.employee_actual:
+    oshs_indicator_count:
+      - name: unit_id
+        type: UInt64
+        description: Идентификатор подразделения ОШС, поддерево которого считается.
+    hired_count_on_period:
+      - name: date_from
+        type: Date
+        description: Начало периода (YYYY-MM-DD).
+      - name: date_to
+        type: Date
+        description: Конец периода, не включительно (YYYY-MM-DD).
+    fired_count_on_period:
+      - name: date_from
+        type: Date
+        description: Начало периода (YYYY-MM-DD).
+      - name: date_to
+        type: Date
+        description: Конец периода, не включительно (YYYY-MM-DD).
+    flag_fired_staff_count_on_period:
+      - name: date_from
+        type: Date
+        description: Начало периода (YYYY-MM-DD).
+      - name: date_to
+        type: Date
+        description: Конец периода, не включительно (YYYY-MM-DD).
+    flag_fired_on_period:
+      - name: date_from
+        type: Date
+        description: Начало периода (YYYY-MM-DD).
+      - name: date_to
+        type: Date
+        description: Конец периода, не включительно (YYYY-MM-DD).
+    transfer_count_on_period:
+      - name: date_from
+        type: Date
+        description: Начало периода (YYYY-MM-DD).
+      - name: date_to
+        type: Date
+        description: Конец периода, не включительно (YYYY-MM-DD).
