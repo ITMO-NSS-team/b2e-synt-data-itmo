@@ -1,0 +1,1818 @@
+{
+ "tag": "MCP Recruitment",
+ "count": 115,
+ "envelope": {
+  "success": {
+   "result": "<payload>",
+   "error": null
+  },
+  "error": {
+   "result": null,
+   "error": {
+    "code": "int|str",
+    "message": "str",
+    "data": "any"
+   }
+  }
+ },
+ "operations": [
+  {
+   "operation_id": "get_agents_requirements",
+   "method": "GET",
+   "path": "/recruitment/api/v1/agents-requirements/",
+   "summary": "Требования к агентам по сущности",
+   "parameters": [
+    {
+     "name": "entity_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "entity_type",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "create_agents_requirements",
+   "method": "POST",
+   "path": "/recruitment/api/v1/agents-requirements/",
+   "summary": "Создать требования к агентам",
+   "parameters": [],
+   "body_schema": "CreateAgentsRequirementsRequest",
+   "body_required": [
+    "entity_id",
+    "agents_requirements"
+   ]
+  },
+  {
+   "operation_id": "update_agents_requirements",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/agents-requirements/",
+   "summary": "Обновить требования к агентам",
+   "parameters": [],
+   "body_schema": "UpdateAgentsRequirementsRequest",
+   "body_required": [
+    "entity_id",
+    "agents_requirements"
+   ]
+  },
+  {
+   "operation_id": "get_ai_candidate_profile",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/ai-candidate-profile/",
+   "summary": "AI-профиль кандидата по отклику",
+   "parameters": [
+    {
+     "name": "application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "apply_existing_candidate",
+   "method": "POST",
+   "path": "/recruitment/api/v1/applications/apply-existing-candidate/",
+   "summary": "Добавить существующего кандидата на вакансию",
+   "parameters": [],
+   "body_schema": "ApplyExistingCandidateRequest",
+   "body_required": [
+    "candidate_id",
+    "job_requisition_id",
+    "source_detail",
+    "reference_job_application_id"
+   ]
+  },
+  {
+   "operation_id": "apply_internal_candidate",
+   "method": "POST",
+   "path": "/recruitment/api/v1/applications/apply-internal-candidate/",
+   "summary": "Отклик внутреннего кандидата из поиска талантов",
+   "parameters": [],
+   "body_schema": "ApplyInternalCandidateRequest",
+   "body_required": [
+    "job_requisition_id",
+    "candidate_person_id"
+   ]
+  },
+  {
+   "operation_id": "apply_new_candidate",
+   "method": "POST",
+   "path": "/recruitment/api/v1/applications/apply-new-candidate/",
+   "summary": "Добавить нового кандидата на вакансию",
+   "parameters": [],
+   "body_schema": "ApplyNewCandidateRequest",
+   "body_required": [
+    "job_requisition_id",
+    "candidate"
+   ]
+  },
+  {
+   "operation_id": "get_bot_history",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/bot-history/",
+   "summary": "История бота по отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_candidate_by_application",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/candidate/",
+   "summary": "Кандидат по отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_interview_by_application",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/interview/",
+   "summary": "Интервью по отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_sberchat_bot_history",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/sberchat-bot-history/",
+   "summary": "История Сберчат-бота по отклику",
+   "parameters": [
+    {
+     "name": "application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_screening_data",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/screening/",
+   "summary": "Данные AI-скрининга по отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_enriched_screening_data",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/screening/enriched/",
+   "summary": "Обогащённый AI-скрининг по отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "send_security_form",
+   "method": "POST",
+   "path": "/recruitment/api/v1/applications/security-form/send/",
+   "summary": "Отправить анкету СБ кандидату",
+   "parameters": [],
+   "body_schema": "SendSecurityFormRequest",
+   "body_required": [
+    "job_application_id"
+   ]
+  },
+  {
+   "operation_id": "get_security_form_status",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/security-form/status/",
+   "summary": "Статус анкеты СБ по отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_applications_short_info",
+   "method": "POST",
+   "path": "/recruitment/api/v1/applications/short-info/",
+   "summary": "Краткая информация по откликам",
+   "parameters": [],
+   "body_schema": "GetApplicationsShortInfoRequest",
+   "body_required": [
+    "application_ids"
+   ]
+  },
+  {
+   "operation_id": "get_application_status_history",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/status-history/",
+   "summary": "История статусов отклика",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_application_status",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/status/",
+   "summary": "Текущий статус и модель отклика",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_application_surveys",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/surveys/",
+   "summary": "Опросы отклика",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "assign_test_to_application",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/applications/test-assignment/",
+   "summary": "Назначить тест отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "test_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "reassign_test_to_application",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/applications/test-reassignment/",
+   "summary": "Переназначить тест отклику",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "test_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_application_tests",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/tests/",
+   "summary": "Тесты отклика",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "set_application_tests",
+   "method": "POST",
+   "path": "/recruitment/api/v1/applications/tests/",
+   "summary": "Назначить тесты отклику",
+   "parameters": [],
+   "body_schema": "SetApplicationTestsRequest",
+   "body_required": [
+    "job_application_id",
+    "tests"
+   ]
+  },
+  {
+   "operation_id": "refresh_application_completed_tests",
+   "method": "PATCH",
+   "path": "/recruitment/api/v1/applications/tests/completed-at/",
+   "summary": "Обновить отметки завершения тестов отклика",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_top_candidate_profile",
+   "method": "GET",
+   "path": "/recruitment/api/v1/applications/top-candidate-profile/",
+   "summary": "Топ-профиль кандидата по отклику",
+   "parameters": [
+    {
+     "name": "application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "transit_application",
+   "method": "POST",
+   "path": "/recruitment/api/v1/applications/transit/",
+   "summary": "Перевести отклик по воронке",
+   "parameters": [],
+   "body_schema": "TransitApplicationRequest",
+   "body_required": [
+    "job_application_id",
+    "event"
+   ]
+  },
+  {
+   "operation_id": "get_assignment_info",
+   "method": "POST",
+   "path": "/recruitment/api/v1/assignments/info/",
+   "summary": "Сведения о назначениях",
+   "parameters": [],
+   "body_schema": "GetAssignmentInfoRequest",
+   "body_required": [
+    "assignment_group_ids"
+   ]
+  },
+  {
+   "operation_id": "get_assignment_summary",
+   "method": "POST",
+   "path": "/recruitment/api/v1/assignments/summary/",
+   "summary": "Сводка по назначениям",
+   "parameters": [],
+   "body_schema": "GetAssignmentSummaryRequest",
+   "body_required": [
+    "assignment_group_ids"
+   ]
+  },
+  {
+   "operation_id": "get_candidate_additional_info",
+   "method": "POST",
+   "path": "/recruitment/api/v1/candidates/additional-info/",
+   "summary": "Доп. информация по кандидатам",
+   "parameters": [],
+   "body_schema": "GetCandidateAdditionalInfoRequest",
+   "body_required": [
+    "person_ids"
+   ]
+  },
+  {
+   "operation_id": "get_candidate_applications",
+   "method": "GET",
+   "path": "/recruitment/api/v1/candidates/applications/",
+   "summary": "Отклики кандидата",
+   "parameters": [
+    {
+     "name": "candidate_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_candidate_completed_surveys",
+   "method": "GET",
+   "path": "/recruitment/api/v1/candidates/completed-surveys/",
+   "summary": "Завершённые опросы кандидата",
+   "parameters": [
+    {
+     "name": "candidate_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "on_application",
+     "in": "query",
+     "required": false,
+     "type": "boolean"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_candidate_completed_tests",
+   "method": "GET",
+   "path": "/recruitment/api/v1/candidates/completed-tests/",
+   "summary": "Завершённые тесты кандидата",
+   "parameters": [
+    {
+     "name": "candidate_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_sberq_assessment",
+   "method": "GET",
+   "path": "/recruitment/api/v1/candidates/sberq-assessment/",
+   "summary": "Оценка СберQ кандидата",
+   "parameters": [
+    {
+     "name": "candidate_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "search_candidates",
+   "method": "GET",
+   "path": "/recruitment/api/v1/candidates/search/",
+   "summary": "Поиск кандидатов по ФИО",
+   "parameters": [
+    {
+     "name": "query",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "offset",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_subordinate_departments",
+   "method": "GET",
+   "path": "/recruitment/api/v1/departments/",
+   "summary": "Вложенные подразделения",
+   "parameters": [
+    {
+     "name": "parent_department_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_companies",
+   "method": "GET",
+   "path": "/recruitment/api/v1/dictionaries/companies/",
+   "summary": "Справочник компаний",
+   "parameters": [
+    {
+     "name": "search",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_status_transition_reasons",
+   "method": "GET",
+   "path": "/recruitment/api/v1/dictionaries/status-transition-reasons/",
+   "summary": "Причины смены статуса заявки",
+   "parameters": [
+    {
+     "name": "search",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_divisions",
+   "method": "GET",
+   "path": "/recruitment/api/v1/divisions/",
+   "summary": "Подразделения руководителя",
+   "parameters": [],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_funnel_decline_reasons",
+   "method": "GET",
+   "path": "/recruitment/api/v1/funnels/decline-reasons/",
+   "summary": "Причины отклонения отклика",
+   "parameters": [
+    {
+     "name": "funnel_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_funnel_statuses",
+   "method": "GET",
+   "path": "/recruitment/api/v1/funnels/statuses/",
+   "summary": "Статусная модель воронки",
+   "parameters": [
+    {
+     "name": "funnel_code",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "funnel_version",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_guide",
+   "method": "GET",
+   "path": "/recruitment/api/v1/guide/",
+   "summary": "Раздел гайда по каналу подбора",
+   "parameters": [
+    {
+     "name": "section",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "create_interview",
+   "method": "POST",
+   "path": "/recruitment/api/v1/interviews/",
+   "summary": "Создать интервью",
+   "parameters": [],
+   "body_schema": "CreateInterviewRequest",
+   "body_required": [
+    "job_application_id",
+    "title",
+    "start_time",
+    "end_time",
+    "place",
+    "place_type",
+    "notification_interval",
+    "participants"
+   ]
+  },
+  {
+   "operation_id": "get_completed_interview_surveys",
+   "method": "GET",
+   "path": "/recruitment/api/v1/interviews/completed-surveys/",
+   "summary": "Завершённые опросы интервью",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_interview_notification_intervals",
+   "method": "GET",
+   "path": "/recruitment/api/v1/interviews/notification-intervals/",
+   "summary": "Интервалы напоминаний об интервью",
+   "parameters": [],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_interview_participants",
+   "method": "POST",
+   "path": "/recruitment/api/v1/interviews/participants/",
+   "summary": "Участники интервью",
+   "parameters": [],
+   "body_schema": "GetInterviewParticipantsRequest",
+   "body_required": [
+    "interview_ids"
+   ]
+  },
+  {
+   "operation_id": "get_interview_rate_info",
+   "method": "POST",
+   "path": "/recruitment/api/v1/interviews/rate-info/",
+   "summary": "Оценки интервью",
+   "parameters": [],
+   "body_schema": "GetInterviewRateInfoRequest",
+   "body_required": [
+    "interview_ids"
+   ]
+  },
+  {
+   "operation_id": "get_interview_survey",
+   "method": "GET",
+   "path": "/recruitment/api/v1/interviews/survey/",
+   "summary": "Опрос интервью",
+   "parameters": [
+    {
+     "name": "interview_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_interview_time_slots",
+   "method": "POST",
+   "path": "/recruitment/api/v1/interviews/time-slots/",
+   "summary": "Слоты занятости участников интервью",
+   "parameters": [],
+   "body_schema": "GetInterviewTimeSlotsRequest",
+   "body_required": [
+    "start",
+    "end",
+    "person_ids"
+   ]
+  },
+  {
+   "operation_id": "search_persons",
+   "method": "GET",
+   "path": "/recruitment/api/v1/persons/search/",
+   "summary": "Поиск сотрудников по ФИО/телефону/почте",
+   "parameters": [
+    {
+     "name": "query",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "page",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "name": "size",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_position_details",
+   "method": "GET",
+   "path": "/recruitment/api/v1/position-data/",
+   "summary": "Детали штатной должности",
+   "parameters": [
+    {
+     "name": "position_number",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_positions",
+   "method": "GET",
+   "path": "/recruitment/api/v1/positions/",
+   "summary": "Штатные должности",
+   "parameters": [
+    {
+     "name": "division_or_functional_group_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "archive_publication",
+   "method": "DELETE",
+   "path": "/recruitment/api/v1/publications/",
+   "summary": "Архивировать публикацию",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "create_publication",
+   "method": "POST",
+   "path": "/recruitment/api/v1/publications/",
+   "summary": "Создать публикацию",
+   "parameters": [],
+   "body_schema": "CreatePublicationRequest",
+   "body_required": [
+    "requisition_id",
+    "destination_id",
+    "content"
+   ]
+  },
+  {
+   "operation_id": "update_publication",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/publications/",
+   "summary": "Обновить публикацию",
+   "parameters": [],
+   "body_schema": "UpdatePublicationRequest",
+   "body_required": [
+    "publication_id",
+    "content"
+   ]
+  },
+  {
+   "operation_id": "get_publication_destinations",
+   "method": "GET",
+   "path": "/recruitment/api/v1/publications/destinations/",
+   "summary": "Каналы публикации",
+   "parameters": [
+    {
+     "name": "requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "requisition_model",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "company",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_publication_dictionaries",
+   "method": "GET",
+   "path": "/recruitment/api/v1/publications/dictionaries/",
+   "summary": "Справочники публикации",
+   "parameters": [
+    {
+     "name": "company",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "name": "dictionary",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "list_publications",
+   "method": "POST",
+   "path": "/recruitment/api/v1/publications/filter/",
+   "summary": "Список публикаций",
+   "parameters": [],
+   "body_schema": "ListPublicationsRequest",
+   "body_required": [
+    "requisition_ids",
+    "destination_ids"
+   ]
+  },
+  {
+   "operation_id": "get_publication",
+   "method": "GET",
+   "path": "/recruitment/api/v1/publications/info/",
+   "summary": "Информация о публикации",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "cancel_publication_leadgen",
+   "method": "DELETE",
+   "path": "/recruitment/api/v1/publications/leadgen/",
+   "summary": "Отменить запланированную лидогенерацию",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "create_publication_leadgen",
+   "method": "POST",
+   "path": "/recruitment/api/v1/publications/leadgen/",
+   "summary": "Запланировать лидогенерацию",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "extended",
+     "in": "query",
+     "required": false,
+     "type": "boolean"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "disable_leadgen",
+   "method": "DELETE",
+   "path": "/recruitment/api/v1/publications/leadgen/disable/",
+   "summary": "Отключить лидогенерацию",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_preferred_contacts",
+   "method": "GET",
+   "path": "/recruitment/api/v1/publications/preferred-contacts/",
+   "summary": "Предпочитаемые контакты рекрутёра",
+   "parameters": [],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "prolongate_publication",
+   "method": "POST",
+   "path": "/recruitment/api/v1/publications/prolongate/",
+   "summary": "Пролонгировать публикацию",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "recreate_publication",
+   "method": "POST",
+   "path": "/recruitment/api/v1/publications/recreate/",
+   "summary": "Пересоздать публикацию",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "relocate_publication",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/publications/relocate/",
+   "summary": "Перенести публикацию на другую заявку",
+   "parameters": [
+    {
+     "name": "publication_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "search_locations",
+   "method": "GET",
+   "path": "/recruitment/api/v1/publications/search-locations/",
+   "summary": "Поиск локаций (FIAS) для адреса публикации",
+   "parameters": [
+    {
+     "name": "query",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "page",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "name": "page_size",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "list_recruiters",
+   "method": "GET",
+   "path": "/recruitment/api/v1/recruiters/",
+   "summary": "Список доступных рекрутёров по группам",
+   "parameters": [],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "create_job_requisition",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/",
+   "summary": "Создать заявку на подбор",
+   "parameters": [],
+   "body_schema": "CreateJobRequisitionRequest",
+   "body_required": [
+    "position_id",
+    "title",
+    "requisition_model"
+   ]
+  },
+  {
+   "operation_id": "update_job_requisition",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/requisitions/",
+   "summary": "Редактировать заявку на подбор",
+   "parameters": [],
+   "body_schema": "UpdateJobRequisitionRequest",
+   "body_required": [
+    "job_requisition_id",
+    "position_id",
+    "title",
+    "requisition_model",
+    "status"
+   ]
+  },
+  {
+   "operation_id": "list_requisition_applications",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/applications/",
+   "summary": "Отклики по заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_candidates_assessment_summary",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/assessment-summary/",
+   "summary": "Сводка оценки кандидатов по заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "assign_job_requisition_to_self",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/assign-to-self/",
+   "summary": "Взять заявку в работу",
+   "parameters": [],
+   "body_schema": "AssignJobRequisitionToSelfRequest",
+   "body_required": [
+    "job_requisition_id"
+   ]
+  },
+  {
+   "operation_id": "get_requisition_assigned_tests",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/assigned-tests/",
+   "summary": "Тесты, назначенные заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "set_requisition_assigned_tests",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/requisitions/assigned-tests/",
+   "summary": "Заменить тесты заявки",
+   "parameters": [],
+   "body_schema": "SetRequisitionAssignedTestsRequest",
+   "body_required": [
+    "job_requisition_id",
+    "tests"
+   ]
+  },
+  {
+   "operation_id": "get_requisition_brief",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/brief/",
+   "summary": "Итоговый бриф по заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "save_requisition_brief",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/brief/",
+   "summary": "Сохранить итоговый бриф по заявке",
+   "parameters": [],
+   "body_schema": "SaveRequisitionBriefRequest",
+   "body_required": [
+    "job_requisition_id",
+    "text"
+   ]
+  },
+  {
+   "operation_id": "get_requisition_business_days",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/business-days/",
+   "summary": "Дни заявки в работе",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "cancel_job_requisition",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/cancel/",
+   "summary": "Отменить заявку на подбор",
+   "parameters": [],
+   "body_schema": "CancelJobRequisitionRequest",
+   "body_required": [
+    "job_requisition_id"
+   ]
+  },
+  {
+   "operation_id": "get_candidate_sources",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/candidate-sources/",
+   "summary": "Справочник источников кандидата",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "delegate_job_requisition",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/delegate/",
+   "summary": "Делегировать заявку",
+   "parameters": [],
+   "body_schema": "DelegateJobRequisitionRequest",
+   "body_required": [
+    "job_requisition_id",
+    "delegate_id"
+   ]
+  },
+  {
+   "operation_id": "cancel_job_requisition_delegation",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/delegate/cancel/",
+   "summary": "Снять делегата с заявки",
+   "parameters": [],
+   "body_schema": "CancelJobRequisitionDelegationRequest",
+   "body_required": [
+    "job_requisition_id"
+   ]
+  },
+  {
+   "operation_id": "get_recruitment_experts",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/experts/",
+   "summary": "Эксперты на заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "page",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "name": "page_size",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "add_recruitment_experts",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/experts/",
+   "summary": "Добавить экспертов на заявку",
+   "parameters": [],
+   "body_schema": "AddRecruitmentPeopleRequest",
+   "body_required": [
+    "job_requisition_id",
+    "person_ids"
+   ]
+  },
+  {
+   "operation_id": "delete_recruitment_expert",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/experts/delete/",
+   "summary": "Убрать экспертов с заявки",
+   "parameters": [],
+   "body_schema": "AddRecruitmentPeopleRequest",
+   "body_required": [
+    "job_requisition_id",
+    "person_ids"
+   ]
+  },
+  {
+   "operation_id": "get_requisition_history",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/history/",
+   "summary": "История статусов заявки",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "hold_job_requisition",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/hold/",
+   "summary": "Поставить заявку на паузу",
+   "parameters": [],
+   "body_schema": "HoldJobRequisitionRequest",
+   "body_required": [
+    "job_requisition_id",
+    "reason_id",
+    "reason_message"
+   ]
+  },
+  {
+   "operation_id": "get_requisition",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/info/",
+   "summary": "Полная информация о заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_internal_recommendations",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/internal-recommendations/",
+   "summary": "Внутренние рекомендации на вакансию",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "list_requisitions",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/list/",
+   "summary": "Список доступных заявок на подбор",
+   "parameters": [],
+   "body_schema": "ListRequisitionsRequest",
+   "body_required": []
+  },
+  {
+   "operation_id": "get_position_vacancy_short_info",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/position/",
+   "summary": "Краткая информация о позиции заявки",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "recommend_candidate",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/recommend-candidate/",
+   "summary": "Рекомендовать кандидата на вакансию",
+   "parameters": [],
+   "body_schema": "RecommendCandidateRequest",
+   "body_required": [
+    "job_requisition_id"
+   ]
+  },
+  {
+   "operation_id": "get_recommendations",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/recommendations/",
+   "summary": "Рекомендованные кандидаты на вакансию",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_salary_from_requisition",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/salary/",
+   "summary": "Зарплатные ожидания по заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_agent_screener_requirements",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/screener-requirements/",
+   "summary": "Требования к AI-скринеру по заявке",
+   "parameters": [
+    {
+     "name": "requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_requisition_survey_assignments",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/survey-assignments/",
+   "summary": "Назначения опросов по заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "survey_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "completed",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "delete_requisition_survey",
+   "method": "DELETE",
+   "path": "/recruitment/api/v1/requisitions/survey/",
+   "summary": "Отвязать опрос от заявки",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_requisition_survey",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/survey/",
+   "summary": "Опрос, привязанный к заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "set_requisition_survey",
+   "method": "PUT",
+   "path": "/recruitment/api/v1/requisitions/survey/",
+   "summary": "Привязать опрос к заявке",
+   "parameters": [],
+   "body_schema": "SetRequisitionSurveyRequest",
+   "body_required": [
+    "job_requisition_id",
+    "survey_id"
+   ]
+  },
+  {
+   "operation_id": "get_team_representatives",
+   "method": "GET",
+   "path": "/recruitment/api/v1/requisitions/team-representatives/",
+   "summary": "Представители команды на заявке",
+   "parameters": [
+    {
+     "name": "job_requisition_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "page",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "name": "page_size",
+     "in": "query",
+     "required": false,
+     "type": "integer"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "add_team_representatives",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/team-representatives/",
+   "summary": "Добавить представителей команды на заявку",
+   "parameters": [],
+   "body_schema": "AddRecruitmentPeopleRequest",
+   "body_required": [
+    "job_requisition_id",
+    "person_ids"
+   ]
+  },
+  {
+   "operation_id": "delete_team_representative",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/team-representatives/delete/",
+   "summary": "Убрать представителей команды с заявки",
+   "parameters": [],
+   "body_schema": "AddRecruitmentPeopleRequest",
+   "body_required": [
+    "job_requisition_id",
+    "person_ids"
+   ]
+  },
+  {
+   "operation_id": "transfer_job_requisition",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/transfer/",
+   "summary": "Передать заявку рекрутеру",
+   "parameters": [],
+   "body_schema": "TransferJobRequisitionRequest",
+   "body_required": [
+    "job_requisition_id",
+    "recruiter_id"
+   ]
+  },
+  {
+   "operation_id": "unhold_job_requisition",
+   "method": "POST",
+   "path": "/recruitment/api/v1/requisitions/unhold/",
+   "summary": "Снять заявку с паузы",
+   "parameters": [],
+   "body_schema": "UnholdJobRequisitionRequest",
+   "body_required": [
+    "job_requisition_id"
+   ]
+  },
+  {
+   "operation_id": "get_start",
+   "method": "GET",
+   "path": "/recruitment/api/v1/start/",
+   "summary": "Гайд по каналу подбора",
+   "parameters": [],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "delete_filter_subscription",
+   "method": "POST",
+   "path": "/recruitment/api/v1/subscriptions/filter/delete/",
+   "summary": "Удалить фильтр подписки",
+   "parameters": [],
+   "body_schema": "DeleteFilterSubscriptionRequest",
+   "body_required": [
+    "filter_id"
+   ]
+  },
+  {
+   "operation_id": "save_filter_subscription",
+   "method": "POST",
+   "path": "/recruitment/api/v1/subscriptions/filter/save/",
+   "summary": "Сохранить фильтр подписки",
+   "parameters": [],
+   "body_schema": "SaveFilterSubscriptionRequest",
+   "body_required": [
+    "filter"
+   ]
+  },
+  {
+   "operation_id": "get_surveys",
+   "method": "GET",
+   "path": "/recruitment/api/v1/surveys/",
+   "summary": "Опросы позиции или компании",
+   "parameters": [
+    {
+     "name": "position_id",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "name": "company_id",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_survey_additional_info",
+   "method": "GET",
+   "path": "/recruitment/api/v1/surveys/additional-info/",
+   "summary": "Доп. сведения об опросе",
+   "parameters": [
+    {
+     "name": "survey_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_survey_result_link",
+   "method": "GET",
+   "path": "/recruitment/api/v1/surveys/result-link/",
+   "summary": "Ссылка на результат опроса",
+   "parameters": [
+    {
+     "name": "candidate_person_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "assignment_group_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "attach_token",
+     "in": "query",
+     "required": false,
+     "type": "boolean"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_tests",
+   "method": "GET",
+   "path": "/recruitment/api/v1/tests/",
+   "summary": "Тесты позиции или компании",
+   "parameters": [
+    {
+     "name": "position_id",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "name": "company_id",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "remove_favorite_test",
+   "method": "DELETE",
+   "path": "/recruitment/api/v1/tests/favorites/",
+   "summary": "Убрать тест из избранного",
+   "parameters": [
+    {
+     "name": "test_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "category_id",
+     "in": "query",
+     "required": false,
+     "type": "string"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "get_favorite_tests",
+   "method": "GET",
+   "path": "/recruitment/api/v1/tests/favorites/",
+   "summary": "Избранные тесты",
+   "parameters": [],
+   "body_schema": null,
+   "body_required": []
+  },
+  {
+   "operation_id": "add_favorite_test",
+   "method": "POST",
+   "path": "/recruitment/api/v1/tests/favorites/",
+   "summary": "Добавить тест в избранное",
+   "parameters": [],
+   "body_schema": "AddFavoriteTestRequest",
+   "body_required": [
+    "test_id"
+   ]
+  },
+  {
+   "operation_id": "get_test_info",
+   "method": "POST",
+   "path": "/recruitment/api/v1/tests/info/",
+   "summary": "Информация о тестах",
+   "parameters": [],
+   "body_schema": "GetTestInfoRequest",
+   "body_required": [
+    "test_ids"
+   ]
+  },
+  {
+   "operation_id": "get_test_result_link",
+   "method": "GET",
+   "path": "/recruitment/api/v1/tests/result-link/",
+   "summary": "Ссылка на результат теста",
+   "parameters": [
+    {
+     "name": "job_application_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "assignment_group_id",
+     "in": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "name": "attach_token",
+     "in": "query",
+     "required": false,
+     "type": "boolean"
+    }
+   ],
+   "body_schema": null,
+   "body_required": []
+  }
+ ]
+}

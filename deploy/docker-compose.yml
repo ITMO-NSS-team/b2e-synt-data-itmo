@@ -1,0 +1,225 @@
+# B2E simulation environment.
+#
+# Exposure rule: exactly one container publishes a host port — the reverse proxy.
+# Everything else is reachable only on the internal compose networks. See
+# docs/deployment.md for the exposed surface and why each opening exists.
+#
+# Memory limits are explicit on every service. The host has 3.8 GiB and ZERO
+# swap, so an OOM is a kill rather than a slowdown; without limits the kernel
+# picks the victim, and it picks badly.
+
+name: b2e-sim
+
+x-python-image: &python-image
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: b2e-sim/python:local
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  restart: unless-stopped
+
+networks:
+  edge:            # proxy <-> public-facing services
+  internal:        # service <-> service; no gateway to the outside
+    internal: true
+
+volumes:
+  pgdata:
+  phoenix_data:
+  registry_data:
+  spool:
+  caddy_data:
+  caddy_config:
+
+services:
+
+  # ------------------------------------------------------------------ proxy
+  proxy:
+    image: caddy:2.10-alpine
+    <<: *hardening
+    cap_add: ["NET_BIND_SERVICE"]     # the only capability granted anywhere
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:443:443"
+      - "${BIND_ADDRESS:-0.0.0.0}:80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?run `make hash-password` and set it in .env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    networks: [edge]
+    mem_limit: 96m
+    depends_on: [research-api, admin-ui, phoenix, b2e-agent]
+
+  # ------------------------------------------------------------- observability
+  postgres:
+    image: postgres:16-alpine
+    <<: *hardening
+    environment:
+      POSTGRES_USER: phoenix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: phoenix
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [internal]
+    # Tuned small on purpose: the default assumes a machine that is not this one.
+    command: >
+      postgres -c shared_buffers=96MB -c max_connections=32
+               -c effective_cache_size=256MB -c work_mem=4MB
+    mem_limit: 320m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phoenix"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  phoenix:
+    image: arizephoenix/phoenix:version-11.9.0
+    <<: *hardening
+    environment:
+      PHOENIX_SQL_DATABASE_URL: postgresql://phoenix:${POSTGRES_PASSWORD}@postgres:5432/phoenix
+      PHOENIX_WORKING_DIR: /phoenix
+      PHOENIX_ENABLE_AUTH: "false"     # auth is enforced at the proxy
+    volumes: [phoenix_data:/phoenix]
+    networks: [edge, internal]
+    mem_limit: 640m
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # --------------------------------------------------------------- emulator
+  heimdall-emulator:
+    <<: [*python-image, *hardening]
+    command: >
+      uvicorn --factory sim.emulator.app:create_app
+              --host 0.0.0.0 --port 8081 --workers 1
+    environment:
+      HEIMDALL_SNAPSHOT_ON: /data/snapshot
+      HEIMDALL_SNAPSHOT_OFF: /data/snapshot-notraps
+      HEIMDALL_CATALOG: /app/catalog/snapshot.json
+      HEIMDALL_SKILLS: /app/heimdall-skills
+      HEIMDALL_TRAPS_ENABLED: ${TRAPS_ENABLED:-true}
+      HEIMDALL_LATENCY_PROFILE: ${LATENCY_PROFILE:-realistic}
+      HEIMDALL_ENABLE_DEV_ROUTER: "false"   # see docs/skill-execution-threat-model.md §1.1
+      HEIMDALL_HR_EMPLOYEE_IDS: ${HR_EMPLOYEE_IDS:-}
+    volumes:
+      - ${DATA_DIR:-../data-small}:/data/snapshot:ro
+      - ${DATA_DIR_NOTRAPS:-../data-small}:/data/snapshot-notraps:ro
+      - ../heimdall-skills:/app/heimdall-skills:ro
+    networks: [internal]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/control/healthz',timeout=5).status==200 else 1)\""]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 40s
+
+  # ------------------------------------------------------------------ agent
+  b2e-agent:
+    <<: [*python-image, *hardening]
+    command: >
+      uvicorn --factory sim.agent.app:create_app
+              --host 0.0.0.0 --port 8082 --workers 1
+    environment:
+      HEIMDALL_URL: http://heimdall-emulator:8081
+      HEIMDALL_TOKEN: ${HEIMDALL_TOKEN:-sim-technical-account}
+      B2E_LLM_MODE: ${B2E_LLM_MODE:-replay}
+      B2E_CASSETTES: /app/cassettes
+      B2E_REGISTRY_DB: /app/var/registry.db
+      B2E_AGENT_DB: /app/var/agent.db
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-sim}
+      # Read from the environment only. Never written to a file or a commit.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - registry_data:/app/var
+      - ../cassettes:/app/cassettes
+      - spool:/spool
+    networks: [edge, internal]
+    mem_limit: 384m
+    depends_on:
+      heimdall-emulator: {condition: service_healthy}
+
+  # ----------------------------------------------------------- research API
+  research-api:
+    <<: [*python-image, *hardening]
+    command: >
+      uvicorn --factory sim.research.app:create_app
+              --host 0.0.0.0 --port 8083 --workers 1
+    environment:
+      B2E_AGENT_URL: http://b2e-agent:8082
+      PHOENIX_URL: http://phoenix:6006
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-sim}
+    networks: [edge, internal]
+    mem_limit: 256m
+    depends_on: [b2e-agent, phoenix]
+
+  # --------------------------------------------------------------- admin UI
+  admin-ui:
+    <<: [*python-image, *hardening]
+    command: >
+      uvicorn --factory sim.admin.app:create_app
+              --host 0.0.0.0 --port 8084 --workers 1
+    environment:
+      B2E_REGISTRY_DB: /app/var/registry.db
+      HEIMDALL_URL: http://heimdall-emulator:8081
+      B2E_AGENT_URL: http://b2e-agent:8082
+      PHOENIX_PUBLIC_URL: https://${PUBLIC_HOST}/phoenix
+      ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+    volumes: [registry_data:/app/var]
+    networks: [edge, internal]
+    mem_limit: 192m
+    depends_on: [b2e-agent]
+
+  # ----------------------------------------------------------- skill sandbox
+  # spool-init exists because named volumes are created root:root and uid 10001
+  # cannot otherwise write them. Ordering here was a real bug found in testing.
+  spool-init:
+    image: busybox:1.36
+    command: sh -c "mkdir -p /spool/new /spool/run /spool/out && chown -R 10001:10001 /spool && chmod 0770 /spool/new /spool/run /spool/out"
+    volumes: [spool:/spool]
+    user: "0:0"
+    restart: "no"
+    networks: []
+
+  sandbox-worker:
+    <<: [*python-image, *hardening]
+    command: python -m sim.sandbox.worker
+    environment:
+      SANDBOX_SPOOL: /spool
+    volumes:
+      - spool:/spool
+    # The executing side has NO network at all. It reaches the rest of the system
+    # only through the spool volume, which is what makes network_mode:none
+    # possible without giving any service a Docker socket.
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    pids_limit: 64
+    mem_limit: 320m
+    memswap_limit: 320m
+    cpus: 0.5
+    depends_on:
+      spool-init: {condition: service_completed_successfully}
+
+  # ------------------------------------------------------------- telegram
+  # Outbound only, by long polling. A webhook would need another hole in the
+  # proxy for Telegram to call; polling adds no exposed surface at all.
+  telegram-bot:
+    <<: [*python-image, *hardening]
+    command: python -m sim.telegram_bot
+    environment:
+      B2E_AGENT_URL: http://b2e-agent:8082
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEFAULT_EMPLOYEE: ${TELEGRAM_DEFAULT_EMPLOYEE:-}
+    networks: [edge, internal]
+    mem_limit: 128m
+    profiles: ["telegram"]
+    depends_on: [b2e-agent]

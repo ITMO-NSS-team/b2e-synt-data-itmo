@@ -6,7 +6,12 @@ DATA    ?= data
 SEED    ?= 20260801
 N       ?= 300000
 
-.PHONY: help setup catalog data data-small validate stats doc serve test clean
+COMPOSE := docker compose -f deploy/docker-compose.yml --env-file deploy/.env
+PROFILE ?=
+
+.PHONY: help setup catalog data data-small validate stats doc serve test clean \
+        up down logs ps seed seed-traps-off smoke hash-password openapi \
+        rebuild sim-test
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -37,8 +42,44 @@ doc:  ## HTML-документация витрин
 serve:  ## эмулятор Heimdall на :8080
 	$(PY) -m b2e.cli serve --data $(DATA)
 
-test:  ## тесты (корпус собирается внутри тестов)
-	$(PY) -m pytest tests -q
+test:  ## тесты; replay-режим, обращений к API модели нет и трат нет
+	B2E_LLM_MODE=replay $(PY) -m pytest tests -q
 
 clean:
 	rm -rf .pytest-data .pytest_cache **/__pycache__
+
+# ============================================================ симулятор
+
+up:  ## поднять весь стек одной командой; PROFILE=telegram добавит бота
+	@test -f deploy/.env || { echo "нет deploy/.env — скопируйте deploy/.env.example"; exit 1; }
+	$(COMPOSE) $(if $(PROFILE),--profile $(PROFILE),) up -d --build
+	@echo "стек поднят; проверка сквозного пути: make smoke"
+
+down:  ## остановить стек, тома сохраняются
+	$(COMPOSE) down
+
+logs:  ## логи всех сервисов
+	$(COMPOSE) logs -f --tail=100
+
+ps:  ## состояние сервисов и фактическое потребление памяти
+	$(COMPOSE) ps
+	@docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' | head -20
+
+seed:  ## корпус для стенда: 3 000 человек, ~25 с
+	$(PY) -m b2e.cli build --seed $(SEED) --n 3000 --out data-small
+	$(PY) -m b2e.cli validate --data data-small
+
+seed-traps-off:  ## корпус без каверз — обязателен для traps_enabled=false (RQ1)
+	$(PY) scripts/build_notraps.py --seed $(SEED) --n 3000 --out data-small-notraps
+
+smoke:  ## сквозной путь: вопрос → ответ → трасса → обратная связь → сравнение
+	$(PY) scripts/smoke.py
+
+hash-password:  ## хэш для BASIC_AUTH_HASH; открытый пароль никуда не пишется
+	@docker run --rm caddy:2.10-alpine caddy hash-password
+
+openapi:  ## выгрузить OpenAPI b2e-agent и research-api в docs/openapi/
+	$(PY) scripts/export_openapi.py
+
+rebuild:  ## пересобрать образы без кэша
+	$(COMPOSE) build --no-cache

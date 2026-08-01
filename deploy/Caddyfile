@@ -1,0 +1,59 @@
+# The single externally reachable surface.
+#
+# Everything behind this is on an internal compose network with no route out.
+# Caddy terminates TLS (automatic ACME when PUBLIC_HOST is a real name, internal
+# CA otherwise) and enforces HTTP Basic on every path — there is no unauthenticated
+# route, including health checks, because a health endpoint that names the
+# snapshot hash and the trap state is itself information about the experiment.
+
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$PUBLIC_HOST} {
+	encode zstd gzip
+
+	# One credential guards the whole surface. Per-service accounts would be a
+	# false sense of separation: research-api can already launch experiments and
+	# admin-ui can already approve skills, so anyone with either has the system.
+	basic_auth {
+		researcher {$BASIC_AUTH_HASH}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# ---- research API (C4)
+	handle_path /research/* {
+		reverse_proxy research-api:8083
+	}
+
+	# ---- admin UI (C5). It performs its own Basic auth as well; the duplication
+	# is deliberate, so a proxy misconfiguration does not expose the approve button.
+	handle_path /admin/* {
+		reverse_proxy admin-ui:8084
+	}
+
+	# ---- Phoenix UI (C3)
+	handle_path /phoenix/* {
+		reverse_proxy phoenix:6006
+	}
+
+	# ---- agent API (C2), for researchers driving runs directly
+	handle_path /agent/* {
+		reverse_proxy b2e-agent:8082
+	}
+
+	# The Heimdall emulator is deliberately NOT published. It is the data plane;
+	# only the agent should reach it, and it is on the internal network only.
+
+	handle {
+		respond "b2e simulation environment. /research /admin /phoenix /agent" 200
+	}
+}

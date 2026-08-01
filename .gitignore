@@ -14,3 +14,21 @@ data-small/
 # Спецификация OpenAPI — внутренний документ сервиса. В репозиторий идёт
 # только производный каталог, необходимый для работы кода.
 Heimdall_openapi.json
+
+# --- simulation environment -------------------------------------------------
+# Secrets. Never commit. If one is ever pasted into a chat, rotate it.
+deploy/.env
+.env
+
+# Runtime state: registries, session stores, spool. Reproducible, not source.
+var/
+*.db
+*.db-wal
+*.db-shm
+
+# Recorded LLM responses for replay mode. Regenerated with B2E_LLM_MODE=record;
+# they can carry full prompts and HR payloads, so they stay out of git.
+cassettes/
+
+# Traps-off corpus, same policy as the traps-on one: rebuilt from seed.
+data-small-notraps/
