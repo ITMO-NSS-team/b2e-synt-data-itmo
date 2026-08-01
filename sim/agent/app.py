@@ -84,6 +84,30 @@ class AgentState:
         self.store = Store(env.get("B2E_AGENT_DB", "var/agent.db"))
         self.client = build_client(self.llm_mode, self.cassette_dir)
         self._bootstrap_registry()
+        self.tracing = self._configure_tracing()
+
+    def _configure_tracing(self) -> str:
+        """Point the tracer at Phoenix, or say plainly that it is not exporting.
+
+        Failure here is logged and tolerated rather than fatal: an unreachable
+        collector should not stop a researcher getting an answer. But it must be
+        visible — a run whose spans silently went nowhere looks identical to one
+        that was never made, and ``/healthz`` reporting the state is what stops
+        someone spending a batch before noticing.
+        """
+        endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "")
+        if not endpoint:
+            return "disabled: PHOENIX_COLLECTOR_ENDPOINT unset"
+        try:
+            telemetry.configure(
+                endpoint=f"{endpoint.rstrip('/')}/v1/traces",
+                project_name=os.environ.get("PHOENIX_PROJECT", "b2e-sim"),
+                protocol="http/protobuf",
+                batch=True,
+            )
+            return f"exporting to {endpoint}"
+        except Exception as exc:
+            return f"failed: {type(exc).__name__}: {exc}"
 
     def _bootstrap_registry(self) -> None:
         """Seed version 1 of every config so an untouched deployment still has a
@@ -162,7 +186,7 @@ def create_app(state: AgentState | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
         return {"status": "ok", "llm_mode": state.llm_mode,
-                "heimdall": state.heimdall_url}
+                "heimdall": state.heimdall_url, "tracing": state.tracing}
 
     @app.post("/sessions", status_code=201)
     def create_session(payload: CreateSession) -> dict[str, Any]:

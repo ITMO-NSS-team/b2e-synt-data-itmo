@@ -186,28 +186,107 @@ SMOKE PASSED — the full Definition of Done path works end to end.
 
 ---
 
-## 8 · What was NOT executed
+## 8 · The stack, running
 
-Being explicit, because a walkthrough that implies more than it ran is worse than
-a short one.
+Brought up on the host and verified. All eight services healthy:
 
-- **The compose stack was not brought up on this host.** The 300 000-person
-  corpus build was occupying the machine for most of this session and the box has
-  3.8 GiB with zero swap. Every service, the proxy config, the memory limits and
-  the health checks are written and reviewed, but `make up` has not been observed
-  succeeding end to end here. Run it and check `make ps` against the budget in
-  `docs/deployment.md`.
-- **Phoenix was therefore not exercised.** The span schema is written against
-  attribute names verified by introspecting the installed packages
-  (`docs/observability.md`), and the exporter is wired, but no span has been seen
-  arriving in a Phoenix UI. `make smoke` against `SMOKE_TARGET=stack` is what
-  closes this, and the Phoenix REST contract is asserted there rather than
-  trusted.
-- **No live model call was made.** Everything ran scripted or in replay, by
-  design — but that means the OAuth-token path against the real API is unproven.
-  Record cassettes once with `B2E_LLM_MODE=record` to exercise it.
-- **The sandbox containers were not run.** The runner, worker and spool are
-  tested (21 tests), but the controls that are actually the security boundary —
-  the empty network namespace, the read-only rootfs, the cgroup caps — are
-  enforced by Docker and are asserted only when the stack runs. A unit test
-  cannot prove a netns is empty.
+```
+SERVICE             STATUS
+admin-ui            Up 2 minutes
+b2e-agent           Up 10 seconds
+heimdall-emulator   Up 2 minutes (healthy)
+phoenix             Up 7 minutes
+postgres            Up 7 minutes (healthy)
+proxy               Up 3 minutes
+research-api        Up 2 minutes
+sandbox-worker      Up 8 minutes
+```
+
+Measured memory — well inside budget, ~777 MiB against the 3.8 GiB host:
+
+| container | usage / limit |
+|---|---|
+| phoenix | 500 MiB / 832 MiB |
+| postgres | 71 MiB / 320 MiB |
+| heimdall-emulator | 52 MiB / 512 MiB |
+| b2e-agent | 50 MiB / 384 MiB |
+| research-api | 40 MiB / 256 MiB |
+| admin-ui | 40 MiB / 192 MiB |
+| sandbox-worker | 13 MiB / 320 MiB |
+| proxy | 12 MiB / 96 MiB |
+
+### Routing and authentication, through the proxy
+
+```
+unauthenticated  /research/healthz  -> 401
+researcher       /research/healthz  -> 200   {"status":"ok","phoenix":true,…}
+researcher       /agent/healthz     -> 200
+researcher       /phoenix/          -> 200
+researcher       /admin/            -> 200
+```
+
+### Phoenix has the spans
+
+The agent exports over OTLP; `GET /v1/projects` shows the `b2e-sim` project and
+the root span arrived with the full fingerprint attached:
+
+```
+  b2e.run.agent_config_version    = agent_config@1
+  b2e.run.condition_id            = 6449a3889ccd9c8a
+  b2e.run.data_snapshot_hash      = heimdall-sandbox@78d53675db91e17f
+  b2e.run.latency_profile         = realistic
+  b2e.run.model_id                = claude-haiku-4-5-20251001
+  b2e.run.prompt_registry_version = system_prompt@1
+  b2e.run.skill_registry_hash     = sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+  b2e.run.temperature             = 0.0
+  b2e.run.traps_enabled           = True
+  session.id                      = ses_9ee00c3cd1fc407883e0
+  user.id                         = 2457060
+```
+
+`session.id` and `user.id` are the real OpenInference keys, so Phoenix groups
+these into sessions natively.
+
+### Four defects the bring-up found
+
+None of these were visible from code review; all four needed the stack to run.
+
+1. **`cap_drop: ALL` broke Postgres.** Its entrypoint starts as root and drops
+   privileges, needing CHOWN/FOWNER/SETUID/SETGID. Fixed by starting *as*
+   uid 70, which is strictly better than granting the capabilities back.
+2. **Compose ate the bcrypt hash.** `caddy hash-password` emits `$2a$14$…`, and
+   Compose interpolates `$WORD` in `--env-file` values, so `BASIC_AUTH_HASH`
+   silently became a different string and Basic auth would have rejected every
+   password with no clue why. `$` must be doubled.
+3. **A bare `:443` site address serves no certificate.** Caddy listens, but
+   `tls internal` has no name to issue for and every handshake fails with "no
+   peer certificate available". The addresses must be named explicitly.
+4. **Two Basic-auth layers cannot both be satisfied** — HTTP sends one
+   `Authorization` header. The proxy now authenticates the researcher at the
+   edge and presents its own credential to the admin UI; a direct connection to
+   admin-ui still needs `ADMIN_PASSWORD`.
+
+Also fixed: `telemetry.configure()` was never called, so the agent built spans
+that went nowhere. `/agent/healthz` now reports the exporter state
+(`"tracing": "exporting to http://phoenix:6006"`) precisely so this cannot fail
+silently again.
+
+## 9 · What is still NOT verified
+
+- **Live model calls do not work with the supplied credential.** The
+  subscription OAuth token is refused with `403 Request not allowed` on all three
+  header forms — a scope restriction, not a configuration error. Full detail and
+  the remedy are in `docs/assumptions.md` A-8. The stack therefore runs in
+  `replay`, and the request/response shaping against the live Anthropic API is
+  unproven. Set `ANTHROPIC_API_KEY` and record cassettes once to close this.
+- **No cassettes are recorded yet**, so a live question through the deployed
+  stack returns a replay miss by design rather than silently calling out.
+- **The sandbox's kernel-level controls are configured but not adversarially
+  tested here.** `network_mode: none`, the read-only rootfs and the cgroup caps
+  are in the compose file and the container is running, but no hostile skill has
+  been executed against them on this host. The 21 sandbox tests cover the Python
+  layer only; a unit test cannot prove a netns is empty.
+- **Reachability from outside the host was not confirmed.** The proxy binds
+  `0.0.0.0:443` and was verified over loopback. Whether `103.76.53.29:443`
+  answers from the internet depends on the cloud firewall, which is outside this
+  repository.

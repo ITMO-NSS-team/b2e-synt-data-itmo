@@ -133,6 +133,75 @@ previous session.
 
 ---
 
+## A-8 · The subscription OAuth token cannot drive the agent — **BLOCKED**
+
+**Spec said:** "The B2E agent should be authorized via Oauth Claude token using
+the subscription (not via direct anthropic api key) so that expenditures are not
+that expensive when simulating."
+
+**Measured, against the real API on 2026-08-01:**
+
+| Auth form | Result |
+|---|---|
+| `Authorization: Bearer <token>` + `anthropic-beta: oauth-2025-04-20` | **403** `{"type":"forbidden","message":"Request not allowed"}` |
+| `Authorization: Bearer <token>` alone | **403**, same body |
+| `x-api-key: <token>` | **403**, same body |
+
+Three header forms, one identical refusal. This is not a missing header — it is a
+**scope restriction on the credential**. A `sk-ant-oat01-…` token is issued for
+Claude Code, and the Messages API rejects it for general use.
+
+**What would make it work, and why it is not implemented.** The known route is to
+present the request as Claude Code — the specific client headers plus a system
+prompt whose first block is the Claude Code identity string. That is
+impersonating a different Anthropic product in order to bypass a restriction the
+API is deliberately enforcing. I am not building that, and a simulation
+environment whose model access depends on defeating a scope check is not one a
+researcher should rely on.
+
+**Consequence.** `B2E_LLM_MODE=live` returns 403 on every turn. The stack is
+therefore left in `replay`.
+
+**What this does and does not invalidate.** The agent loop, tool dispatch,
+permission enforcement, context packing, cost guard and tracing are all
+exercised: 136 tests plus `make smoke` drive the real code path with a scripted
+model. What is unproven is only the request/response shaping against the live
+Anthropic API.
+
+**To run live:** set `ANTHROPIC_API_KEY` in `deploy/.env`, then record cassettes
+once so CI stays free:
+
+```bash
+sed -i 's/^B2E_LLM_MODE=.*/B2E_LLM_MODE=record/' deploy/.env
+make up && make smoke      # populates cassettes/
+sed -i 's/^B2E_LLM_MODE=.*/B2E_LLM_MODE=replay/' deploy/.env
+```
+
+Cost control is already in place: the guard refuses a batch before dispatch and
+logs the projection, so an API key does not mean an open tap.
+
+---
+
+## A-9 · No public IPv4; TLS is an internal CA — **TAKEN**
+
+The host has a **public IPv6** (`2a0d:6c2:26:479::`) and a **private IPv4**
+(`10.129.0.33`) behind NAT. The operator reports the public IPv4 as
+`103.76.53.29`.
+
+There is no DNS name, and ACME cannot issue for a bare IP address, so Caddy uses
+its **internal CA** (`TLS_MODE=internal`) and issues certificates naming the
+addresses listed in `PUBLIC_HOST`. **Browsers will show a certificate warning.**
+
+That is a real cost: a warning researchers are trained to click through is a
+habit that hides a genuine MITM later. Point a DNS name at the host and set
+`TLS_MODE` to an ACME email to remove it.
+
+A bare `:443` site address was tried first and does **not** work — Caddy listens
+but has no name to issue for, and every handshake fails with "no peer certificate
+available". The addresses must be named explicitly.
+
+---
+
 ## A-7 · Git remote already exists — **OPEN**
 
 The spec says "create a remote git repo and PUSH." One already exists:

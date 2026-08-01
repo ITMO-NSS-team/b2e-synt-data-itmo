@@ -51,7 +51,12 @@ services:
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?run `make hash-password` and set it in .env}
-      ACME_EMAIL: ${ACME_EMAIL:-}
+      # `internal` for an IP-only host (Caddy mints its own certificate), or an
+      # ACME email address when PUBLIC_HOST is a real DNS name.
+      TLS_MODE: ${TLS_MODE:-internal}
+      # base64("user:password") for the admin UI's own Basic auth. The proxy is
+      # the only holder; see the /admin block in the Caddyfile for why.
+      ADMIN_BASIC: ${ADMIN_BASIC:?run scripts/make_admin_basic.sh and set it in .env}
     networks: [edge]
     mem_limit: 96m
     depends_on: [research-api, admin-ui, phoenix, b2e-agent]
@@ -60,6 +65,13 @@ services:
   postgres:
     image: postgres:16-alpine
     <<: *hardening
+    # Start directly as the postgres user. The default entrypoint starts as root
+    # and drops privileges, which needs CHOWN/FOWNER/SETUID/SETGID — capabilities
+    # `cap_drop: ALL` has already removed, so it fails with
+    # "error: failed switching to 'postgres': operation not permitted".
+    # Starting as the right user skips that step entirely, which is strictly
+    # better than granting the capabilities back.
+    user: "70:70"
     environment:
       POSTGRES_USER: phoenix
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -78,7 +90,10 @@ services:
       retries: 10
 
   phoenix:
-    image: arizephoenix/phoenix:version-11.9.0
+    # Pinned to a tag that exists — verified against the registry, not guessed.
+    # The -nonroot variant so this service matches the claim in docs/deployment.md
+    # that no container runs as root.
+    image: arizephoenix/phoenix:version-19.13.0-nonroot
     <<: *hardening
     environment:
       PHOENIX_SQL_DATABASE_URL: postgresql://phoenix:${POSTGRES_PASSWORD}@postgres:5432/phoenix
@@ -86,7 +101,10 @@ services:
       PHOENIX_ENABLE_AUTH: "false"     # auth is enforced at the proxy
     volumes: [phoenix_data:/phoenix]
     networks: [edge, internal]
-    mem_limit: 640m
+    # Measured at ~500 MiB idle with a handful of spans, which was 78% of an
+    # earlier 640m limit. On a box with zero swap that margin is too thin: an
+    # OOM is a kill, and Phoenix holds the traces every comparison depends on.
+    mem_limit: 832m
     depends_on:
       postgres: {condition: service_healthy}
 
@@ -169,7 +187,9 @@ services:
       B2E_REGISTRY_DB: /app/var/registry.db
       HEIMDALL_URL: http://heimdall-emulator:8081
       B2E_AGENT_URL: http://b2e-agent:8082
-      PHOENIX_PUBLIC_URL: https://${PUBLIC_HOST}/phoenix
+      # Deep links for the browser. Separate from PUBLIC_HOST because that may
+      # be a bare site address like ":443", which is not a URL.
+      PHOENIX_PUBLIC_URL: ${PUBLIC_URL:-https://localhost}/phoenix
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
     volumes: [registry_data:/app/var]

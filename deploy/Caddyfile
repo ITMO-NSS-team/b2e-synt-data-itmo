@@ -7,11 +7,21 @@
 # snapshot hash and the trap state is itself information about the experiment.
 
 {
-	email {$ACME_EMAIL}
+	# No global `email` directive: with ACME_EMAIL unset it expands to a bare
+	# `email` and Caddy refuses the whole config with "wrong argument count".
+	# This deployment uses TLS_MODE=internal anyway, so ACME is not in play.
 	admin off
+	auto_https disable_redirects
 }
 
 {$PUBLIC_HOST} {
+	# TLS mode is env-driven because this host has no DNS name: it is reachable
+	# on a public IPv6 address and a NATed private IPv4. ACME cannot issue for a
+	# bare IP, so TLS_MODE=internal makes Caddy mint its own certificate.
+	# Browsers will warn — that is the honest cost of having no name. With a real
+	# DNS name, set PUBLIC_HOST to it and TLS_MODE to your ACME email instead.
+	tls {$TLS_MODE}
+
 	encode zstd gzip
 
 	# One credential guards the whole surface. Per-service accounts would be a
@@ -35,9 +45,19 @@
 	}
 
 	# ---- admin UI (C5). It performs its own Basic auth as well; the duplication
-	# is deliberate, so a proxy misconfiguration does not expose the approve button.
+	# is deliberate, so a proxy misconfiguration does not expose the approve
+	# button. But HTTP Basic carries exactly one Authorization header, so the
+	# researcher's edge credential cannot also satisfy the admin UI. The proxy
+	# therefore authenticates the human at the edge and presents its own,
+	# different credential upstream.
+	#
+	# The second factor is still real: anyone reaching admin-ui directly — by
+	# bypassing the proxy, or from inside the compose network — still needs
+	# ADMIN_PASSWORD, which only the proxy holds.
 	handle_path /admin/* {
-		reverse_proxy admin-ui:8084
+		reverse_proxy admin-ui:8084 {
+			header_up Authorization "Basic {$ADMIN_BASIC}"
+		}
 	}
 
 	# ---- Phoenix UI (C3)
