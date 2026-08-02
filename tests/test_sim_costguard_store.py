@@ -26,7 +26,8 @@ FP = RunFingerprint.create(
     agent_config_version="cfg@1", prompt_registry_version="p@1",
     skill_registry_hash="sha256:" + "00" * 32,
     model_id="claude-haiku-4-5-20251001", temperature=0.0,
-    data_snapshot_hash="snap@1", traps_enabled=True, latency_profile="instant")
+    data_snapshot_hash="snap@1", traps_enabled=True, latency_profile="instant",
+    hr_employee_ids=[])
 
 
 def _projection(questions: int = 500) -> Projection:

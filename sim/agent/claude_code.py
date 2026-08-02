@@ -77,10 +77,11 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from sim import telemetry
 from sim.agent.config import AgentConfig
@@ -527,7 +528,9 @@ class ClaudeCodeHarness:
     def run(self, *, question: str, config: AgentConfig, system_prompt: str,
             employee_id: str, keep_stream: bool = True,
             b2e_session_id: str | None = None,
-            resume_session_id: str | None = None) -> ClaudeCodeResult:
+            resume_session_id: str | None = None,
+            on_event: "Callable[[dict[str, Any]], None] | None" = None
+            ) -> ClaudeCodeResult:
         suffix = system_prompt + "\n" + self.harness_note(config)
 
         persistent = self.session_workdir(config, b2e_session_id)
@@ -543,7 +546,7 @@ class ClaudeCodeHarness:
         result = self._invoke(question, config=config, system_suffix=suffix,
                               mcp_path=mcp_path, workdir=workdir,
                               resume_session_id=resume_session_id,
-                              keep_stream=keep_stream)
+                              keep_stream=keep_stream, on_event=on_event)
 
         # A resume can fail for reasons that have nothing to do with the
         # question: the transcript was pruned, the volume was recreated, the CLI
@@ -554,7 +557,8 @@ class ClaudeCodeHarness:
         if resume_session_id and result.is_error and not result.answer:
             result = self._invoke(question, config=config, system_suffix=suffix,
                                   mcp_path=mcp_path, workdir=workdir,
-                                  resume_session_id=None, keep_stream=keep_stream)
+                                  resume_session_id=None, keep_stream=keep_stream,
+                                  on_event=on_event)
             result.resumed_failed = True
             if not result.is_error:
                 result.error = (f"resume of {resume_session_id} failed; "
@@ -570,35 +574,87 @@ class ClaudeCodeHarness:
 
     def _invoke(self, question: str, *, config: AgentConfig, system_suffix: str,
                 mcp_path: Path, workdir: Path, resume_session_id: str | None,
-                keep_stream: bool) -> ClaudeCodeResult:
+                keep_stream: bool,
+                on_event: "Callable[[dict[str, Any]], None] | None" = None
+                ) -> ClaudeCodeResult:
+        """Run the CLI, optionally reporting events as they arrive.
+
+        Read line by line rather than with ``subprocess.run``. The turn takes
+        upwards of a minute and the whole point of ``--output-format
+        stream-json`` is that the CLI says what it is doing while it does it;
+        buffering all of that until the process exits throws away the only
+        signal anyone waiting on the other end could use.
+
+        ``on_event`` is called from this thread, so a slow callback slows the
+        turn. It is expected to do nothing heavier than update a dict.
+        """
         argv = self.build_argv(question, config=config,
                                system_suffix=system_suffix,
                                mcp_config_path=str(mcp_path),
                                resume_session_id=resume_session_id)
         started = time.perf_counter()
-        try:
-            proc = subprocess.run(argv, capture_output=True, text=True,
-                                  timeout=self.timeout, env=self.child_env(),
-                                  cwd=str(workdir))
-        except subprocess.TimeoutExpired:
+        lines: list[str] = []
+        timed_out = False
+
+        # stderr to a file, not a pipe. Draining one pipe while the other fills
+        # is the classic deadlock, and the CLI is chatty enough on stderr to
+        # reach a 64 KiB buffer on a long turn.
+        err_path = workdir / "claude.stderr"
+        with open(err_path, "w+", encoding="utf-8") as err:
+            proc = subprocess.Popen(
+                argv, stdout=subprocess.PIPE, stderr=err, text=True,
+                env=self.child_env(), cwd=str(workdir), bufsize=1)
+
+            # readline() blocks, so the deadline needs its own thread rather
+            # than a check between lines: a hung turn produces no lines at all,
+            # which is exactly when the timeout has to fire.
+            def _kill() -> None:
+                nonlocal timed_out
+                timed_out = True
+                proc.kill()
+
+            watchdog = threading.Timer(self.timeout, _kill)
+            watchdog.start()
+            try:
+                for line in proc.stdout:                  # type: ignore[union-attr]
+                    lines.append(line)
+                    if on_event is None:
+                        continue
+                    try:
+                        event = json.loads(line.strip() or "{}")
+                    except ValueError:
+                        continue
+                    if event:
+                        on_event(event)
+                proc.wait()
+            finally:
+                watchdog.cancel()
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            err.seek(0)
+            stderr_text = err.read()
+        err_path.unlink(missing_ok=True)
+
+        if timed_out:
             return ClaudeCodeResult(
                 answer="", session_id=None, num_turns=0, input_tokens=0,
                 output_tokens=0, cache_read_tokens=0, cache_creation_tokens=0,
                 cost_usd=0.0, duration_ms=int((time.perf_counter() - started) * 1000),
                 is_error=True, error=f"claude timed out after {self.timeout}s")
 
+        stdout = "".join(lines)
         stream_file = None
         if keep_stream:
             stream_file = workdir / "claude.stream.jsonl"
-            stream_file.write_text(proc.stdout, "utf-8")
+            stream_file.write_text(stdout, "utf-8")
 
-        result = parse_stream(proc.stdout)
+        result = parse_stream(stdout)
         result.stream_path = str(stream_file) if stream_file else None
         if result.is_error and not result.error:
-            result.error = (proc.stderr or "")[:2000]
+            result.error = stderr_text[:2000]
         if not result.answer and proc.returncode != 0:
             result.is_error = True
-            result.error = result.error or (proc.stderr or "")[:2000]
+            result.error = result.error or stderr_text[:2000]
         return result
 
 

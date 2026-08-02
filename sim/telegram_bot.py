@@ -28,6 +28,21 @@ with no history — which is the thing you want when the previous thread has
 wandered, or when you are about to measure something and do not want the last
 ten messages priced into the context of the first.
 
+Showing that something is happening
+-----------------------------------
+A turn runs upwards of a minute. Silence for that long reads as a dead bot, so
+the bridge posts one status message and rewrites it in place from
+``GET /sessions/{id}/progress`` — "запрашиваю данные → изучаю структуру
+витрины… 34 с, шагов: 6".
+
+This is the one place the bridge does more than forward bytes, so the limits are
+worth stating. The status is a separate message: the question and the answer are
+still passed through verbatim. The progress endpoint is read-only and never
+reaches the model, so nothing here shows up in a trace as agent behaviour. And
+every failure in the status path — a 404, a dropped poll, a refused edit — is
+swallowed, because a broken progress display must never cost a turn that the
+agent is otherwise completing and being paid for.
+
 Long polling rather than webhooks: a webhook needs a public HTTPS endpoint for
 Telegram to call, which would mean another hole in the reverse proxy. Polling
 keeps the bot strictly outbound, so it adds no exposed surface at all.
@@ -39,6 +54,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import Any
 
@@ -69,7 +85,8 @@ class TelegramBridge:
     """Chat id -> B2E session. Nothing else is remembered here."""
 
     def __init__(self, *, token: str, agent_url: str, default_employee: str,
-                 config_ref: str = "agent_config_interactive") -> None:
+                 config_ref: str = "agent_config_interactive",
+                 poll_seconds: float = 4.0) -> None:
         if not token:
             raise RuntimeError(
                 "TELEGRAM_BOT_TOKEN is unset. It is read from the environment "
@@ -79,6 +96,10 @@ class TelegramBridge:
         self.agent_url = agent_url.rstrip("/")
         self.default_employee = default_employee
         self.config_ref = config_ref
+        # Slow enough that a long turn costs a handful of edits rather than
+        # dozens — Telegram rate-limits edits per chat, and a status that
+        # flickers is not more informative than one that does not.
+        self.poll_seconds = poll_seconds
         self.sessions: dict[int, str] = {}
         self.employees: dict[int, str] = {}
         # trust_env is left ON here, unlike internal clients: reaching
@@ -93,12 +114,35 @@ class TelegramBridge:
                                  json=payload)
         return response.json()
 
-    def send(self, chat_id: int, text: str) -> None:
-        # Telegram rejects messages over 4096 characters. Chunking is transport,
-        # not logic: the text is not altered, only split.
+    def send(self, chat_id: int, text: str) -> int | None:
+        """Send text, returning the id of the last message sent.
+
+        Telegram rejects messages over 4096 characters. Chunking is transport,
+        not logic: the text is not altered, only split.
+        """
+        message_id = None
         for i in range(0, len(text) or 1, 4000):
-            self._call("sendMessage", chat_id=chat_id,
-                       text=text[i:i + 4000] or "(пустой ответ)")
+            reply = self._call("sendMessage", chat_id=chat_id,
+                               text=text[i:i + 4000] or "(пустой ответ)")
+            message_id = (reply.get("result") or {}).get("message_id", message_id)
+        return message_id
+
+    def edit(self, chat_id: int, message_id: int | None, text: str) -> None:
+        """Rewrite a message in place, best effort.
+
+        Failures are swallowed on purpose. This only ever carries the status
+        line, so a failed edit costs a stale progress display — while raising
+        would abandon a turn the agent is still paying for. Telegram also
+        rejects an edit whose text is unchanged, which is not an error worth
+        hearing about.
+        """
+        if message_id is None:
+            return
+        try:
+            self._call("editMessageText", chat_id=chat_id,
+                       message_id=message_id, text=text[:4000])
+        except httpx.HTTPError as exc:
+            log.debug("status edit failed: %s", exc)
 
     # --------------------------------------------------------------- agent
 
@@ -115,20 +159,86 @@ class TelegramBridge:
         return session_id
 
     def ask(self, chat_id: int, text: str) -> str:
+        """Ask the agent, keeping a status line updated while it works.
+
+        A turn runs upwards of a minute — 89 s on the deployed stack — and until
+        now that was a minute of nothing, which reads as a broken bot. The
+        question and the answer still pass through untouched; the only addition
+        is a separate message that the bridge rewrites in place with whatever
+        `GET /sessions/{id}/progress` reports.
+
+        The turn runs on its own thread purely so this one can poll. The poll is
+        read-only and never reaches the model, so nothing here appears in a
+        trace as agent behaviour — the thinness that makes manual and batch runs
+        comparable is preserved.
+        """
         session_id = self.ensure_session(chat_id)
-        response = self._agent.post(
-            f"{self.agent_url}/sessions/{session_id}/messages",
-            json={"content": text})
+        status_id = self.send(chat_id, "⏳ принял вопрос, начинаю…")
+
+        outcome: dict[str, Any] = {}
+
+        def work() -> None:
+            try:
+                outcome["response"] = self._agent.post(
+                    f"{self.agent_url}/sessions/{session_id}/messages",
+                    json={"content": text})
+            except Exception as exc:                      # noqa: BLE001
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=work, daemon=True)
+        worker.start()
+
+        shown = ""
+        while True:
+            worker.join(self.poll_seconds)
+            if not worker.is_alive():
+                break
+            line = self.progress_line(session_id)
+            if line and line != shown:
+                shown = line
+                self.edit(chat_id, status_id, f"⏳ {line}")
+
+        if "error" in outcome:
+            self.edit(chat_id, status_id, "⚠️ не дошло до агента")
+            raise outcome["error"]
+
+        response = outcome["response"]
         if response.status_code >= 400:
+            self.edit(chat_id, status_id, f"⚠️ агент ответил {response.status_code}")
             return f"[b2e {response.status_code}] {response.text[:600]}"
+
         body = response.json()
         stats = body.get("stats", {})
+        self.edit(chat_id, status_id, "✅ готово")
         # The footer is diagnostics for a researcher, appended after the answer.
         # It never changes the question or the answer.
         footer = (f"\n\n— {stats.get('heimdall_calls', 0)} вызовов API, "
                   f"{stats.get('total_tokens', 0)} токенов, "
                   f"trace {str(body.get('trace_id'))[:16]}")
         return (body.get("answer") or "(пустой ответ)") + footer
+
+    def progress_line(self, session_id: str) -> str:
+        """Current status of the in-flight turn, or "" if there is nothing.
+
+        Every failure is a silent "": a 404 means the turn has not registered
+        yet or has already been evicted, and anything else on a *status* poll
+        must not disturb a turn that is otherwise going fine.
+
+        The catch is deliberately bare. Narrowing it to httpx errors is the
+        instinct, and it is wrong here: this path is decoration on top of a turn
+        that costs real money and takes real minutes, so *any* exception it
+        raises would trade an answer for a cosmetic detail. Caught by a test
+        that asserts exactly that.
+        """
+        try:
+            response = self._agent.get(
+                f"{self.agent_url}/sessions/{session_id}/progress", timeout=10.0)
+            if response.status_code != 200:
+                return ""
+            return str(response.json().get("status") or "")
+        except Exception as exc:                          # noqa: BLE001
+            log.debug("progress poll failed: %s", exc)
+            return ""
 
     # ---------------------------------------------------------------- loop
 

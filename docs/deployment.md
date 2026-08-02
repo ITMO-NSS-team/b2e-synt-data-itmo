@@ -140,9 +140,19 @@ their results.
 |---|---|
 | *(any text)* | forwarded to the agent verbatim, in the current session |
 | `/start_new_session` | drops the session; the next message opens a fresh one with no history |
+
 | `/new` | same thing, kept for muscle memory |
 | `/whoami` | acting employee, current session id, config ref |
 | `/employee <id>` | switch identity; resets the session, since it carries a permission scope |
+
+While a turn runs, the bridge posts one status message and rewrites it in place
+— *«запрашиваю данные → изучаю структуру витрины… 34 с, шагов: 6»* — from
+`GET /sessions/{id}/progress` on the agent. That endpoint is a view of one
+in-flight turn: nothing it returns is persisted, polling it cannot change the
+turn, and the question and answer still pass through untouched. Every failure in
+that path is swallowed, so a broken status display costs the status line and
+never the answer. The `messages_api` harness registers no progress, so a chat on
+that config simply shows the initial *«принял вопрос»* until the answer lands.
 
 Two consequences worth knowing before reading transcripts. A follow-up costs
 context tokens — turn *n* pays to re-read turns 1..n-1, so a long thread gets

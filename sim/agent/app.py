@@ -29,6 +29,7 @@ from sim import telemetry
 from sim.agent.config import AgentConfig
 from sim.agent.llm import ReplayMiss, build_client
 from sim.agent.loop import run_turn
+from sim.agent.progress import ProgressBoard
 from sim.agent.prompt import DEFAULT_SYSTEM_PROMPT, render
 from sim.agent.shipped import INTERACTIVE_CONFIG_REF, audit, bootstrap_if_writable
 from sim.agent.store import Store
@@ -84,6 +85,9 @@ class AgentState:
         self.registry = Registry(env.get("B2E_REGISTRY_DB", "var/registry.db"))
         self.store = Store(env.get("B2E_AGENT_DB", "var/agent.db"))
         self.client = build_client(self.llm_mode, self.cassette_dir)
+        #: In-flight turns, for surfaces with somebody waiting. Read-only to
+        #: every consumer; see sim/agent/progress.py.
+        self.progress = ProgressBoard()
         self._bootstrap_registry()
         self.tracing = self._configure_tracing()
         # Set before the build so /healthz has something to report even if the
@@ -234,6 +238,11 @@ class AgentState:
                 data_snapshot_hash=condition.get("data_snapshot_hash"),
                 traps_enabled=condition.get("traps_enabled"),
                 latency_profile=condition.get("latency_profile"),
+                # `.get` with no default would yield None against an emulator
+                # too old to report it, and None is "unset" — which would refuse
+                # the run outright. An absent key genuinely means no grant, so
+                # it is normalised to that rather than treated as a failure.
+                hr_employee_ids=condition.get("hr_employee_ids") or [],
             )
         except IncompleteFingerprint as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -282,6 +291,23 @@ def create_app(state: AgentState | None = None) -> FastAPI:
         if session is None:
             raise HTTPException(404, f"no session {session_id}")
         return {**session, "messages": state.store.messages(session_id)}
+
+    @app.get("/sessions/{session_id}/progress")
+    def get_progress(session_id: str) -> dict[str, Any]:
+        """What the current turn is doing right now.
+
+        Exists because a turn takes upwards of a minute and a bridge with a
+        human on it needs something to show. Strictly a view: polling it cannot
+        change the turn, and nothing it returns is recorded anywhere.
+
+        404 rather than an empty body when there is no turn — "nothing is
+        running" and "something is running silently" must not look alike to a
+        poller.
+        """
+        snapshot = state.progress.get(session_id)
+        if snapshot is None:
+            raise HTTPException(404, f"no turn in flight for {session_id}")
+        return snapshot
 
     @app.post("/sessions/{session_id}/messages")
     def post_message(session_id: str, payload: PostMessage) -> dict[str, Any]:
@@ -444,6 +470,11 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
             detail=f"harness=claude_code but the CLI is {state.harness_status}. "
                    f"Install it, or set harness=messages_api in the agent config.")
 
+    # Registered before the session starts so a poller that arrives during the
+    # CLI's own startup — which is seconds, before any tool runs — sees "думаю"
+    # rather than a 404 it would reasonably read as "nothing happened".
+    turn = state.progress.start(session_id, question)
+
     guard = _guard_for(metadata.get("experiment_id", "")) if metadata else None
     if guard is not None:
         # Checked before the session starts, and the spend recorded after. The
@@ -457,11 +488,19 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         employee_id=session["employee_id"], metadata=metadata, question=question,
     ) as root:
         trace_id = telemetry.current_trace_id()
-        outcome = state.harness.run(
-            question=question, config=config, system_prompt=system_prompt,
-            employee_id=session["employee_id"], keep_stream=False,
-            b2e_session_id=session_id,
-            resume_session_id=session.get("claude_session_id"))
+        try:
+            outcome = state.harness.run(
+                question=question, config=config, system_prompt=system_prompt,
+                employee_id=session["employee_id"], keep_stream=False,
+                b2e_session_id=session_id,
+                resume_session_id=session.get("claude_session_id"),
+                on_event=turn.observe)
+        except Exception:
+            # A turn that dies without closing its progress leaves every poller
+            # waiting on a "думаю…" that will never advance.
+            turn.finish(failed=True)
+            raise
+        turn.finish(failed=outcome.is_error)
         emit_spans(outcome, root=root, config=config)
 
     # Bound after the turn, not before: the id is what the CLI actually used,

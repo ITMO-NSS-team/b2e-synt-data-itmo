@@ -40,7 +40,7 @@ than answering from the prompt.
 [  ok  ] the agent actually called Heimdall  heimdall_calls=1 tool_calls=1 tokens=3400
 ```
 
-The fingerprint is printed in full because it is the point. All eight fields are
+The fingerprint is printed in full because it is the point. All nine fields are
 present; a run missing any one of them does not start
 (`RunFingerprint.create` raises `IncompleteFingerprint` before a token is spent).
 

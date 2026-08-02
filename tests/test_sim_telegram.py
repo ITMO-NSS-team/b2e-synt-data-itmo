@@ -13,6 +13,7 @@ are about dispatch and state rather than about httpx.
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -37,26 +38,48 @@ class FakeResponse:
 class FakeAgent:
     """Stands in for the b2e-agent service, and records what it was asked."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, turn_seconds: float = 0.0,
+                 progress: list[str] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.session_counter = 0
+        self.turn_seconds = turn_seconds
+        # Consumed one per poll, so a test can watch the status advance.
+        self.progress = list(progress or [])
+        self.progress_polls = 0
 
     def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
         self.calls.append((url, json))
         if url.endswith("/sessions"):
             self.session_counter += 1
             return FakeResponse({"session_id": f"ses_{self.session_counter}"})
+        if self.turn_seconds:
+            time.sleep(self.turn_seconds)
         return FakeResponse({"answer": "ответ", "trace_id": "t" * 32,
                              "stats": {"heimdall_calls": 2, "total_tokens": 10}})
 
+    def get(self, url: str, timeout: float | None = None) -> FakeResponse:
+        self.progress_polls += 1
+        if not self.progress:
+            return FakeResponse({}, status_code=404)
+        status = self.progress.pop(0)
+        return FakeResponse({"status": status, "done": False})
+
 
 class FakeTelegram:
+    """Records sends and edits the way Telegram distinguishes them."""
+
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.edits: list[str] = []
+        self.counter = 0
 
     def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+        if url.endswith("editMessageText"):
+            self.edits.append(json.get("text", ""))
+            return FakeResponse({"ok": True})
         self.sent.append(json.get("text", ""))
-        return FakeResponse({"ok": True})
+        self.counter += 1
+        return FakeResponse({"ok": True, "result": {"message_id": self.counter}})
 
 
 @pytest.fixture(autouse=True)
@@ -207,3 +230,91 @@ def test_empty_messages_are_ignored(bridge):
     bridge.handle({"chat": {"id": 7}, "text": "   "})
     bridge.handle({"chat": {"id": 7}})
     assert not bridge._agent.calls
+
+
+# ------------------------------------------------------------- progress
+
+
+def _slow_bridge(progress: list[str] | None = None, turn_seconds: float = 0.45):
+    b = TelegramBridge(token="tok", agent_url="http://x", default_employee="1",
+                       poll_seconds=0.1)
+    b._tg = FakeTelegram()
+    b._agent = FakeAgent(turn_seconds=turn_seconds, progress=progress)
+    return b
+
+
+def test_a_status_message_appears_before_the_answer(bridge):
+    """A minute of silence reads as a broken bot. Something must land at once."""
+    _say(bridge, "вопрос")
+    assert bridge._tg.sent[0].startswith("⏳")
+
+
+def test_the_status_is_edited_rather_than_reposted():
+    """Editing keeps the chat readable; a new message per step would bury the
+    conversation under progress spam."""
+    b = _slow_bridge(["запрашиваю данные… 4 с", "изучаю структуру витрины… 8 с"])
+    _say(b, "вопрос")
+    assert any("запрашиваю данные" in e for e in b._tg.edits)
+    # One status + one answer. Everything else was an edit.
+    assert len(b._tg.sent) == 2
+
+
+def test_progress_from_the_agent_reaches_the_chat():
+    b = _slow_bridge(["изучаю структуру витрины… 6 с, шагов: 2"])
+    _say(b, "вопрос")
+    assert any("изучаю структуру витрины" in e for e in b._tg.edits)
+
+
+def test_an_unchanged_status_is_not_re_edited():
+    """Telegram rate-limits edits per chat, and rewriting identical text is a
+    request that can only fail."""
+    b = _slow_bridge(["одно и то же"] * 6)
+    _say(b, "вопрос")
+    assert b._tg.edits.count("⏳ одно и то же") == 1
+
+
+def test_the_status_ends_as_done():
+    b = _slow_bridge(["запрашиваю данные… 4 с"])
+    _say(b, "вопрос")
+    assert b._tg.edits[-1] == "✅ готово"
+
+
+def test_the_answer_is_still_delivered_verbatim():
+    """The status is an addition, not a replacement. Whatever else happens, the
+    agent's answer must arrive unaltered apart from the diagnostics footer."""
+    b = _slow_bridge(["что-то"])
+    _say(b, "вопрос")
+    assert b._tg.sent[-1].startswith("ответ")
+
+
+def test_a_missing_progress_endpoint_does_not_break_the_turn():
+    """404 is the normal case for the messages_api harness, which registers no
+    progress at all. It must cost the status line, never the answer."""
+    b = _slow_bridge(progress=None)
+    _say(b, "вопрос")
+    assert b._tg.sent[-1].startswith("ответ")
+
+
+def test_a_failing_progress_poll_does_not_break_the_turn():
+    b = _slow_bridge(["ок"])
+
+    def boom(url, timeout=None):
+        raise RuntimeError("progress endpoint exploded")
+
+    b._agent.get = boom
+    # A status poll must never cost a turn the agent is being paid for.
+    try:
+        _say(b, "вопрос")
+    except RuntimeError:
+        raise AssertionError("a broken status poll killed the turn")
+    assert b._tg.sent[-1].startswith("ответ")
+
+
+def test_an_agent_error_is_reported_in_the_status_too():
+    b = _slow_bridge(["ок"])
+    b._agent.post = lambda url, json: (
+        FakeResponse({"session_id": "ses_1"}) if url.endswith("/sessions")
+        else FakeResponse({"detail": "boom"}, status_code=503))
+    _say(b, "вопрос")
+    assert "503" in b._tg.edits[-1]
+    assert "[b2e 503]" in b._tg.sent[-1]

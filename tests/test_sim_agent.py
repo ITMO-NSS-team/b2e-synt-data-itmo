@@ -39,6 +39,7 @@ FINGERPRINT = RunFingerprint.create(
     data_snapshot_hash="heimdall-sandbox@78d53675db91e17f",
     traps_enabled=True,
     latency_profile="instant",
+    hr_employee_ids=[],
 )
 
 

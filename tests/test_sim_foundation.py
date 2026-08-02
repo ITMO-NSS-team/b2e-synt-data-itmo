@@ -13,8 +13,10 @@ import pytest
 from sim import latency
 from sim.fingerprint import (
     FINGERPRINT_FIELDS,
+    NO_HR,
     IncompleteFingerprint,
     RunFingerprint,
+    canonical_hr_ids,
 )
 from sim.registry import Registry, canonical_bytes, sha256_hex
 
@@ -27,6 +29,7 @@ GOOD = dict(
     data_snapshot_hash="heimdall-sandbox@78d53675db91e17f",
     traps_enabled=True,
     latency_profile="realistic",
+    hr_employee_ids=["9877478"],
 )
 
 
@@ -65,6 +68,67 @@ def test_condition_id_distinguishes_the_rq1_variable():
     off = RunFingerprint.create(**{**GOOD, "traps_enabled": False})
     assert on.condition_id != off.condition_id
     assert on.condition_id == RunFingerprint.create(**GOOD).condition_id
+
+
+# ----------------------------------------------------------- the HR grant
+
+
+def test_condition_id_distinguishes_who_holds_hr():
+    """The regression this field exists for.
+
+    HR decides whether a company-wide question is answered or refused — in the
+    deployed corpus a manager sees 21 people and an HR identity sees 294 000, so
+    it is one of the largest effects available on any metric. It lived in `.env`
+    and reached nothing, so two runs differing by it were pooled as one
+    condition.
+    """
+    granted = RunFingerprint.create(**GOOD)
+    nobody = RunFingerprint.create(**{**GOOD, "hr_employee_ids": []})
+    someone_else = RunFingerprint.create(**{**GOOD, "hr_employee_ids": ["111"]})
+    assert len({granted.condition_id, nobody.condition_id,
+                someone_else.condition_id}) == 3
+
+
+def test_no_hr_is_a_condition_rather_than_a_missing_field():
+    """Empty is the *default* experimental condition and must be expressible.
+
+    The completeness check rejects empty strings, so an empty grant has to
+    normalise to a name before it reaches that check — otherwise the commonest
+    configuration in the project could not build a fingerprint at all.
+    """
+    fp = RunFingerprint.create(**{**GOOD, "hr_employee_ids": []})
+    assert fp.hr_employee_ids == NO_HR
+    assert RunFingerprint.create(**{**GOOD, "hr_employee_ids": ""}).hr_employee_ids == NO_HR
+    assert RunFingerprint.create(**{**GOOD, "hr_employee_ids": None}).hr_employee_ids == NO_HR
+
+
+def test_declaring_nothing_at_all_still_raises():
+    """Empty is a condition; *silence* is not. A caller that never mentions the
+    HR grant has not chosen one, and that is the case this module refuses."""
+    partial = {k: v for k, v in GOOD.items() if k != "hr_employee_ids"}
+    with pytest.raises(IncompleteFingerprint):
+        RunFingerprint.create(**partial)
+
+
+def test_the_grant_is_order_and_duplicate_insensitive():
+    """Same people, same condition. Otherwise the grouping key depends on how
+    somebody happened to type the .env line."""
+    a = RunFingerprint.create(**{**GOOD, "hr_employee_ids": ["9", "7"]})
+    b = RunFingerprint.create(**{**GOOD, "hr_employee_ids": ["7", "9", "7"]})
+    assert a.condition_id == b.condition_id
+    assert a.hr_employee_ids == "7,9"
+
+
+def test_a_comma_string_and_a_list_agree():
+    """The value crosses an HTTP boundary, so both shapes reach `create`."""
+    assert (canonical_hr_ids("7, 9") == canonical_hr_ids(["9", "7"]) == "7,9")
+
+
+def test_the_grant_reaches_the_span_attributes():
+    """A field absent from the span cannot be filtered on in Phoenix, which is
+    where the comparison actually gets made."""
+    attrs = RunFingerprint.create(**GOOD).as_span_attributes()
+    assert attrs["b2e.run.hr_employee_ids"] == "9877478"
 
 
 # ------------------------------------------------------------------ latency

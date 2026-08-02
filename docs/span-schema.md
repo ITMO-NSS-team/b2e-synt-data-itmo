@@ -49,7 +49,7 @@ AGENT  turn                                    ← fingerprint lives here
 
 ## 2. The run fingerprint
 
-**Every root span carries all eight fields. A run with any field unset does not
+**Every root span carries all nine fields. A run with any field unset does not
 start.** Enforced in `sim/fingerprint.py`; `RunFingerprint.create` raises
 `IncompleteFingerprint` before a token is spent, and a blank string counts as
 unset because that is how a missing environment variable actually arrives.
@@ -64,9 +64,17 @@ unset because that is how a missing environment variable actually arrives.
 | `b2e.run.data_snapshot_hash` | str | snapshot manifest id |
 | `b2e.run.traps_enabled` | bool | RQ1 independent variable |
 | `b2e.run.latency_profile` | str | `instant` / `realistic` / `degraded` |
+| `b2e.run.hr_employee_ids` | str | sorted ids holding the HR role, or `none` |
 
 Flat scalar keys, not a nested object: OTel attribute values are scalars, and
 Phoenix filters on flat keys.
+
+`hr_employee_ids` is a sorted comma-joined string rather than a list, for that
+same reason, and `none` rather than `""` because an empty string is what this
+module treats as unset — while "nobody holds HR" is the default condition and
+has to be expressible. It is read from the emulator's `/control/healthz`, not
+asserted locally: the service that enforces the grant is the one that gets to
+report it.
 
 `traps_enabled` and `data_snapshot_hash` are both required and are not
 redundant. Traps exist at two layers — channel quirks toggle per request, but the

@@ -141,6 +141,12 @@ class EmulatorState:
             "traps_enabled": self.traps_enabled,
             "latency_profile": self.latency_profile,
             "data_snapshot_hash": self.config.snapshot_id(self.traps_enabled),
+            # Reported here, and not merely on /control/config, because this is
+            # the fragment the agent builds its fingerprint from. The HR grant
+            # decides whether a company-wide question is answered or refused,
+            # which makes it a condition — and a condition the agent must read
+            # from the service that holds it rather than assert for itself.
+            "hr_employee_ids": list(self.config.hr_employee_ids),
         }
 
 
