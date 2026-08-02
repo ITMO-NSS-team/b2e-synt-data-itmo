@@ -2,6 +2,7 @@ PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 export PYTHONPATH := .
 
 OPENAPI ?= Heimdall_openapi.json
+HEIMDALL_URL ?= http://127.0.0.1:8081
 DATA    ?= data
 SEED    ?= 20260801
 N       ?= 300000
@@ -10,7 +11,7 @@ COMPOSE := docker compose -f deploy/docker-compose.yml --env-file deploy/.env
 PROFILE ?=
 
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
-        up down logs ps seed seed-traps-off smoke hash-password openapi \
+        up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
         rebuild sim-test
 
 help:
@@ -74,6 +75,9 @@ seed-traps-off:  ## корпус без каверз — обязателен д
 
 smoke:  ## сквозной путь: вопрос → ответ → трасса → обратная связь → сравнение
 	$(PY) scripts/smoke.py
+
+check-docs:  ## выполнить каждый пример из heimdall-skills против живого эмулятора
+	$(PY) scripts/check_skill_docs.py --url $(HEIMDALL_URL)
 
 hash-password:  ## хэш для BASIC_AUTH_HASH; открытый пароль никуда не пишется
 	@docker run --rm caddy:2.10-alpine caddy hash-password

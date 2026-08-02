@@ -59,11 +59,19 @@ TOOLS = [
     },
     {
         "name": "get_docs",
-        "description": "Документация по теме: описание витрины, правил фильтрации "
-                       "или конкретного приёма. Дешевле, чем describe_model, "
-                       "когда нужно понять смысл, а не перечень колонок.",
-        "inputSchema": {"type": "object", "required": ["topic"],
-                        "properties": {"topic": dict(_STR, description="Тема")}},
+        "description": (
+            "Справочник по контракту канала. Дешевле, чем describe_model, "
+            "когда нужно понять правило, а не перечень колонок.\n\n"
+            "Темы: getting_started (поток вызовов), rules (общие правила), "
+            "rows (плоские строки), aggregate (СЧЁТ И ГРУППИРОВКА), limits "
+            "(ПАГИНАЦИЯ, потолок 1000, молчаливое ужатие), filters (дерево "
+            "фильтров), history (SCD2), param_metrics (члены с аргументами), "
+            "top_n (ранжирование), compare_people, errors (коды отказов). "
+            "Вызов без темы возвращает список доступных."),
+        "inputSchema": {
+            "type": "object", "required": ["topic"],
+            "properties": {"topic": dict(
+                _STR, description="Имя темы, напр. limits или aggregate")}},
     },
     {
         "name": "find_skills",
@@ -99,30 +107,91 @@ TOOLS = [
     },
     {
         "name": "describe_model",
-        "description": "Точные имена колонок, метрик и параметрических членов одной "
-                       "витрины. Имена берутся только отсюда: сервер сверяет каждое "
-                       "с каталогом и отклоняет незнакомое.",
+        "description": (
+            "Точные имена колонок, метрик и параметрических членов одной "
+            "витрины. Имена берутся ТОЛЬКО отсюда: сервер сверяет каждое с "
+            "каталогом и отклоняет незнакомое.\n\n"
+            "columns и metrics — РАЗНЫЕ СПИСКИ, и перепутать их значит получить "
+            "отказ: колонку нельзя запросить в metrics, метрику — в columns. "
+            "Член с полем parameters вызывается только через param_metrics / "
+            "param_columns."),
         "inputSchema": {"type": "object", "required": ["schema", "logic_model"],
                         "properties": {"schema": _STR, "logic_model": _STR}},
     },
     {
         "name": "mcp_query",
-        "description": "Запрос к витрине. Режим выводится из структуры тела: "
-                       "time_dimensions — история, metrics — агрегат, только columns — "
-                       "плоские строки. Лишнее поле отклоняет всё тело.",
+        "description": (
+            "Запрос к витрине. Режим выводится ИЗ СТРУКТУРЫ ТЕЛА, отдельного "
+            "поля режима нет: time_dimensions — история, metrics или "
+            "param_metrics — агрегат, только columns — плоские строки. Лишнее "
+            "поле отклоняет всё тело.\n\n"
+            "ВЫДАЧА ПОСТРАНИЧНАЯ. limit по умолчанию 100, потолок 1000. Ответ — "
+            "{data, limit, offset, has_next_page}. Поле limit в ответе — "
+            "ПРИМЕНЁННОЕ значение, а не запрошенное.\n\n"
+            "ЧТОБЫ ПОСЧИТАТЬ — не вычитывай строки, а бери метрику в режиме "
+            "агрегата: columns это ключи группировки, metrics это то, что "
+            "считается. Счёт по числу вернувшихся строк неверен всегда, когда "
+            "строк больше страницы, и len(data) — это размер страницы, а не "
+            "размер данных."),
         "inputSchema": {
             "type": "object", "required": ["schema", "logic_model"],
             "properties": {
-                "schema": _STR, "logic_model": _STR,
-                "columns": {"type": "array", "items": _STR},
-                "metrics": {"type": "array", "items": _STR},
-                "filters": {"type": "object"},
-                "order_by": {"type": "array", "items": {"type": "object"}},
-                "time_dimensions": {"type": "array", "items": {"type": "object"}},
-                "limit": {"type": "integer"}, "offset": {"type": "integer"},
-                "limit_by": {"type": "object"},
-                "param_metrics": {"type": "array", "items": {"type": "object"}},
-                "param_columns": {"type": "array", "items": {"type": "object"}},
+                "schema": dict(_STR, description="Схема витрины, напр. dm_core"),
+                "logic_model": dict(_STR,
+                                    description="Имя витрины, напр. employee_actual"),
+                "columns": {
+                    "type": "array", "items": _STR,
+                    "description": "Имена колонок из describe_model. В режиме "
+                                   "агрегата это КЛЮЧИ ГРУППИРОВКИ; без них "
+                                   "вернётся одна строка общего итога. Метрику "
+                                   "сюда класть нельзя."},
+                "metrics": {
+                    "type": "array", "items": _STR,
+                    "description": "Имена метрик из describe_model — они и "
+                                   "включают режим агрегата. Колонку сюда "
+                                   "класть нельзя. Для подсчёта людей обычно "
+                                   "fact_count."},
+                "filters": {
+                    "type": "object",
+                    "description": "Дерево фильтров: узлы and/or/not и листья "
+                                   "condition. Грамматика — get_docs('filters')."},
+                "order_by": {
+                    "type": "array", "items": {"type": "object"},
+                    "description": "[{field, kind: column|metric, direction: "
+                                   "asc|desc}]. Обязателен для устойчивой "
+                                   "пагинации: без него порядок строк "
+                                   "произволен и страницы пересекаются."},
+                "time_dimensions": {
+                    "type": "array", "items": {"type": "object"},
+                    "description": "Включает режим истории (SCD2). Несовместим "
+                                   "с параметрическими членами."},
+                "limit": {
+                    "type": "integer",
+                    "description": "Строк на страницу. По умолчанию 100, "
+                                   "потолок 1000. ЗНАЧЕНИЕ ВЫШЕ ПОТОЛКА НЕ "
+                                   "ДАЁТ ОШИБКИ — оно молча ужимается до 1000. "
+                                   "Ровно 1000 строк в ответе означает, что "
+                                   "данные почти наверняка обрезаны: смотри "
+                                   "has_next_page."},
+                "offset": {
+                    "type": "integer",
+                    "description": "Сдвиг для следующей страницы: offset += "
+                                   "limit, пока has_next_page истинно. Только "
+                                   "вместе с order_by."},
+                "limit_by": {
+                    "type": "object",
+                    "description": "{limit, by: [колонки]} — N строк на группу, "
+                                   "напр. по одной последней записи на "
+                                   "сотрудника."},
+                "param_metrics": {
+                    "type": "array", "items": {"type": "object"},
+                    "description": "[{name, args}] для метрик, у которых в "
+                                   "describe_model есть поле parameters. Голым "
+                                   "именем в metrics такая метрика отклоняется."},
+                "param_columns": {
+                    "type": "array", "items": {"type": "object"},
+                    "description": "[{name, args}] для параметрических колонок. "
+                                   "См. get_docs('param_metrics')."},
             },
         },
     },
