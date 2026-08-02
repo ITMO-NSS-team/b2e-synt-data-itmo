@@ -493,6 +493,67 @@ rows", because counting is not something the agent may do locally.
 - The always-safe set is empirical. Nothing documents it as a contract, and a
   future release could widen it.
 
+### 10.8 A refusal that asked the operator for help (2026-08-02)
+
+The matcher held, and the turn still failed — because of what the refusal *said*
+rather than what it did.
+
+A question arrived over the Telegram bridge ("Сколько мужчин и женщин работают в
+компании?"). The agent loaded the Heimdall schemas, called
+`mcp__heimdall__get_overview`, and got back:
+
+```
+Claude requested permissions to use mcp__heimdall__get_overview,
+but you haven't granted it yet.
+```
+
+It answered: *«Мне нужно получить разрешение на доступ к HR-данным Heimdall.
+Пожалуйста, подтвердите доступ к инструментам…»* — and stopped. One API call, no
+data, and a request addressed to nobody: a Telegram bridge has no approval
+channel. Trace `0ac81d7258d1cb0d`, `permission_denials = 1`.
+
+**Two independent defects, both real.**
+
+*The tool was never grantable.* `HARNESS_NOTE` carried a hardcoded ToolSearch
+select-list naming all seven Heimdall tools, while `allowed_tools()` grants only
+those in `config.tool_subset` — which excludes `get_overview`. The note walked
+the agent into a refusal that the configuration made certain. The select-list is
+now generated from `allowed_tools()`, so the two cannot drift again, and the MCP
+bridge is handed the same subset through `HEIMDALL_TOOL_SUBSET` — an
+advertised-but-ungranted tool is one the agent finds by name and spends a turn
+being refused on. This is not a second enforcement layer; the matcher remains the
+boundary. It is the advertised surface telling the truth.
+
+*The refusal read as a pending decision.* Under the default permission mode a
+headless session cannot prompt, but the wording still describes an approval that
+has not happened yet, and the model does the reasonable thing with it. Probed on
+2.1.220, `--permission-mode dontAsk` changes the tool result to:
+
+```
+Permission to use X has been denied because Claude Code is running in
+don't ask mode. IMPORTANT: You *may* attempt to accomplish this action
+using other tools…
+```
+
+Final, and it points at the remaining tools. **It changes the wording of a
+denial, not which tools are denied** — §10.2 and §10.3 are unaffected, and
+`permission_denials` keeps its meaning.
+
+`dontAsk` alone was **not** sufficient: in the probe the model still closed with
+*«Или дать мне явное одобрение на выполнение этого запроса. Что вы хотите
+сделать?»*. The prompt has to say that nobody is listening, so
+`NON_INTERACTIVE_NOTE` now does, in both arms.
+
+Verified end to end through the bridge's own code path after the fix: 18 tool
+calls, 14 of them Heimdall, an answer carrying data and stating the access limit,
+and no `get_overview` denial. The one denial that remains is `Bash` — the agent
+trying to compute, which is exactly what the metric is for.
+
+**The general lesson.** A permission denial is a message to a model, not just a
+control-flow outcome. A boundary can hold perfectly and still lose the turn if
+its refusal is phrased as a question. Any new denial path in this harness must be
+read as prose before it is trusted as a mechanism.
+
 ---
 
 ## 11. The code-execution arm (`code_execution = allowed`)

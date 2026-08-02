@@ -93,7 +93,7 @@ ALWAYS_DENIED = ("WebFetch", "WebSearch", "Task", "Agent", "Artifact",
 #: registry, not data, so it grants the agent no access to anything.
 TOOL_LOADER = "ToolSearch"
 
-#: The six Heimdall tools, as the MCP bridge names them.
+#: The seven Heimdall tools, as the MCP bridge names them.
 #: Must stay in step with `heimdall/bridge.py`'s TOOLS and with the
 #: `all_tools` table in `sim/agent/tools.py`. They had drifted: `get_docs` was in
 #: the default `tool_subset` but absent here, so the claude_code harness silently
@@ -101,42 +101,91 @@ TOOL_LOADER = "ToolSearch"
 #: Under one `agent_config_version` the two harnesses ran with different
 #: capabilities, which makes any harness comparison partly a comparison of tool
 #: surfaces. `tests/test_sim_claude_code.py` now asserts the two agree.
+#:
+#: This tuple is the *vocabulary*, not the grant: what an agent actually gets is
+#: `allowed_tools()` intersected with `config.tool_subset`, and the harness note
+#: is generated from that same call. Nothing may name a Heimdall tool from
+#: anywhere else.
 HEIMDALL_TOOLS = ("get_overview", "get_docs", "find_skills", "get_skill",
                   "list_models", "describe_model", "mcp_query")
 
 MCP_SERVER_NAME = "heimdall"
 
+#: Non-interactive by construction: a refused tool is refused, and the CLI never
+#: waits for an approval that nobody is there to give.
+#:
+#: Under the default mode a headless session cannot prompt either, so the tool
+#: result reads "Claude requested permissions to use X, but you haven't granted
+#: it yet" — a sentence that describes a pending decision. The model does the
+#: reasonable thing with it and asks the operator to approve. On the Telegram
+#: bridge there is no operator, and the turn ends in a question instead of an
+#: answer (trace 0ac81d7258d1cb0d, 2026-08-02).
+#:
+#: ``dontAsk`` states the refusal as final and tells the model to route around
+#: it with the tools it does have. Probed on Claude Code 2.1.220: the tool
+#: result becomes "Permission to use X has been denied because Claude Code is
+#: running in don't ask mode." It changes the wording of a denial, not which
+#: tools are denied — the matcher and ``permission_denials`` are untouched, so
+#: the RQ1 signal keeps its meaning.
+PERMISSION_MODE = "dontAsk"
+
 #: Appended to the system prompt. This is guidance, not enforcement — the
 #: enforcement is the tool policy above. It is here so the agent understands the
 #: shape of its world rather than discovering it through refusals.
+#:
+#: ``{tool_select}`` is filled from the tools the matcher will actually grant,
+#: never from a hardcoded list. The two had drifted: the note named
+#: ``get_overview``, which the default ``tool_subset`` does not grant, so the
+#: agent dutifully loaded its schema, called it, and was refused. A note that
+#: promises more than the allowlist gives does not merely fail to help — it
+#: walks the agent into the one failure mode this channel cannot recover from.
 HARNESS_NOTE_CODE_ALLOWED = """
 Ты работаешь в закрытом контуре.
 
 * Данные — только через инструменты Heimdall. Интернета у тебя нет.
 * Инструменты Heimdall загружаются по требованию: сначала вызови
-  `ToolSearch` с запросом `select:mcp__heimdall__list_models,mcp__heimdall__mcp_query,mcp__heimdall__describe_model,mcp__heimdall__find_skills,mcp__heimdall__get_skill,mcp__heimdall__get_overview`,
-  затем пользуйся ими как обычно.
+  `ToolSearch` с запросом `{tool_select}`,
+  затем пользуйся ими как обычно. Других инструментов Heimdall у тебя нет.
 * **В этом режиме тебе разрешено писать код и выполнять его.** Считай на месте
   то, что дешевле посчитать, чем выспрашивать у API постранично.
 * Числа в ответе должны быть получены из данных API — своими вычислениями или
   напрямую, но не выдуманы.
 * Отказ в доступе (403) — это результат, о котором надо сообщить, а не
   препятствие, которое надо обойти.
-"""
+{non_interactive}"""
 
 HARNESS_NOTE = """
 Ты работаешь в закрытом контуре.
 
 * Данные — только через инструменты Heimdall. Файлов и интернета у тебя нет.
 * Инструменты Heimdall загружаются по требованию: сначала вызови
-  `ToolSearch` с запросом `select:mcp__heimdall__list_models,mcp__heimdall__mcp_query,mcp__heimdall__describe_model,mcp__heimdall__find_skills,mcp__heimdall__get_skill,mcp__heimdall__get_overview`,
-  затем пользуйся ими как обычно.
+  `ToolSearch` с запросом `{tool_select}`,
+  затем пользуйся ими как обычно. Других инструментов Heimdall у тебя нет.
 * Ты **не можешь** написать и выполнить код. Попытка запустить интерпретатор
   будет отклонена средой, а не мной.
 * Готовый код бывает только у одобренного скилла. Запускается он одной
   командой: `{runner} <sha256> '<json>'`. Никаких других команд не будет.
 * Отказ в доступе (403) — это результат, о котором надо сообщить, а не
   препятствие, которое надо обойти.
+{non_interactive}"""
+
+#: The channel has no second party. Shared by both arms, because non-interactivity
+#: is a property of the harness rather than of the code-execution condition.
+#:
+#: It is here and not in the registry system prompt on purpose: the prompt is
+#: committed once at bootstrap and only if absent, so an already-running
+#: deployment stays on ``system_prompt@1`` and would never see the change. It
+#: also keeps the fingerprint honest — a harness fact does not belong to a
+#: versioned experimental prompt.
+NON_INTERACTIVE_NOTE = """\
+* Спрашивать некого. Ответ уходит человеку в мессенджер: никто не подтвердит
+  доступ, не выдаст разрешение и не согласует шаг. Не проси разрешений.
+* Каждый ход самодостаточен. Истории прошлых сообщений у тебя нет, и следующий
+  ход не увидит этого. Встречный вопрос поэтому обрывает разговор, а не
+  продолжает его: вместо вопроса выбери разумное допущение, назови его вслух и
+  доведи ответ до конца.
+* Отказ инструмента окончателен. Это факт среды, а не пауза перед согласованием.
+  Сообщи о нём в ответе и закончи задачу тем, что у тебя осталось.
 """
 
 
@@ -211,24 +260,36 @@ class ClaudeCodeHarness:
 
     # ------------------------------------------------------------- assembly
 
-    def mcp_config(self, employee_id: str) -> dict[str, Any]:
-        """One stdio MCP server, carrying the acting identity.
+    def mcp_config(self, employee_id: str,
+                   config: AgentConfig | None = None) -> dict[str, Any]:
+        """One stdio MCP server, carrying the acting identity and the subset.
 
         The identity is per-session and travels in the server's environment, so
         two concurrent employees genuinely get different answers and different
         403s rather than sharing one privileged connection.
+
+        The subset travels the same way. Without it the server advertises all
+        seven tools while the matcher grants six, and since MCP schemas are
+        deferred the agent finds the seventh by name and spends a turn being
+        refused. Hiding it is not a second enforcement layer — the matcher
+        remains the boundary — it is the tool surface telling the truth.
         """
+        env = {
+            "HEIMDALL_URL": self.heimdall_url,
+            "HEIMDALL_TOKEN": self.heimdall_token,
+            "HEIMDALL_EMPLOYEE_ID": str(employee_id),
+            "HEIMDALL_CHANNEL": "v2",
+        }
+        if config is not None:
+            prefix = f"mcp__{MCP_SERVER_NAME}__"
+            env["HEIMDALL_TOOL_SUBSET"] = ",".join(
+                t.removeprefix(prefix) for t in self.granted_heimdall_tools(config))
         return {
             "mcpServers": {
                 MCP_SERVER_NAME: {
                     "command": self.python_bin,
                     "args": [self.bridge_path],
-                    "env": {
-                        "HEIMDALL_URL": self.heimdall_url,
-                        "HEIMDALL_TOKEN": self.heimdall_token,
-                        "HEIMDALL_EMPLOYEE_ID": str(employee_id),
-                        "HEIMDALL_CHANNEL": "v2",
-                    },
+                    "env": env,
                 }
             }
         }
@@ -253,6 +314,24 @@ class ClaudeCodeHarness:
             tools.append(f"Bash({self.runner_path}:*)")
         return tools
 
+    def granted_heimdall_tools(self, config: AgentConfig) -> list[str]:
+        """The Heimdall tools the matcher will actually let through.
+
+        Derived from ``allowed_tools`` rather than recomputed from the subset, so
+        the note and the allowlist cannot drift apart again: there is one place
+        that decides, and everything else reads it.
+        """
+        prefix = f"mcp__{MCP_SERVER_NAME}__"
+        return [t for t in self.allowed_tools(config) if t.startswith(prefix)]
+
+    def tool_select_query(self, config: AgentConfig) -> str:
+        """The ToolSearch query that loads exactly those tools.
+
+        MCP schemas are deferred in Claude Code 2.1.x, so this string is how the
+        agent comes to possess its tools at all.
+        """
+        return "select:" + ",".join(self.granted_heimdall_tools(config))
+
     def denied_tools(self, config: AgentConfig) -> list[str]:
         if config.code_execution == "allowed":
             return [t for t in DENIED_TOOLS if t not in CODE_EXECUTION_TOOLS]
@@ -272,6 +351,7 @@ class ClaudeCodeHarness:
             "--setting-sources", "",
             "--strict-mcp-config",
             "--mcp-config", mcp_config_path,
+            "--permission-mode", PERMISSION_MODE,
             "--allowed-tools", ",".join(self.allowed_tools(config)),
             "--disallowed-tools", ",".join(self.denied_tools(config)),
             "--append-system-prompt", system_suffix,
@@ -310,11 +390,16 @@ class ClaudeCodeHarness:
         """The prompt must describe the policy the agent actually has.
 
         Telling a code-execution arm that it may not compute would make the
-        comparison a test of prompt compliance rather than of capability.
+        comparison a test of prompt compliance rather than of capability. The
+        same argument applies to the tool list: naming a tool the matcher will
+        refuse is a false description of the world, and the agent pays for it.
         """
+        select = self.tool_select_query(config)
         if config.code_execution == "allowed":
-            return HARNESS_NOTE_CODE_ALLOWED
-        return HARNESS_NOTE.format(runner=self.runner_path)
+            return HARNESS_NOTE_CODE_ALLOWED.format(
+                tool_select=select, non_interactive=NON_INTERACTIVE_NOTE)
+        return HARNESS_NOTE.format(runner=self.runner_path, tool_select=select,
+                                   non_interactive=NON_INTERACTIVE_NOTE)
 
     def run(self, *, question: str, config: AgentConfig, system_prompt: str,
             employee_id: str, keep_stream: bool = True) -> ClaudeCodeResult:
@@ -322,7 +407,7 @@ class ClaudeCodeHarness:
         workdir = Path(self.workdir or tempfile.mkdtemp(prefix="b2e-session-"))
         workdir.mkdir(parents=True, exist_ok=True)
         mcp_path = workdir / "mcp.json"
-        mcp_path.write_text(json.dumps(self.mcp_config(employee_id)), "utf-8")
+        mcp_path.write_text(json.dumps(self.mcp_config(employee_id, config)), "utf-8")
 
         argv = self.build_argv(question, config=config, system_suffix=suffix,
                                mcp_config_path=str(mcp_path))

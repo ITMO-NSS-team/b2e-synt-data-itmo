@@ -273,12 +273,25 @@ silently again.
 
 ## 9 · What is still NOT verified
 
-- **Live model calls do not work with the supplied credential.** The
-  subscription OAuth token is refused with `403 Request not allowed` on all three
-  header forms — a scope restriction, not a configuration error. Full detail and
-  the remedy are in `docs/assumptions.md` A-8. The stack therefore runs in
-  `replay`, and the request/response shaping against the live Anthropic API is
-  unproven. Set `ANTHROPIC_API_KEY` and record cassettes once to close this.
+- **The Messages API path is still unproven against a live credential.** The
+  subscription OAuth token is refused there with `403 Request not allowed` on all
+  three header forms — a scope restriction, not a configuration error
+  (`docs/assumptions.md` A-8). The `claude_code` harness, which is the default,
+  *does* run live: turns through the deployed stack on 2026-08-02 cost ~$0.10 and
+  made real Heimdall calls. The `messages_api` arm still needs
+  `ANTHROPIC_API_KEY` and one cassette recording to close this.
+- **A turn carries no history.** `_run_claude_code` hands the harness the
+  question and nothing else, and `--no-session-persistence` forbids resuming, so
+  every Telegram message is a fresh session. Verified: asked to remember a
+  number, the next turn replied *«В нашем текущем диалоге вы ничего не просили
+  запомнить — это первое ваше сообщение»*. Two consequences. A clarifying
+  question from the agent is unanswerable, which is why `NON_INTERACTIVE_NOTE`
+  tells it to assume rather than ask (§10.8 of the threat model). And
+  `context_strategy` — `full` / `windowed` / `summarised` — is an experimental
+  variable that the **default** harness ignores entirely, so every condition on
+  that axis currently runs the same way while the fingerprint claims otherwise.
+  Fixing it means implementing context packing for `claude_code`; it is a
+  feature, not a patch, and it is not done.
 - **No cassettes are recorded yet**, so a live question through the deployed
   stack returns a replay miss by design rather than silently calling out.
 - **The sandbox's kernel-level controls are configured but not adversarially

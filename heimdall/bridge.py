@@ -18,6 +18,9 @@
 ``HEIMDALL_URL``     адрес эмулятора, по умолчанию http://127.0.0.1:8080
 ``HEIMDALL_TOKEN``   токен технической учётной записи (Authorization: Bearer)
 ``HEIMDALL_CHANNEL`` канал: v1 | v2 | orion, по умолчанию v2
+``HEIMDALL_TOOL_SUBSET`` через запятую: какие инструменты вообще показывать.
+                     Пусто — показывать все (поведение по умолчанию, на нём
+                     держатся автономные прогоны моста вне стенда).
 ``HR_TRACE_LOG``     журнал вызовов (JSONL) — независимый от агента источник трейса
 """
 from __future__ import annotations
@@ -125,7 +128,37 @@ TOOLS = [
     },
 ]
 
-TOOL_INDEX = {tool["name"]: tool for tool in TOOLS}
+def _subset(names: list[str]) -> list[dict]:
+    """Отфильтровать каталог инструментов по ``HEIMDALL_TOOL_SUBSET``.
+
+    Зачем вообще фильтровать. Подмножество инструментов — переменная
+    эксперимента, и харнесс уже сужает по нему список разрешённых. Но мост
+    рекламировал все семь независимо от конфигурации, а схемы MCP в Claude Code
+    2.1.x подгружаются по требованию: агент видел имя ``get_overview``, вызывал
+    его и получал отказ матчера. Отказ — сигнал RQ1 («агент попытался выйти за
+    границу»), и запись о вызове инструмента, который никто не собирался
+    запрещать, этот сигнал портит.
+
+    Порядок и полнота проверяются: незнакомое имя — это опечатка в конфигурации,
+    и молча отдать неполный список хуже, чем упасть на старте.
+    """
+    raw = os.environ.get("HEIMDALL_TOOL_SUBSET", "").strip()
+    if not raw:
+        return TOOLS
+    wanted = [n.strip() for n in raw.split(",") if n.strip()]
+    unknown = sorted(set(wanted) - set(names))
+    if unknown:
+        raise SystemExit(
+            f"HEIMDALL_TOOL_SUBSET содержит неизвестные инструменты: {unknown}; "
+            f"известны: {names}")
+    return [tool for tool in TOOLS if tool["name"] in set(wanted)]
+
+
+_ALL_NAMES = [tool["name"] for tool in TOOLS]
+
+#: То, что мост показывает и соглашается вызывать в этом процессе.
+SERVED_TOOLS = _subset(_ALL_NAMES)
+TOOL_INDEX = {tool["name"]: tool for tool in SERVED_TOOLS}
 
 
 # ------------------------------------------------------------------- запрос
@@ -235,7 +268,7 @@ def handle(request: dict) -> dict | None:
     if method == "ping":
         return _result(request_id, {})
     if method == "tools/list":
-        return _result(request_id, {"tools": TOOLS})
+        return _result(request_id, {"tools": SERVED_TOOLS})
     if method == "tools/call":
         params = request.get("params") or {}
         tool = params.get("name", "")
