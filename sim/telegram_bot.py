@@ -69,9 +69,15 @@ HELP = (
     "Просто напишите вопрос: он уйдёт в агента как есть.\n"
     "Сообщения идут одной сессией — агент помнит предыдущие ходы, "
     "так что уточнения и «а теперь то же самое, но по отделу» работают.\n\n"
+    "Ход занимает от полуминуты до нескольких минут. Пока он идёт, "
+    "сообщение со статусом обновляется на месте — видно, какие витрины "
+    "агент сейчас читает.\n\n"
     "/start_new_session — начать сессию заново, без прежнего контекста\n"
-    "/whoami — какая личность сотрудника сейчас используется\n"
+    "/whoami — личность, сессия и конфигурация\n"
     "/employee <id> — переключить личность\n"
+    "/help — эта справка\n\n"
+    "Это стенд, а не продукт: агент может ошибаться, и проверять его — "
+    "часть работы. Номер trace под каждым ответом ведёт в полную запись хода."
 )
 
 #: ``/new`` predates ``/start_new_session`` and did the same thing. Kept, because
@@ -79,6 +85,24 @@ HELP = (
 #: Telegram does not error on an unknown command, it just forwards the text to
 #: the agent, and the researcher gets an answer to "/new" instead of a reset.
 NEW_SESSION_COMMANDS = ("/start_new_session", "/new")
+
+#: Registered with Telegram at startup so the client shows a "/" menu. Without
+#: this the commands exist but are invisible — discoverable only by reading
+#: /help, which nobody does twice.
+#:
+#: `/new` is deliberately absent: it still works, but listing two names for one
+#: action in a menu invites the reader to look for a difference that is not
+#: there. Descriptions are capped at 256 characters by the Bot API.
+BOT_COMMANDS = [
+    {"command": "start_new_session",
+     "description": "Начать заново — сбросить контекст разговора"},
+    {"command": "whoami",
+     "description": "Личность, сессия и конфигурация"},
+    {"command": "employee",
+     "description": "Сменить личность: /employee <id>"},
+    {"command": "help",
+     "description": "Что это и как пользоваться"},
+]
 
 
 class TelegramBridge:
@@ -285,9 +309,37 @@ class TelegramBridge:
         try:
             self.send(chat_id, self.ask(chat_id, text))
         except httpx.HTTPError as exc:
-            self.send(chat_id, f"[transport] {exc}")
+            # Deliberately not retried. A resend would double-charge a turn that
+            # may well have completed on the agent's side, and it would appear
+            # in the traces as agent behaviour — which is exactly the
+            # contamination this bridge stays thin to avoid. So: say plainly
+            # what is known and let the researcher decide.
+            #
+            # The commonest cause by far is the agent container restarting
+            # mid-turn, which is what a deploy looks like from here.
+            self.send(chat_id,
+                      f"⚠️ связь с агентом оборвалась: {exc}\n\n"
+                      f"Вопрос мог быть выполнен, а мог и нет — я не знаю и не "
+                      f"повторяю его сам, чтобы не оплатить ход дважды. "
+                      f"Обычно это перезапуск агента. Повторите вопрос.")
+
+    def register_commands(self) -> None:
+        """Publish the command menu. Best effort, once, at startup.
+
+        A failure here costs discoverability, not function — every command still
+        works when typed — so it must not stop the bridge from starting. The
+        call is idempotent: Telegram stores the list against the bot, so
+        re-registering an unchanged list is a no-op.
+        """
+        try:
+            reply = self._call("setMyCommands", commands=BOT_COMMANDS)
+            if not reply.get("ok"):
+                log.warning("setMyCommands refused: %s", reply)
+        except httpx.HTTPError as exc:
+            log.warning("could not register the command menu: %s", exc)
 
     def run(self) -> None:
+        self.register_commands()
         log.info("telegram bridge polling, agent=%s", self.agent_url)
         offset = 0
         while True:
@@ -314,6 +366,11 @@ class TelegramBridge:
 def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # httpx logs the full request URL at INFO, and every Bot API URL contains
+    # the bot token — so an hour of polling writes the credential into the
+    # container log a hundred times, where `docker logs` hands it to anyone who
+    # can read it. Warnings still come through; only the per-request line goes.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     TelegramBridge(
         token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         agent_url=os.environ.get("B2E_AGENT_URL", "http://b2e-agent:8082"),

@@ -13,12 +13,14 @@ are about dispatch and state rather than about httpx.
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
+import httpx
 import pytest
 
-from sim.telegram_bot import NEW_SESSION_COMMANDS, TelegramBridge
+from sim.telegram_bot import BOT_COMMANDS, NEW_SESSION_COMMANDS, TelegramBridge
 
 
 class FakeResponse:
@@ -71,9 +73,13 @@ class FakeTelegram:
     def __init__(self) -> None:
         self.sent: list[str] = []
         self.edits: list[str] = []
+        self.registered: list[dict[str, Any]] | None = None
         self.counter = 0
 
     def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+        if url.endswith("setMyCommands"):
+            self.registered = json.get("commands")
+            return FakeResponse({"ok": True})
         if url.endswith("editMessageText"):
             self.edits.append(json.get("text", ""))
             return FakeResponse({"ok": True})
@@ -187,6 +193,47 @@ def test_start_still_prints_help_and_does_not_reset(bridge):
 def test_help_advertises_the_reset_command(bridge):
     _say(bridge, "/help")
     assert "/start_new_session" in bridge._tg.sent[0]
+
+
+# --------------------------------------------------------- command menu
+
+
+def test_the_command_menu_is_registered(bridge):
+    """Without setMyCommands the commands exist but are invisible — findable
+    only by reading /help, which nobody does twice."""
+    bridge.register_commands()
+    assert bridge._tg.registered is not None
+    names = [c["command"] for c in bridge._tg.registered]
+    assert "start_new_session" in names and "whoami" in names
+
+
+def test_menu_command_names_are_valid_for_telegram(bridge):
+    """The Bot API rejects the whole list if any entry is malformed, so one bad
+    name costs the entire menu rather than one row."""
+    for entry in BOT_COMMANDS:
+        name = entry["command"]
+        assert re.fullmatch(r"[a-z0-9_]{1,32}", name), name
+        assert not name.startswith("/"), name
+        assert 0 < len(entry["description"]) <= 256, name
+
+
+def test_every_menu_command_is_actually_handled(bridge):
+    """A menu that offers a command the bot ignores is worse than no menu: the
+    text falls through and the agent answers the word "/whoami"."""
+    for entry in BOT_COMMANDS:
+        b = _slow_bridge(turn_seconds=0.0)
+        _say(b, f"/{entry['command']}")
+        forwarded = [u for u, _ in b._agent.calls if u.endswith("/messages")]
+        assert not forwarded, entry["command"]
+
+
+def test_a_failed_registration_does_not_stop_the_bridge(bridge):
+    """Discoverability is not worth a bot that will not start."""
+    def boom(url, json):
+        raise httpx.ConnectError("telegram unreachable")
+
+    bridge._tg.post = boom
+    bridge.register_commands()          # must not raise
 
 
 # ------------------------------------------------- command boundaries
