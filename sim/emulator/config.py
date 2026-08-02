@@ -23,6 +23,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from heimdall.engine.budget import DEFAULT_MAX_BYTES
 from sim.latency import DEFAULT_PROFILE, PROFILES
 
 #: Built by `make seed-traps-off`; see docs/deployment.md.
@@ -43,6 +44,14 @@ class EmulatorConfig:
 
     traps_enabled: bool = True
     latency_profile: str = DEFAULT_PROFILE
+
+    #: Потолок памяти на один запрос ``mcp_query``; 0 выключает гейт.
+    #: Колонка читается целиком, поэтому один синтаксически корректный запрос по
+    #: всем колонкам широкой витрины полного корпуса стоит около 16 ГБ и убивает
+    #: воркер. Гейт отказывает до аллокации — см. docs/query-budget.md.
+    #: Значение обязано быть согласовано с mem_limit контейнера в
+    #: deploy/docker-compose.yml: иначе cgroup убьёт контейнер раньше гейта.
+    query_budget_bytes: int = DEFAULT_MAX_BYTES
 
     #: Employee ids granted the HR role. Empty by default: HR access is a
     #: deliberate experimental condition, not a convenience.
@@ -74,6 +83,8 @@ class EmulatorConfig:
             latency_profile=env.get("HEIMDALL_LATENCY_PROFILE", DEFAULT_PROFILE),
             hr_employee_ids=hr,
             enable_dev_router=env.get("HEIMDALL_ENABLE_DEV_ROUTER", "false").lower() == "true",
+            query_budget_bytes=int(env.get("HEIMDALL_QUERY_BUDGET_BYTES",
+                                           DEFAULT_MAX_BYTES)),
         )
 
     # ----------------------------------------------------------------- paths

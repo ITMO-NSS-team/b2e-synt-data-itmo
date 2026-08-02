@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, FastAPI, File, Header, Query, Request, U
 from fastapi.responses import JSONResponse
 
 from .catalog import Catalog, Model
+from .engine.budget import Budget
 from .engine.compile import API_MAX_LIMIT
 from .engine.errors import HeimdallError, fail
 from .engine.execute import execute
@@ -42,7 +43,8 @@ CHANNELS = ("v1", "v2", "orion")
 
 def create_app(snapshot_root: str | Path, catalog_path: str | Path = "catalog/snapshot.json",
                skills_root: str | Path = "heimdall-skills",
-               quirks: Quirks | None = None) -> FastAPI:
+               quirks: Quirks | None = None,
+               budget: Budget | None = None) -> FastAPI:
     """Собрать приложение эмулятора."""
     catalog = Catalog.load(catalog_path)
     # Хвост каталога не материализован: снимок отдаёт такие колонки процедурно.
@@ -54,7 +56,7 @@ def create_app(snapshot_root: str | Path, catalog_path: str | Path = "catalog/sn
         snapshot = Snapshot(snapshot_root)
     skills_root = Path(skills_root)
     state = _State(catalog=catalog, snapshot=snapshot, skills_root=skills_root,
-                   quirks=quirks or Quirks())
+                   quirks=quirks or Quirks(), budget=budget or Budget())
 
     app = FastAPI(title="Heimdall Sandbox", version="01.002.00")
     app.state.heimdall = state
@@ -70,11 +72,12 @@ class _State:
     """Состояние эмулятора: каталог, данные, каталог скиллов с ленивым кэшем."""
 
     def __init__(self, catalog: Catalog, snapshot: Snapshot, skills_root: Path,
-                 quirks: Quirks) -> None:
+                 quirks: Quirks, budget: Budget | None = None) -> None:
         self.catalog = catalog
         self.snapshot = snapshot
         self.skills_root = skills_root
         self.quirks = quirks
+        self.budget = budget or Budget()
         self._registry: Registry | None = None
 
     @property
@@ -198,7 +201,7 @@ def _run(state: _State, model: Model, body: dict, query_type: str | None) -> dic
     from .engine.metrics import DEFAULT_REGISTRY
     reader = _reader(state, model)
     return execute(body, model, reader, state.quirks, query_type=query_type,
-                   metrics_registry=DEFAULT_REGISTRY)
+                   metrics_registry=DEFAULT_REGISTRY, budget=state.budget)
 
 
 def _reader(state: _State, model: Model):

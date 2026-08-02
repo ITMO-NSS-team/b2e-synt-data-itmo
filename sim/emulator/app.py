@@ -384,6 +384,7 @@ def _error_response(status: int, code: str, detail: str, hint: str):
 
 def create_app(config: EmulatorConfig | None = None) -> FastAPI:
     from heimdall.app import create_app as create_heimdall_app
+    from heimdall.engine.budget import Budget
     from heimdall.engine.quirks import ALL_QUIRKS, Quirks
 
     config = config or EmulatorConfig.from_env()
@@ -393,7 +394,8 @@ def create_app(config: EmulatorConfig | None = None) -> FastAPI:
     snapshot_root = config.snapshot_for(config.traps_enabled)
 
     app = create_heimdall_app(snapshot_root, config.catalog_path,
-                              config.skills_root, quirks=quirks)
+                              config.skills_root, quirks=quirks,
+                              budget=Budget(config.query_budget_bytes))
     app.title = "Heimdall Emulator (simulation)"
     app.state.sim = state
     state.catalog = getattr(app.state, "heimdall", None) and app.state.heimdall.catalog

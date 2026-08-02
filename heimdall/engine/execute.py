@@ -15,6 +15,8 @@ import math
 from typing import Any, Callable, Protocol
 
 from ..catalog.model import Model
+from . import budget as budget_mod
+from .budget import Budget
 from .compile import MODE_AGGREGATE, MODE_HISTORY, MODE_ROWS, Plan, compile_query
 from .errors import fail
 from .filters import collect_columns, evaluate
@@ -32,10 +34,18 @@ class Reader(Protocol):
 
 def execute(body: dict, model: Model, reader: Reader, quirks: Quirks | None = None,
             *, query_type: str | None = None,
-            metrics_registry: dict | str = DEFAULT_REGISTRY) -> dict:
+            metrics_registry: dict | str = DEFAULT_REGISTRY,
+            budget: Budget | None = None) -> dict:
     """Исполнить тело ``mcp_query`` и вернуть конверт ответа."""
     quirks = quirks or Quirks()
     plan = compile_query(body, model, quirks)
+    specs = _metric_specs(plan, metrics_registry)
+
+    # Гейт стоит здесь, а не перед `_prefetch`: фильтры поднимают колонки в
+    # `evaluate`, то есть раньше него, а режим истории до него не доходит вовсе.
+    budget_mod.enforce(model, referenced_column_names(plan, specs), reader.rows,
+                       budget or Budget())
+
     provider = _lazy_provider(reader)
 
     if plan.mode == MODE_HISTORY:
@@ -46,7 +56,6 @@ def execute(body: dict, model: Model, reader: Reader, quirks: Quirks | None = No
     mask = evaluate(plan.filters, model, reader.rows, provider, quirks)
     kept = [i for i, ok in enumerate(mask) if ok]
 
-    specs = _metric_specs(plan, metrics_registry)
     _prefetch(plan, provider, specs)
 
     if plan.mode == MODE_AGGREGATE:
@@ -85,16 +94,27 @@ def _lazy_provider(reader: Reader) -> Callable[[str], list[Any]]:
     return get
 
 
-def _prefetch(plan: Plan, provider: Callable[[str], list[Any]],
-              specs: dict[str, MetricSpec]) -> None:
-    """Тронуть все нужные колонки один раз — чтобы кэш читателя сработал."""
+def referenced_column_names(plan: Plan, specs: dict[str, MetricSpec]) -> set[str]:
+    """Все колонки, которые запрос поднимет: проекция, фильтры, сортировка,
+    limit_by и определения метрик.
+
+    Одно определение на двоих: по нему и считается бюджет, и делается
+    предзагрузка. Гейт, который меряет не то множество, которое потом читается,
+    хуже отсутствия гейта — поэтому расхождение здесь невозможно по построению.
+    """
     wanted = set(plan.columns) | collect_columns(plan.filters)
     wanted |= {o["field"] for o in plan.order_by}
     if plan.limit_by:
         wanted |= set(plan.limit_by["by"])
     for spec in specs.values():
         wanted |= referenced_columns(spec)
-    for name in sorted(wanted):
+    return wanted
+
+
+def _prefetch(plan: Plan, provider: Callable[[str], list[Any]],
+              specs: dict[str, MetricSpec]) -> None:
+    """Тронуть все нужные колонки один раз — чтобы кэш читателя сработал."""
+    for name in sorted(referenced_column_names(plan, specs)):
         provider(name)
 
 

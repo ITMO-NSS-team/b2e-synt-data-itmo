@@ -124,12 +124,17 @@ services:
       HEIMDALL_LATENCY_PROFILE: ${LATENCY_PROFILE:-realistic}
       HEIMDALL_ENABLE_DEV_ROUTER: "false"   # see docs/skill-execution-threat-model.md §1.1
       HEIMDALL_HR_EMPLOYEE_IDS: ${HR_EMPLOYEE_IDS:-}
+      HEIMDALL_QUERY_BUDGET_BYTES: ${QUERY_BUDGET_BYTES:-4294967296}
     volumes:
       - ${DATA_DIR:-../data-small}:/data/snapshot:ro
       - ${DATA_DIR_NOTRAPS:-../data-small}:/data/snapshot-notraps:ro
       - ../heimdall-skills:/app/heimdall-skills:ro
     networks: [internal]
-    mem_limit: 512m
+    # Должен быть выше HEIMDALL_QUERY_BUDGET_BYTES, иначе cgroup убьёт контейнер
+    # раньше, чем сработает гейт, и вместо ошибки запроса получится потерянный
+    # прогон. 4 ГиБ бюджета + запас на интерпретатор и кэш читателя.
+    # См. docs/query-budget.md.
+    mem_limit: 5g
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/control/healthz',timeout=5).status==200 else 1)\""]
       interval: 15s
