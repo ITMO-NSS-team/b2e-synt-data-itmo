@@ -12,6 +12,14 @@
 	# This deployment uses TLS_MODE=internal anyway, so ACME is not in play.
 	admin off
 	auto_https disable_redirects
+
+	# Клиент, пришедший по IP, не посылает SNI — по спецификации TLS туда можно
+	# положить только имя. Без SNI Caddy не может выбрать сертификат из
+	# нескольких и рвёт рукопожатие с internal error: браузер на
+	# https://<адрес> получает не предупреждение о самоподписанном
+	# сертификате, а вообще ничего. Этот адрес и есть основной способ сюда
+	# попасть, поэтому для соединений без SNI задаётся имя по умолчанию.
+	default_sni {$DEFAULT_SNI}
 }
 
 {$PUBLIC_HOST} {

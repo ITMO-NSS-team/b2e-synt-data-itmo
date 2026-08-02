@@ -51,6 +51,9 @@ services:
       - caddy_config:/config
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+      # Имя для соединений без SNI — то есть для всех, кто пришёл по IP.
+      # Обычно совпадает с публичным адресом; см. комментарий в Caddyfile.
+      DEFAULT_SNI: ${DEFAULT_SNI:?set DEFAULT_SNI in .env (usually the public address)}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?run `make hash-password` and set it in .env}
       # `internal` for an IP-only host (Caddy mints its own certificate), or an
       # ACME email address when PUBLIC_HOST is a real DNS name.

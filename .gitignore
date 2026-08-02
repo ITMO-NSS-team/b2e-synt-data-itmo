@@ -20,7 +20,9 @@ data-small/
 # --- simulation environment -------------------------------------------------
 # Secrets. Never commit. If one is ever pasted into a chat, rotate it.
 deploy/.env
+deploy/.env.bak-*
 .env
+*.env.bak
 
 # Runtime state: registries, session stores, spool. Reproducible, not source.
 var/
