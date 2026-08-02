@@ -417,6 +417,14 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
             detail=f"harness=claude_code but the CLI is {state.harness_status}. "
                    f"Install it, or set harness=messages_api in the agent config.")
 
+    guard = _guard_for(metadata.get("experiment_id", "")) if metadata else None
+    if guard is not None:
+        # Checked before the session starts, and the spend recorded after. The
+        # claude_code arm did neither, so in the DEFAULT harness the ceiling
+        # could never trip and the kill switch had nothing to stop — a batch
+        # reported spent_usd=0.0 while running real paid turns.
+        guard.check_before_call()
+
     with telemetry.start_run(
         "b2e.turn", fingerprint=fingerprint, session_id=session_id,
         employee_id=session["employee_id"], metadata=metadata, question=question,
@@ -426,6 +434,9 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
             question=question, config=config, system_prompt=system_prompt,
             employee_id=session["employee_id"], keep_stream=False)
         emit_spans(outcome, root=root, config=config)
+
+    if guard is not None:
+        guard.record(tokens=outcome.total_tokens, usd=outcome.cost_usd)
 
     if outcome.is_error and not outcome.answer:
         raise HTTPException(502, f"claude session failed: {outcome.error[:500]}")
@@ -469,11 +480,35 @@ def _memory_block(config: AgentConfig, session: dict[str, Any]) -> str:
 
 
 def _load_basket_questions(basket_id: str | None) -> list[str]:
+    """Resolve a basket selector to concrete question texts.
+
+    ``basket_id`` selects a slice: ``all``, a family (``key_employees``), or a
+    category (``prompt_injection``). It used to be passed positionally to
+    ``load_basket``, whose parameters are keyword-only — so every documented
+    basket run raised TypeError and returned a 500. The path had never worked.
+    """
+    from sim.oracle.basket import CATEGORIES, FAMILIES, load_basket
+
+    selector = (basket_id or "all").strip()
     try:
-        from sim.oracle.basket import load_basket
-    except ImportError:
-        raise HTTPException(503, "question basket is not available in this build")
-    return [q.text for q in load_basket(basket_id)]
+        if selector in ("all", ""):
+            questions = load_basket()
+        elif selector in FAMILIES:
+            questions = load_basket(families=[selector])
+        elif selector in CATEGORIES:
+            questions = load_basket(categories=[selector])
+        else:
+            raise HTTPException(
+                422, f"unknown basket_id {selector!r}; expected 'all', a family "
+                     f"{list(FAMILIES)}, or a category {list(CATEGORIES)}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, f"basket could not be loaded: {exc}") from exc
+
+    if not questions:
+        raise HTTPException(422, f"basket_id {selector!r} selected no questions")
+    return [q.text for q in questions]
 
 
 def _run_experiment(state: AgentState, job_id: str, questions: list[str],

@@ -62,7 +62,12 @@ def main(argv: list[str]) -> int:
         return emit({"ok": False, "error": {
             "kind": "runner", "detail": f"cannot load the skill store: {exc}"}}, 1)
 
-    registry = Registry(os.environ.get("B2E_REGISTRY_DB", "/app/var/registry.db"))
+    # Read-only: this process only needs to resolve an approved hash. Opening
+    # it writable would let arbitrary skill code — which is what runs one layer
+    # down — flip its own draft to active and satisfy the digest check without
+    # a human ever approving anything.
+    registry = Registry(os.environ.get("B2E_REGISTRY_DB", "/app/registry/registry.db"),
+                        readonly=True)
     try:
         store = SkillStore(registry)
         try:

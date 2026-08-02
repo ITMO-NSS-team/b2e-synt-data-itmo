@@ -103,8 +103,26 @@ class Version:
 class Registry:
     """Append-only config store. Thread-safe; safe across processes via WAL."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, readonly: bool = False) -> None:
+        """Open the config and approval store.
+
+        ``readonly=True`` opens with SQLite's ``mode=ro`` and skips schema
+        creation. It exists because the threat model states the approved store
+        is not writable by the agent uid, and the deployment did the opposite:
+        the agent container mounted it read-write, so in the code-execution arm
+        a single UPDATE could self-approve every draft the agent had written —
+        the digest re-check would still pass, since the bytes never changed and
+        only the state row moved.
+        """
         self.path = Path(path)
+        self.readonly = readonly
+        if readonly:
+            self._conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True,
+                                         check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._lock = threading.Lock()
+            return
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)

@@ -21,7 +21,7 @@ import os
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -149,9 +149,16 @@ def create_app(state: ResearchState | None = None) -> FastAPI:
     # -------------------------------------------------------- experiments
 
     @app.post("/experiments", status_code=202, summary="Launch a batch run")
-    def create_experiment(payload: ExperimentIn) -> JSONResponse:
-        headers = ({"Idempotency-Key": payload.idempotency_key}
-                   if payload.idempotency_key else {})
+    def create_experiment(
+        payload: ExperimentIn,
+        idempotency_key: str | None = Header(default=None),
+    ) -> JSONResponse:
+        # Accept the key from the header as well as the body. The header is what
+        # a client naturally sends and what the agent service expects, and
+        # reading only the body meant a correctly-formed retry silently launched
+        # a second paid batch — the exact failure the key exists to prevent.
+        key = idempotency_key or payload.idempotency_key
+        headers = {"Idempotency-Key": key} if key else {}
         body = payload.model_dump(exclude={"idempotency_key"})
         response = state.agent("POST", "/experiments", json=body, headers=headers)
         if response.status_code >= 400:

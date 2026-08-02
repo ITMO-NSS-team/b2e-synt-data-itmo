@@ -153,16 +153,22 @@ class Store:
     def create_job(self, *, request: dict[str, Any],
                    idempotency_key: str | None) -> tuple[str, bool]:
         """Returns (job_id, created). ``created=False`` means the key was reused."""
-        if idempotency_key:
-            row = self._conn.execute(
-                "SELECT id FROM jobs WHERE idempotency_key = ?",
-                (idempotency_key,)).fetchone()
-            if row is not None:
-                return row["id"], False
-
+        # The lookup and the insert must be one atomic step. They were not: the
+        # SELECT ran outside the lock, so two concurrent submissions could both
+        # find nothing before either inserted, and the loser's own generated id
+        # was returned as if it had been created. Reproduced at 4 failures in 6
+        # runs — meaning a researcher who retried a dropped connection could
+        # launch a second paid batch, which is the precise thing this key exists
+        # to prevent.
         job_id = f"exp_{uuid.uuid4().hex[:20]}"
         now = time.time()
         with self._lock:
+            if idempotency_key:
+                row = self._conn.execute(
+                    "SELECT id FROM jobs WHERE idempotency_key = ?",
+                    (idempotency_key,)).fetchone()
+                if row is not None:
+                    return row["id"], False
             try:
                 self._conn.execute(
                     "INSERT INTO jobs(id, idempotency_key, status, created_at, "
@@ -171,7 +177,8 @@ class Store:
                      json.dumps(request, ensure_ascii=False)))
                 self._conn.commit()
             except sqlite3.IntegrityError:
-                # Lost a race on the unique key: return the winner's job.
+                # Belt and braces: the UNIQUE constraint is the last word even if
+                # another process (not just another thread) inserted meanwhile.
                 row = self._conn.execute(
                     "SELECT id FROM jobs WHERE idempotency_key = ?",
                     (idempotency_key,)).fetchone()

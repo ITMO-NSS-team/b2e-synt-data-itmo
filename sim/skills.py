@@ -142,8 +142,13 @@ class SkillStore:
 
     def __init__(self, registry: Registry) -> None:
         self.registry = registry
-        self.registry._conn.executescript(SCHEMA)
-        self.registry._conn.commit()
+        # A read-only registry cannot run DDL. The skill runner opens the store
+        # read-only precisely so that arbitrary code in the agent's container
+        # cannot promote its own drafts, and unconditional schema creation would
+        # make that open fail.
+        if not getattr(registry, "readonly", False):
+            self.registry._conn.executescript(SCHEMA)
+            self.registry._conn.commit()
 
     # ------------------------------------------------------------- creation
 
@@ -176,6 +181,18 @@ class SkillStore:
 
         existing = self.get(code_hash)
         if existing is not None:
+            # Returning the existing record is right — approval is pinned to the
+            # hash, so identical bytes are the same artefact. Not auditing the
+            # attempt was not: an upload of bytes that already exist as an ACTIVE
+            # skill under another name produced no audit entry at all, and the
+            # operator saw a redirect to a skill they did not create.
+            self.registry.audit_write(
+                actor=author, action=f"{action}.duplicate",
+                target=f"{name}@{code_hash[:12]}",
+                detail={"detail": "identical bytes already exist; nothing created",
+                        "existing_name": existing.name,
+                        "existing_state": existing.state.value,
+                        "requested_name": name, "code_hash": code_hash})
             return existing
 
         now = time.time()
@@ -214,10 +231,21 @@ class SkillStore:
 
         now = time.time()
         with self.registry._lock:
-            self.registry._conn.execute(
-                "UPDATE skills SET state = ?, updated_at = ? WHERE code_hash = ?",
-                (to.value, now, code_hash))
+            # Conditional on the state we validated against. The previous
+            # unconditional UPDATE made the transition table advisory under
+            # concurrency: two admin requests both read `pending_review`, one
+            # wrote `rejected` and the other `approved`, last write won, and the
+            # audit log showed two legal-looking transitions from the same prior
+            # state. A rejected skill could end up approved.
+            cursor = self.registry._conn.execute(
+                "UPDATE skills SET state = ?, updated_at = ? "
+                "WHERE code_hash = ? AND state = ?",
+                (to.value, now, code_hash, record.state.value))
             self.registry._conn.commit()
+            if cursor.rowcount == 0:
+                raise LifecycleError(
+                    f"{record.name} is no longer in state {record.state.value}; "
+                    f"another actor changed it first. Re-read and retry.")
         self.registry.audit_write(
             actor=actor, action="skill.transition",
             target=f"{record.name}@{code_hash[:12]}",

@@ -28,6 +28,7 @@ networks:
 
 volumes:
   pgdata:
+  agent_data:
   phoenix_data:
   registry_data:
   spool:
@@ -178,7 +179,7 @@ services:
       HEIMDALL_TOKEN: ${HEIMDALL_TOKEN:-sim-technical-account}
       B2E_LLM_MODE: ${B2E_LLM_MODE:-replay}
       B2E_CASSETTES: /app/cassettes
-      B2E_REGISTRY_DB: /app/var/registry.db
+      B2E_REGISTRY_DB: /app/registry/registry.db
       B2E_AGENT_DB: /app/var/agent.db
       PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-sim}
@@ -199,7 +200,11 @@ services:
       HTTPS_PROXY: ${AGENT_HTTP_PROXY:-http://host.docker.internal:10809}
       NO_PROXY: localhost,127.0.0.1,::1,heimdall-emulator,phoenix,postgres,research-api,admin-ui,host.docker.internal
     volumes:
-      - registry_data:/app/var
+      # The approval store is READ-ONLY here. The threat model says the agent
+      # uid cannot write it; mounting it rw made that false, and in the
+      # code-execution arm one UPDATE self-approves every draft.
+      - registry_data:/app/registry:ro
+      - agent_data:/app/var
       - ../cassettes:/app/cassettes
       - spool:/spool
     networks: [edge, internal]
@@ -228,7 +233,7 @@ services:
       uvicorn --factory sim.admin.app:create_app
               --host 0.0.0.0 --port 8084 --workers 1
     environment:
-      B2E_REGISTRY_DB: /app/var/registry.db
+      B2E_REGISTRY_DB: /app/registry/registry.db
       HEIMDALL_URL: http://heimdall-emulator:8081
       B2E_AGENT_URL: http://b2e-agent:8082
       # Deep links for the browser. Separate from PUBLIC_HOST because that may
@@ -236,7 +241,7 @@ services:
       PHOENIX_PUBLIC_URL: ${PUBLIC_URL:-https://localhost}/phoenix
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
-    volumes: [registry_data:/app/var]
+    volumes: [registry_data:/app/registry]
     networks: [edge, internal]
     mem_limit: 192m
     depends_on: [b2e-agent]
@@ -279,11 +284,21 @@ services:
   telegram-bot:
     <<: [*python-image, *hardening]
     command: python -m sim.telegram_bot
+    # api.telegram.org is only reachable from this host through the same proxy
+    # Anthropic needs. Without this the bot polls forever and answers nobody,
+    # which is indistinguishable from the bot not being deployed at all.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       B2E_AGENT_URL: http://b2e-agent:8082
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_DEFAULT_EMPLOYEE: ${TELEGRAM_DEFAULT_EMPLOYEE:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      TELEGRAM_DEFAULT_EMPLOYEE: ${TELEGRAM_DEFAULT_EMPLOYEE:?set TELEGRAM_DEFAULT_EMPLOYEE in .env}
+      HTTP_PROXY: ${AGENT_HTTP_PROXY:-http://172.20.0.1:10810}
+      HTTPS_PROXY: ${AGENT_HTTP_PROXY:-http://172.20.0.1:10810}
+      NO_PROXY: localhost,127.0.0.1,::1,b2e-agent,heimdall-emulator,phoenix
     networks: [edge, internal]
     mem_limit: 128m
+    # NOTE: profile "telegram" means `make up` does NOT start this. Use
+    # `make up PROFILE=telegram`, or the bot silently does not exist.
     profiles: ["telegram"]
     depends_on: [b2e-agent]
