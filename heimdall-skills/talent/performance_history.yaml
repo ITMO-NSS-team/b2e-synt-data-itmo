@@ -1,0 +1,72 @@
+name: performance_history
+title: История оценок результативности сотрудника
+kind: recipe
+version: 1.0.0
+domain: talent
+order: 30
+description: >
+  Оценки по кварталам: год, квартал, результативность, соблюдение стандартов.
+  Отвечает на «как он оценивался», «динамика результативности», «последняя
+  оценка».
+tags: [оценка, результативность, performance, эффективность, динамика, аттестация, 9-box]
+rest_equivalent: true
+
+model:
+  schema: dm_core
+  logic_model: employee_actual
+
+params:
+  - name: employee_id
+    target: filters.value
+    substitutes: "\"9877478\""
+    required: true
+    description: Табельный номер сотрудника.
+
+query:
+  schema: dm_core
+  logic_model: employee_actual
+  columns:
+    - employee_id
+    - employee_full_name
+    - estimation.year
+    - estimation.quarter
+    - estimation.performance
+    - estimation.standards
+  filters:
+    type: condition
+    column: employee_id
+    operator: "="
+    value: "9877478"
+  limit: 20
+
+output:
+  - field: estimation.year
+    title: Массив годов оценки
+  - field: estimation.quarter
+    title: Массив кварталов, параллелен году
+  - field: estimation.performance
+    title: Массив оценок результативности
+  - field: estimation.standards
+    title: Массив оценок соблюдения стандартов
+
+notes:
+  - >
+    estimation.* — ВЛОЖЕННЫЕ колонки: возвращается по массиву на каждую, и
+    i-й элемент каждого массива относится к одной и той же оценке. Читать надо
+    по позициям, а не по отдельным спискам: estimation.year[i] с
+    estimation.quarter[i] и estimation.performance[i].
+  - >
+    Порядок элементов внутри массива не гарантирован сортировкой запроса.
+    «Последняя оценка» — это максимум по паре (year, quarter), а не последний
+    элемент массива.
+  - >
+    Оценка отсутствует у части сотрудников. Пустой массив означает «не
+    оценивался», а не «оценка нулевая».
+  - >
+    Потенциала в этой витрине нет — 9-box по ней целиком не собрать. Вторую ось
+    ищите в dm_special.employee_competence_actual и скажите прямо, если её нет.
+
+related:
+  - {name: competence_profile, relation: follow_up, note: вторая ось оценки}
+  - {name: rows, relation: prerequisite, note: плоские строки}
+  - {name: history, relation: alternative, note: если нужен срез на дату}

@@ -106,6 +106,43 @@ def test_the_skill_library_is_not_empty():
     assert "limits.md" in docs and "aggregate.md" in docs
 
 
+def test_the_library_ships_runnable_recipes():
+    """References explain the mechanism; recipes answer an actual HR question.
+    Without the second kind `find_skills("кто мой преемник")` has nothing to
+    return but a document about pagination."""
+    from heimdall.skills.registry import Registry
+
+    registry = Registry.load(SKILLS)
+    recipes = [n for n in registry.all_names()
+               if registry.get(n).kind == "recipe"]
+    assert len(recipes) >= 5, recipes
+
+
+def test_every_recipe_carries_a_runnable_query():
+    """`get_skill` presents the query as "executes as is". An empty or partial
+    one turns that promise into a trap."""
+    from heimdall.skills.registry import Registry
+
+    registry = Registry.load(SKILLS)
+    for name in registry.all_names():
+        skill = registry.get(name)
+        if skill.kind != "recipe":
+            continue
+        assert skill.query, name
+        assert skill.query.get("schema") and skill.query.get("logic_model"), name
+
+
+def test_a_readme_is_not_mistaken_for_a_skill():
+    """It has no frontmatter, so it parsed as a broken reference and sat in
+    files() as a permanent error — which teaches the reader to ignore that
+    list, and hides the next real failure behind it."""
+    from heimdall.skills.registry import Registry
+
+    registry = Registry.load(SKILLS)
+    broken = [(str(f.path), f.error) for f in registry.files() if not f.ok]
+    assert not broken, broken
+
+
 def test_the_library_covers_the_pagination_hazard():
     text = (SKILLS / "general" / "limits.md").read_text("utf-8")
     assert "has_next_page" in text

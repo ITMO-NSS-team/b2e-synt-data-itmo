@@ -47,6 +47,18 @@
 		-Server
 	}
 
+	# A bare /admin does not match `handle_path /admin/*`, so it fell through to
+	# the catch-all below and answered the fallback sentence with 200 — which
+	# reads as "this is the whole site" rather than "you are one slash short".
+	#
+	# The slash also decides how relative links resolve: at /admin the browser's
+	# base is /, so every nav link in the UI would point at the site root. The
+	# redirect is therefore load-bearing, not cosmetic.
+	redir /admin /admin/ 308
+	redir /research /research/ 308
+	redir /agent /agent/ 308
+	redir /phoenix /phoenix/ 308
+
 	# ---- research API (C4)
 	handle_path /research/* {
 		reverse_proxy research-api:8083

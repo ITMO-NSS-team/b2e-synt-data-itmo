@@ -39,16 +39,34 @@ FENCE = re.compile(r"```json[ \t]*\r?\n(.*?)```", re.S)
 
 
 def examples(root: Path):
-    """(file, index, body) for every JSON block that is a full query body."""
+    """(file, label, body) for everything in the library that claims to run.
+
+    Two sources, because the library has two shapes. A reference (``.md``)
+    teaches a mechanism and carries fenced examples; a recipe (``.yaml``) *is* a
+    query, and its ``query`` block is handed to the agent as "executes as is" —
+    which is a promise worth checking, since the agent will not second-guess it.
+    """
     for path in sorted(root.rglob("*.md")):
         for i, block in enumerate(FENCE.findall(path.read_text("utf-8"))):
             try:
                 body = json.loads(block)
             except ValueError:
-                yield path, i, None          # malformed JSON is itself a defect
+                yield path, f"#{i}", None    # malformed JSON is itself a defect
                 continue
             if isinstance(body, dict) and body.get("schema") and body.get("logic_model"):
-                yield path, i, body
+                yield path, f"#{i}", body
+
+    import yaml
+
+    for path in sorted(list(root.rglob("*.yaml")) + list(root.rglob("*.yml"))):
+        try:
+            meta = yaml.safe_load(path.read_text("utf-8")) or {}
+        except Exception:                                 # noqa: BLE001
+            yield path, ":yaml", None
+            continue
+        query = meta.get("query")
+        if isinstance(query, dict) and query.get("schema") and query.get("logic_model"):
+            yield path, ":query", query
 
 
 def main() -> int:
@@ -67,10 +85,10 @@ def main() -> int:
     client = httpx.Client(base_url=args.url, trust_env=False, timeout=180)
 
     checked = failed = 0
-    for path, index, body in examples(Path(args.skills)):
-        name = f"{path.name}#{index}"
+    for path, label, body in examples(Path(args.skills)):
+        name = f"{path.name}{label}"
         if body is None:
-            print(f"[FAIL] {name}: block is not valid JSON")
+            print(f"[FAIL] {name}: not parseable")
             failed += 1
             continue
         checked += 1

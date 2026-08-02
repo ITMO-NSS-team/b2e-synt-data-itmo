@@ -78,6 +78,10 @@ def create_app(state: ResearchState | None = None) -> FastAPI:
     app = FastAPI(
         title="B2E research API",
         version="0.1.0",
+        # Published under /research with the prefix stripped; see the note in
+        # sim/agent/app.py. Without this the Swagger page cannot load its own
+        # schema.
+        root_path=os.environ.get("B2E_ROOT_PATH", ""),
         description=(
             "Read/write API for researchers. Thin layer over Phoenix and the run "
             "store. Traces live in Phoenix; feedback is stored as Phoenix "

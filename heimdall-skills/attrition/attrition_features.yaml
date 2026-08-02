@@ -1,0 +1,74 @@
+name: attrition_features
+title: Признаки модели оттока по сотруднику
+kind: recipe
+version: 1.0.0
+domain: attrition
+order: 40
+description: >
+  Витрина фич модели оттока: возраст, грейд, дни с последнего отпуска,
+  больничные, отпускное поведение. Отвечает на «что известно про риск ухода» —
+  но самой оценки риска здесь нет.
+tags: [отток, увольнение, риск ухода, churn, attrition, удержание, выгорание]
+rest_equivalent: true
+
+model:
+  schema: dm_special
+  logic_model: churn_model_metrics
+
+params:
+  - name: person_id
+    target: filters.value
+    substitutes: "\"ba85d7f9-6e45-43b6-a3d3-0694cfbeed0d\""
+    required: true
+    description: >
+      UUID сотрудника. ВНИМАНИЕ: эта витрина ключуется по person_id, а не по
+      табельному номеру. Табельный сначала переводится в person_id через
+      dm_core.employee_actual.
+
+query:
+  schema: dm_special
+  logic_model: churn_model_metrics
+  columns:
+    - person_id
+    - report_date
+    - age
+    - pos_grade_num
+    - days_since_last_vacation
+    - illness_days_12m_sum
+  filters:
+    type: condition
+    column: person_id
+    operator: "="
+    value: "ba85d7f9-6e45-43b6-a3d3-0694cfbeed0d"
+  order_by:
+    - {field: report_date, kind: column, direction: desc}
+  limit: 12
+
+output:
+  - field: report_date
+    title: Дата среза; на одного человека приходится много строк
+  - field: days_since_last_vacation
+    title: Дней с последнего отпуска
+  - field: illness_days_12m_sum
+    title: Больничных дней за 12 месяцев
+
+notes:
+  - >
+    ЭТО ПРИЗНАКИ, А НЕ ПРЕДСКАЗАНИЕ. Витрина не содержит вероятности ухода и не
+    ранжирует людей по риску. Утверждение «сотрудник в зоне риска» из этих
+    колонок не следует — сообщите значения и скажите, что оценки риска в
+    доступных данных нет.
+  - >
+    Ключ — person_id, не employee_id. Фильтр по табельному здесь просто ничего
+    не найдёт, и пустая выдача будет выглядеть как «данных нет».
+  - >
+    На человека приходится по строке на отчётную дату. Без order_by по
+    report_date «текущее» значение получается случайным.
+  - >
+    Разрез по всей компании считайте метрикой employee_count в режиме
+    агрегата, а не перечнем строк.
+
+related:
+  - {name: aggregate, relation: follow_up, note: посчитать по группам}
+  - {name: limits, relation: prerequisite, note: одна страница это не популяция}
+  - {name: rows, relation: prerequisite, note: плоские строки и сортировка}

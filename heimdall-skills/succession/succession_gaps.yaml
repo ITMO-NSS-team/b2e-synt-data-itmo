@@ -1,0 +1,75 @@
+name: succession_gaps
+title: Роли без преемников
+kind: recipe
+version: 1.0.0
+domain: succession
+order: 21
+description: >
+  Кто остался без кадрового резерва — сотрудники, у которых successors_qty
+  равен нулю. Отвечает на «где у нас дыры в преемственности» и «у кого нет
+  скамейки».
+tags: [резерв, дыры, без преемников, риск преемственности, скамейка, succession gap]
+rest_equivalent: true
+
+model:
+  schema: dm_core
+  logic_model: employee_actual
+
+params:
+  - name: fblock_name
+    target: filters.conditions[1].value
+    substitutes: "\"Розничный бизнес\""
+    required: false
+    description: >
+      Ограничить блоком. Без этого фильтра выборка охватывает всю компанию и
+      почти наверняка упрётся в потолок страницы.
+  - name: limit
+    target: limit
+    substitutes: "100"
+    required: false
+    description: Строк на страницу, потолок 1000.
+
+query:
+  schema: dm_core
+  logic_model: employee_actual
+  columns:
+    - employee_id
+    - employee_full_name
+    - position_name
+    - fblock_name
+    - successors_qty
+  filters:
+    type: and
+    conditions:
+      - {type: condition, column: successors_qty, operator: "=", value: 0}
+      - {type: condition, column: fblock_name, operator: "=", value: "Розничный бизнес"}
+  order_by:
+    - {field: employee_id, kind: column, direction: asc}
+  limit: 100
+
+output:
+  - field: employee_id
+    title: Табельный номер — по нему утверждение проверяемо
+  - field: position_name
+    title: Должность, оставшаяся без резерва
+  - field: successors_qty
+    title: Всегда 0 в этой выборке
+
+notes:
+  - >
+    СКОЛЬКО их — считайте отдельным агрегатом, а не длиной этой выдачи: здесь
+    страница, а не популяция. Тот же фильтр плюс metrics [fact_count] без
+    columns даст точное число.
+  - >
+    order_by по employee_id стоит не для красоты: без детерминированной
+    сортировки страницы пересекаются и пропускают записи, и обход по offset
+    даёт неверный список.
+  - >
+    Ноль преемников у рядового сотрудника — норма, а не проблема. Осмысленно
+    это в основном для руководящих должностей; отфильтруйте по position_name
+    или по грейду, прежде чем называть результат риском.
+
+related:
+  - {name: successors_of_employee, relation: alternative, note: преемники одного человека}
+  - {name: limits, relation: prerequisite, note: почему нельзя считать строками}
+  - {name: headcount_by_dimension, relation: follow_up, note: посчитать, а не перечислить}

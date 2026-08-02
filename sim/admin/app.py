@@ -60,9 +60,24 @@ button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .warn{border-left:3px solid var(--no);padding:.5rem .8rem;margin:.8rem 0;background:rgba(179,38,30,.06)}
 """
 
-NAV = [("/", "Overview"), ("/prompt", "System prompt"), ("/skills", "Skills"),
-       ("/config", "Model"), ("/emulator", "Traps &amp; latency"),
-       ("/traces", "Traces"), ("/audit", "Audit")]
+#: Navigation, as *relative* references.
+#:
+#: The proxy publishes this app under /admin and strips the prefix, so the app
+#: cannot know its own mount point — and a root-anchored link to /config
+#: therefore sent the browser to https://host/config, which is not a route and
+#: renders as the proxy's fallback text. Every link in the UI was broken; only
+#: typing /admin/config by hand worked.
+#:
+#: Relative references fix it without the app having to know anything. From
+#: /admin/config the base is /admin/, so "config" resolves to /admin/config;
+#: running bare on :8084 the base is /, and the same string resolves to
+#: /config. One spelling, correct under both mounts.
+#:
+#: `.` rather than "" for Overview: an empty href means "this page" and would
+#: make the tab a no-op on every page but the root.
+NAV = [(".", "Overview"), ("prompt", "System prompt"), ("skills", "Skills"),
+       ("config", "Model"), ("emulator", "Traps &amp; latency"),
+       ("traces", "Traces"), ("audit", "Audit")]
 
 
 def esc(value: Any) -> str:
@@ -171,7 +186,7 @@ def create_app(state: AdminState | None = None) -> FastAPI:
 <table><tr><th>name</th><th>version</th><th>last actor</th></tr>{rows}</table>
 
 <h2>Skills</h2>
-<p><a href="/skills">{len(pending)} awaiting review</a> ·
+<p><a href="skills">{len(pending)} awaiting review</a> ·
 {len(drafts)} draft (agent-authored) · {len(active)} active</p>
 <p class=mut>Signed in as {esc(actor)}.</p>
 """
@@ -209,7 +224,7 @@ def create_app(state: AdminState | None = None) -> FastAPI:
                         + "\n".join(lines) + "</pre>"
 
         versions = "".join(
-            f'<tr><td><a href="/prompt?version={v.version}"><code>{esc(v.ref)}</code></a></td>'
+            f'<tr><td><a href="prompt?version={v.version}"><code>{esc(v.ref)}</code></a></td>'
             f'<td class=mut>{esc(v.actor)}</td><td class=mut>{esc(v.note)}</td>'
             f'<td><code>{esc(v.hash[:12])}</code></td></tr>' for v in history)
 
@@ -217,7 +232,7 @@ def create_app(state: AdminState | None = None) -> FastAPI:
 <h2>System prompt — editing {esc(chosen.ref)}</h2>
 <p class=mut>Saving appends a new version. Nothing is edited in place, so every
 trace recorded against an older version can still resolve it.</p>
-<form method=post action="/prompt">
+<form method=post action="prompt">
 {csrf_input(token)}
 <textarea name=template>{esc(text)}</textarea>
 <div class=row><input name=note placeholder="why this change" size=48>
@@ -237,7 +252,7 @@ trace recorded against an older version can still resolve it.</p>
         verify_csrf(request, csrf_token)
         state.registry.commit("system_prompt", "prompt", {"template": template},
                               actor=actor, note=note)
-        return RedirectResponse("/prompt", status_code=303)
+        return RedirectResponse("prompt", status_code=303)
 
     # -------------------------------------------------------------- skills
 
@@ -294,7 +309,7 @@ the digest above, so any edit produces a different hash with no approval.</p>
             if not records:
                 return f"<h2>{esc(title)}</h2><p class=mut>none</p>"
             rows = "".join(
-                f'<tr><td><a href="/skills?show={esc(r.code_hash)}">{esc(r.name)}</a></td>'
+                f'<tr><td><a href="skills?show={esc(r.code_hash)}">{esc(r.name)}</a></td>'
                 f'<td><code>{esc(r.code_hash[:12])}</code></td>'
                 f'<td class=mut>{esc(r.author)}</td></tr>' for r in records)
             return (f"<h2>{esc(title)}</h2><table>"
@@ -305,7 +320,7 @@ the digest above, so any edit produces a different hash with no approval.</p>
 <h2>Upload a skill</h2>
 <p class=mut>Uploaded skills enter as <code>pending_review</code>. Upload is not
 approval.</p>
-<form method=post action="/skills/upload">
+<form method=post action="skills/upload">
 {csrf_input(token)}
 <div class=row><input name=name placeholder="skill name" required></div>
 <textarea name=code placeholder="def run(payload): ..."></textarea>
@@ -328,7 +343,7 @@ approval.</p>
         verify_csrf(request, csrf_token)
         record = state.skills.upload(name=name, definition={"name": name},
                                      code=code, actor=actor)
-        return RedirectResponse(f"/skills?show={record.code_hash}", status_code=303)
+        return RedirectResponse(f"skills?show={record.code_hash}", status_code=303)
 
     @app.post("/skills/transition")
     def transition_skill(request: Request, code_hash: str = Form(...),
@@ -343,7 +358,7 @@ approval.</p>
                                     is_human_action=True)
         except Exception as exc:
             raise HTTPException(409, str(exc)) from exc
-        return RedirectResponse(f"/skills?show={code_hash}", status_code=303)
+        return RedirectResponse(f"skills?show={code_hash}", status_code=303)
 
     # --------------------------------------------------------------- config
 
@@ -387,7 +402,7 @@ approval.</p>
         body = f"""
 <h2>Model parameters — {esc(version.ref)}</h2>
 {code_warning}
-<form method=post action="/config">
+<form method=post action="config">
 {csrf_input(token)}
 <table>
 {field("model_id", current.model_id)}
@@ -440,7 +455,7 @@ code, so the combination is refused rather than silently mislabelled.</p>
             raise HTTPException(422, str(exc)) from exc
         state.registry.commit("agent_config", "agent", updated, actor=actor,
                               note=str(form.get("note", "")))
-        return RedirectResponse("/config", status_code=303)
+        return RedirectResponse("config", status_code=303)
 
     # ------------------------------------------------------------- emulator
 
@@ -453,7 +468,7 @@ code, so the combination is refused rather than silently mislabelled.</p>
 <h2>Traps and latency</h2>
 <p class=mut>These are the two independent variables. Both appear in the run
 fingerprint, so switching one makes subsequent runs a different condition.</p>
-<form method=post action="/emulator">
+<form method=post action="emulator">
 {csrf_input(token)}
 <div class=row>
 <label>traps_enabled
@@ -489,7 +504,7 @@ traps-off label.</p>
             detail={"requested": {"traps_enabled": traps_enabled,
                                   "latency_profile": latency_profile},
                     "result": result})
-        return RedirectResponse("/emulator", status_code=303)
+        return RedirectResponse("emulator", status_code=303)
 
     # --------------------------------------------------------------- traces
 
@@ -542,7 +557,7 @@ lands here with actor and timestamp.</p>
 
 def _action_form(token: str, code_hash: str, to: str, label: str,
                  primary: bool = False) -> str:
-    return (f'<form method=post action="/skills/transition" style="display:inline">'
+    return (f'<form method=post action="skills/transition" style="display:inline">'
             f'{csrf_input(token)}'
             f'<input type=hidden name=code_hash value="{esc(code_hash)}">'
             f'<input type=hidden name=to value="{esc(to)}">'

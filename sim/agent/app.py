@@ -254,7 +254,15 @@ class AgentState:
 
 def create_app(state: AgentState | None = None) -> FastAPI:
     state = state or AgentState()
+    # The proxy publishes this service under /agent and strips the prefix, so
+    # the app never sees it in a path. Without `root_path` the Swagger page
+    # served at /agent/docs asks the browser for /openapi.json — an absolute
+    # URL that misses this service entirely and lands on the proxy's fallback
+    # text, which Swagger reports as "the definition does not specify a valid
+    # version field". Nothing is broken except the one link that makes the page
+    # useful, which is why it survived being "verified" as a 200.
     app = FastAPI(title="B2E agent", version="0.1.0",
+                  root_path=os.environ.get("B2E_ROOT_PATH", ""),
                   description="The agent under test. Multi-tenant, fully traced.")
     app.state.sim = state
 

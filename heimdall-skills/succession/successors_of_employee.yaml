@@ -1,0 +1,81 @@
+name: successors_of_employee
+title: Преемники конкретного сотрудника
+kind: recipe
+version: 1.0.0
+domain: succession
+order: 20
+description: >
+  Кто числится преемником у данного человека, в каком статусе и с какой даты
+  назначения. Отвечает на «кто может меня заменить» и «кто преемник у
+  руководителя такого-то».
+tags: [преемник, преемники, кадровый резерв, замена, successors, скамейка, кто заменит]
+rest_equivalent: true
+
+model:
+  schema: dm_core
+  logic_model: employee_actual
+
+params:
+  - name: employee_id
+    target: filters.value
+    substitutes: "\"9877478\""
+    required: true
+    description: >
+      Табельный номер сотрудника, чьих преемников ищем. Не ФИО — поиск по имени
+      делается отдельно, через condition_like по employee_full_name.
+
+query:
+  schema: dm_core
+  logic_model: employee_actual
+  columns:
+    - employee_id
+    - employee_full_name
+    - position_name
+    - successors_qty
+    - successors.full_name
+    - successors.status
+    - successors.appoint_date
+  filters:
+    type: condition
+    column: employee_id
+    operator: "="
+    value: "9877478"
+  limit: 20
+
+output:
+  - field: successors_qty
+    title: Сколько преемников числится. Ноль — это ответ, а не отсутствие данных.
+  - field: successors.full_name
+    title: Массив ФИО преемников; параллелен остальным successors.*
+  - field: successors.status
+    title: Статус готовности преемника
+  - field: successors.appoint_date
+    title: Дата назначения преемником
+
+notes:
+  - >
+    Колонки successors.* — ВЛОЖЕННЫЕ: каждая приходит отдельным массивом.
+    По контракту i-е элементы относятся к одному преемнику.
+  - >
+    НО В ЭТОМ КОРПУСЕ МАССИВЫ РВАНЫЕ: у одного и того же человека
+    successors.status может содержать три элемента, successors.full_name два, а
+    successors.employee_id один. Сопоставление по индексу тогда молча
+    приписывает статус не тому человеку. Проверьте длины, прежде чем связывать
+    поля, и если они расходятся — сообщите то, в чём уверены (число преемников
+    из successors_qty, набор статусов), и прямо скажите, что сопоставить их с
+    именами по этим данным нельзя.
+  - >
+    successors.full_name в этом корпусе местами заполнено служебными словами
+    вроде «итоговый» — это артефакт генератора, а не имя. Не выдавайте такое за
+    ФИО: сошлитесь на successors.employee_id, он проверяем.
+  - >
+    successors_qty = 0 означает, что преемников нет. Это законный ответ:
+    сообщите его прямо, а не как «данных не нашлось».
+  - >
+    Резерв — это признак в данных, а не ваша оценка. Не выводите преемника из
+    результативности или грейда, если его нет в successors.*
+
+related:
+  - {name: succession_gaps, relation: alternative, note: где преемников нет вовсе}
+  - {name: rows, relation: prerequisite, note: плоские строки}
+  - {name: filters, relation: prerequisite, note: как отобрать одного человека}

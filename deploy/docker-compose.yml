@@ -206,6 +206,10 @@ services:
       # (HOME, project dir) and needs both stable to resume.
       B2E_SESSION_ROOT: /app/var/sessions
       B2E_CLAUDE_HOME: /app/var/claude-home
+      # The proxy publishes this service under /agent and strips the prefix.
+      # FastAPI needs to be told, or the Swagger page it serves asks the browser
+      # for /openapi.json — an absolute URL that never reaches this app.
+      B2E_ROOT_PATH: /agent
       # Egress to Anthropic goes through the host's proxy. NO_PROXY must list
       # every internal name, or Heimdall and Phoenix calls would be tunnelled
       # out to the internet and fail.
@@ -235,6 +239,9 @@ services:
       B2E_AGENT_URL: http://b2e-agent:8082
       PHOENIX_URL: http://phoenix:6006
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-sim}
+      # Published under /research with the prefix stripped; same reason as the
+      # agent above.
+      B2E_ROOT_PATH: /research
     networks: [edge, internal]
     mem_limit: 256m
     depends_on: [b2e-agent, phoenix]

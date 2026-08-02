@@ -1,0 +1,63 @@
+name: headcount_by_dimension
+title: Численность в разрезе любого признака
+kind: recipe
+version: 1.0.0
+domain: org
+order: 10
+description: >
+  Сколько сотрудников в компании, в блоке, по полу, по грейду — одним
+  агрегирующим запросом. Берите это вместо вычитывания строк: перечень людей
+  ограничен страницей в 1000, а метрика считает всех.
+tags: [численность, сколько сотрудников, headcount, штат, распределение, пол, грейд, блок, agregate]
+rest_equivalent: true
+
+model:
+  schema: dm_core
+  logic_model: employee_actual
+
+params:
+  - name: group_column
+    target: columns[0]
+    substitutes: "\"fblock_name\""
+    required: false
+    description: >
+      Колонка-разрез. Проверено: gender (пол), fblock_name (функциональный
+      блок), company (юрлицо), position_name (должность). Подойдёт любая
+      колонка из describe_model.
+  - name: limit
+    target: limit
+    substitutes: "50"
+    required: false
+    description: Сколько групп вернуть. Групп обычно немного.
+
+query:
+  schema: dm_core
+  logic_model: employee_actual
+  columns: [fblock_name]
+  metrics: [fact_count]
+  order_by:
+    - {field: fact_count, kind: metric, direction: desc}
+  limit: 50
+
+output:
+  - field: fblock_name
+    title: Значение разреза; имя колонки меняется вместе с group_column.
+  - field: fact_count
+    title: Фактическая численность в этой группе.
+
+notes:
+  - >
+    columns здесь — КЛЮЧ ГРУППИРОВКИ, а не поле выдачи. Уберите его целиком —
+    получите одну строку с общим итогом по компании.
+  - >
+    Не считайте людей длиной списка строк. Выдача постранична, потолок 1000, и
+    ровно 1000 строк почти всегда означает, что данные обрезаны. См. limits.
+  - >
+    fact_count — фактическая численность, она меньше числа строк в витрине:
+    уволенные в неё не входят. Если нужен другой счёт, посмотрите остальные
+    метрики в describe_model.
+
+related:
+  - {name: aggregate, relation: prerequisite, note: как устроен режим агрегата}
+  - {name: limits, relation: prerequisite, note: почему не считают строками}
+  - {name: org_units_by_block, relation: follow_up, note: разрез по подразделениям}

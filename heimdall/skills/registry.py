@@ -143,6 +143,13 @@ class Registry:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.suffix not in EXTENSIONS:
                 continue
+            # A README is documentation *of* the directory, not a skill in it.
+            # Without this it is parsed as a reference, fails for want of
+            # frontmatter, and sits in `files()` as a permanent error — which
+            # trains whoever reads that list to ignore it, and the next real
+            # parse failure goes unnoticed behind it.
+            if path.stem.upper() == "README":
+                continue
             try:
                 skill = _parse(path)
             except Exception as exc:  # noqa: BLE001 — любой отказ разбора

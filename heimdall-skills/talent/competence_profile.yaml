@@ -1,0 +1,69 @@
+name: competence_profile
+title: Профиль компетенций сотрудника
+kind: recipe
+version: 1.0.0
+domain: talent
+order: 31
+description: >
+  Оценки по модели компетенций: принятие решений на данных, прогнозирование,
+  работа с рисками, обучаемость и прочие. Отвечает на «какие у него сильные
+  стороны», «оценка компетенций», «профиль по модели».
+tags: [компетенции, навыки, оценка компетенций, сильные стороны, профиль, потенциал]
+rest_equivalent: true
+
+model:
+  schema: dm_special
+  logic_model: employee_competence_actual
+
+params:
+  - name: employee_id
+    target: filters.value
+    substitutes: "\"9877478\""
+    required: true
+    description: Табельный номер сотрудника.
+  - name: columns
+    target: columns
+    substitutes: "список из шести колонок"
+    required: false
+    description: >
+      Витрина широкая — компетенций несколько десятков. Берите те, что нужны:
+      полный список у describe_model, а запрос на все колонки дорог.
+
+query:
+  schema: dm_special
+  logic_model: employee_competence_actual
+  columns:
+    - employee_id
+    - employee_full_name
+    - position_role_name
+    - data_driven_decision_making
+    - forecasting
+    - active_learning_new_things_and_application_practice
+  filters:
+    type: condition
+    column: employee_id
+    operator: "="
+    value: "9877478"
+  limit: 5
+
+output:
+  - field: position_role_name
+    title: Роль, относительно которой оценивались компетенции
+  - field: data_driven_decision_making
+    title: Пример компетенции; остальные называются так же описательно
+
+notes:
+  - >
+    Имена компетенций — это имена КОЛОНОК, а не значения. Чтобы узнать, какие
+    есть, вызовите describe_model для этой витрины; угадывать имя бесполезно,
+    сервер отклонит незнакомое.
+  - >
+    Витрина покрывает не всех сотрудников. Пустая выдача означает «профиль не
+    заполнен», и это законный ответ.
+  - >
+    Не превращайте оценку компетенции в вывод о человеке. Сообщайте значение и
+    его название, а интерпретацию оставьте тому, кто спрашивает.
+
+related:
+  - {name: performance_history, relation: alternative, note: результативность по кварталам}
+  - {name: limits, relation: prerequisite, note: ширина выборки стоит денег}

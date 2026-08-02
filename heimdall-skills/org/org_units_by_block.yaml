@@ -1,0 +1,55 @@
+name: org_units_by_block
+title: Подразделения по функциональным блокам
+kind: recipe
+version: 1.0.0
+domain: org
+order: 11
+description: >
+  Сколько подразделений в каждом блоке по справочнику оргструктуры. Отвечает на
+  «как устроена структура», «сколько подразделений», «какие блоки есть».
+tags: [оргструктура, подразделения, блоки, структура, org structure, иерархия]
+rest_equivalent: true
+
+model:
+  schema: dm_core
+  logic_model: org_structure
+
+params:
+  - name: group_column
+    target: columns[0]
+    substitutes: "\"oshs_fblock_name\""
+    required: false
+    description: >
+      Разрез. oshs_fblock_name — функциональный блок, unit_level — уровень
+      иерархии, unit_type — тип единицы, company — юрлицо.
+
+query:
+  schema: dm_core
+  logic_model: org_structure
+  columns: [oshs_fblock_name]
+  metrics: [unit_count]
+  order_by:
+    - {field: unit_count, kind: metric, direction: desc}
+  limit: 25
+
+output:
+  - field: oshs_fblock_name
+    title: Функциональный блок
+  - field: unit_count
+    title: Число подразделений в блоке
+
+notes:
+  - >
+    Это справочник ПОДРАЗДЕЛЕНИЙ, а не людей: unit_count считает единицы
+    структуры. Численность сотрудников — headcount_by_dimension по
+    employee_actual, и путать их значит отвечать не на тот вопрос.
+  - >
+    Внутренние узлы дерева в этом корпусе пустые: люди сидят в листьях. Из
+    «в блоке 4031 подразделение» не следует ничего о том, сколько там людей.
+  - >
+    Чтобы развернуть иерархию, смотрите unit_id_tree и unit_name_tree — они
+    несут путь от корня, а не только собственное имя единицы.
+
+related:
+  - {name: headcount_by_dimension, relation: alternative, note: считать людей, а не единицы}
+  - {name: aggregate, relation: prerequisite, note: режим агрегата}
