@@ -85,6 +85,45 @@ class AgentState:
         self.client = build_client(self.llm_mode, self.cassette_dir)
         self._bootstrap_registry()
         self.tracing = self._configure_tracing()
+        # Set before the build so /healthz has something to report even if the
+        # build raises for a reason we did not anticipate.
+        self.harness_status = "unknown"
+        try:
+            self.harness = self._build_harness()
+        except Exception as exc:                              # pragma: no cover
+            self.harness = None
+            self.harness_status = f"failed: {type(exc).__name__}: {exc}"
+
+    def _build_harness(self):
+        """The Claude Code harness, or None if the CLI is unavailable.
+
+        Absence is reported through /healthz rather than raised at import: the
+        messages_api harness still works without the CLI, and a service that
+        refuses to start would take the whole stack down over an optional
+        dependency.
+        """
+        from shutil import which
+
+        from sim.agent.claude_code import ClaudeCodeHarness
+
+        env = os.environ
+        claude_bin = env.get("B2E_CLAUDE_BIN", "claude")
+        if which(claude_bin) is None:
+            self.harness_status = f"unavailable: {claude_bin} not on PATH"
+            return None
+
+        proxy = {k: env[k] for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
+                 if env.get(k)}
+        self.harness_status = f"ready ({claude_bin}), proxy={'yes' if proxy else 'no'}"
+        return ClaudeCodeHarness(
+            heimdall_url=self.heimdall_url,
+            heimdall_token=self.heimdall_token,
+            bridge_path=env.get("B2E_MCP_BRIDGE", "/app/heimdall/bridge.py"),
+            runner_path=env.get("B2E_SKILL_RUNNER", "/opt/skills/run"),
+            claude_bin=claude_bin,
+            proxy=proxy,
+            timeout_seconds=int(env.get("B2E_TURN_TIMEOUT", "600")),
+        )
 
     def _configure_tracing(self) -> str:
         """Point the tracer at Phoenix, or say plainly that it is not exporting.
@@ -186,7 +225,8 @@ def create_app(state: AgentState | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
         return {"status": "ok", "llm_mode": state.llm_mode,
-                "heimdall": state.heimdall_url, "tracing": state.tracing}
+                "heimdall": state.heimdall_url, "tracing": state.tracing,
+                "harness": state.harness_status}
 
     @app.post("/sessions", status_code=201)
     def create_session(payload: CreateSession) -> dict[str, Any]:
@@ -224,25 +264,32 @@ def create_app(state: AgentState | None = None) -> FastAPI:
             **config.prompt_variables,
         })
 
-        tools = HeimdallTools(state.heimdall_url,
-                              employee_id=session["employee_id"],
-                              token=state.heimdall_token)
-        try:
-            state.store.append_message(session_id=session_id, role="user",
-                                       content=payload.content)
-            result = run_turn(
-                question=payload.content,
-                history=state.store.history_for_model(session_id)[:-1],
-                config=config, system_prompt=system_prompt,
-                client=state.client, tools=tools, fingerprint=fingerprint,
-                session_id=session_id, employee_id=session["employee_id"],
-                metadata={"question_id": payload.question_id,
-                          "employee_role": session["metadata"].get("role")},
-            )
-        except ReplayMiss as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        finally:
-            tools.close()
+        state.store.append_message(session_id=session_id, role="user",
+                                   content=payload.content)
+        metadata = {"question_id": payload.question_id,
+                    "employee_role": session["metadata"].get("role")}
+
+        if config.harness == "claude_code":
+            result = _run_claude_code(state, session, config, system_prompt,
+                                      payload.content, fingerprint, session_id,
+                                      metadata)
+        else:
+            tools = HeimdallTools(state.heimdall_url,
+                                  employee_id=session["employee_id"],
+                                  token=state.heimdall_token)
+            try:
+                result = run_turn(
+                    question=payload.content,
+                    history=state.store.history_for_model(session_id)[:-1],
+                    config=config, system_prompt=system_prompt,
+                    client=state.client, tools=tools, fingerprint=fingerprint,
+                    session_id=session_id, employee_id=session["employee_id"],
+                    metadata=metadata,
+                )
+            except ReplayMiss as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            finally:
+                tools.close()
 
         state.store.append_message(
             session_id=session_id, role="assistant", content=result.answer,
@@ -337,6 +384,53 @@ def create_app(state: AgentState | None = None) -> FastAPI:
         return guard.status()
 
     return app
+
+
+def _run_claude_code(state: "AgentState", session: dict[str, Any],
+                     config: AgentConfig, system_prompt: str, question: str,
+                     fingerprint: RunFingerprint, session_id: str,
+                     metadata: dict[str, Any]) -> "TurnResult":
+    """Run one turn as a headless Claude Code session, traced like any other.
+
+    The root span is opened here rather than inside the harness so that both
+    harnesses produce the same span shape — otherwise a study comparing them
+    would be comparing trace formats as much as agents.
+    """
+    from sim.agent.claude_code import emit_spans
+    from sim.agent.loop import TurnResult
+
+    if state.harness is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"harness=claude_code but the CLI is {state.harness_status}. "
+                   f"Install it, or set harness=messages_api in the agent config.")
+
+    with telemetry.start_run(
+        "b2e.turn", fingerprint=fingerprint, session_id=session_id,
+        employee_id=session["employee_id"], metadata=metadata, question=question,
+    ) as root:
+        trace_id = telemetry.current_trace_id()
+        outcome = state.harness.run(
+            question=question, config=config, system_prompt=system_prompt,
+            employee_id=session["employee_id"], keep_stream=False)
+        emit_spans(outcome, root=root)
+
+    if outcome.is_error and not outcome.answer:
+        raise HTTPException(502, f"claude session failed: {outcome.error[:500]}")
+
+    return TurnResult(
+        answer=outcome.answer,
+        iterations=outcome.num_turns,
+        tool_calls=len(outcome.tool_calls),
+        heimdall_calls=outcome.heimdall_calls,
+        prompt_tokens=outcome.input_tokens,
+        completion_tokens=outcome.output_tokens,
+        cost_usd=outcome.cost_usd,
+        stop_reason="error" if outcome.is_error else "end_turn",
+        trace_id=trace_id,
+        errors=([outcome.error] if outcome.error else [])
+        + [f"denied:{t}" for t in outcome.attempted_forbidden_tools],
+    )
 
 
 def _guard_for(experiment_id: str):

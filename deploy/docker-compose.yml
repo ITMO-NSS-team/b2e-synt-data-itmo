@@ -136,9 +136,40 @@ services:
       retries: 8
       start_period: 40s
 
+  # ------------------------------------------------------------ proxy relay
+  #
+  # Anthropic is reachable from this host only through a local xray proxy bound
+  # to 127.0.0.1, which a container cannot use — a container's loopback is its
+  # own. This relay runs in the host network namespace so it *can* reach that
+  # loopback, and republishes it on the compose network's gateway address.
+  #
+  # Bound to the gateway specifically, never 0.0.0.0. On a host with a public IP
+  # an open forward proxy on all interfaces is an abuse vector that would be
+  # found by scanners within hours.
+  proxy-relay:
+    image: alpine/socat:latest
+    <<: *hardening
+    network_mode: host
+    command: >
+      TCP-LISTEN:${RELAY_PORT:-10810},bind=${RELAY_BIND:-172.20.0.1},fork,reuseaddr
+      TCP:127.0.0.1:${HOST_PROXY_PORT:-10809}
+    mem_limit: 32m
+    profiles: ["relay"]
+
   # ------------------------------------------------------------------ agent
   b2e-agent:
-    <<: [*python-image, *hardening]
+    <<: *hardening
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      # Carries the Claude Code CLI and the skill runner; the other services
+      # stay on the smaller base image.
+      target: agent
+    image: b2e-sim/agent:local
+    # The host reaches Anthropic through a local xray proxy. A container cannot
+    # use the host's 127.0.0.1, so the proxy is addressed via the gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: >
       uvicorn --factory sim.agent.app:create_app
               --host 0.0.0.0 --port 8082 --workers 1
@@ -154,6 +185,19 @@ services:
       # Read from the environment only. Never written to a file or a commit.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # claude_code (default) drives a headless `claude -p` session, which is
+      # what the subscription token is scoped to. messages_api keeps the
+      # deterministic loop for replay and CI.
+      B2E_HARNESS: ${B2E_HARNESS:-claude_code}
+      B2E_CLAUDE_BIN: claude
+      B2E_SKILL_RUNNER: /opt/skills/run
+      B2E_MCP_BRIDGE: /app/heimdall/bridge.py
+      # Egress to Anthropic goes through the host's proxy. NO_PROXY must list
+      # every internal name, or Heimdall and Phoenix calls would be tunnelled
+      # out to the internet and fail.
+      HTTP_PROXY: ${AGENT_HTTP_PROXY:-http://host.docker.internal:10809}
+      HTTPS_PROXY: ${AGENT_HTTP_PROXY:-http://host.docker.internal:10809}
+      NO_PROXY: localhost,127.0.0.1,::1,heimdall-emulator,phoenix,postgres,research-api,admin-ui,host.docker.internal
     volumes:
       - registry_data:/app/var
       - ../cassettes:/app/cassettes

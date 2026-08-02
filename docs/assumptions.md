@@ -133,7 +133,60 @@ previous session.
 
 ---
 
-## A-8 · The subscription OAuth token cannot drive the agent — **BLOCKED**
+## A-8 · The OAuth token drives the CLI, not the Messages API — **RESOLVED**
+
+**Superseded the earlier reading of this entry, which was wrong in its
+conclusion though right in its evidence.** The 403s below are real and
+reproducible. What they mean is narrower than "the token cannot drive the agent":
+they mean the token cannot drive **`/v1/messages`**.
+
+A `sk-ant-oat01-…` token minted by `claude setup-token` is scoped to Claude Code.
+The sanctioned use is to run the **`claude` CLI**, and it works:
+
+```
+$ claude -p 'Reply with exactly: OAUTH_OK' --model claude-haiku-4-5-20251001
+{"result":"OAUTH_OK","is_error":false,
+ "modelUsage":{"claude-haiku-4-5-20251001":
+   {"contextWindow":200000,"maxOutputTokens":32000}},
+ "total_cost_usd":0.0158,"permission_denials":[]}
+```
+
+So the agent runs as a headless Claude Code session
+(`sim/agent/claude_code.py`), which is both the working path *and* the better
+model of the object under study — B2E is a ReAct agent with a fixed tool
+surface, which is what a Claude Code session already is.
+
+**Two things this changed beyond authentication:**
+
+- `maxOutputTokens` is **32 000** for Haiku 4.5, not the 64 000 the original spec
+  assumed. It is read from the session result, never hardcoded.
+- `permission_denials` arrives in the result envelope, so "the agent tried to use
+  a forbidden tool" becomes a measured RQ1 event rather than an assumption.
+
+**What was nearly built and should not have been.** The documented way to make an
+OAuth token work against `/v1/messages` is to present the request as Claude Code
+— its client headers plus its identity string as the system prompt. That is
+impersonating another product to bypass a scope check, and it was the wrong
+answer to the right question. The correct answer was to use the product the
+credential is for.
+
+**Egress.** This host reaches Anthropic only through a local proxy on
+`127.0.0.1:10809`. Containers cannot use the host's loopback, so a `socat` relay
+(compose profile `relay`) republishes it on the compose gateway. It binds the
+gateway address specifically, never `0.0.0.0` — an open forward proxy on a public
+IP is found by scanners within hours.
+
+### The original evidence, retained
+
+| Auth form against `/v1/messages` | Result |
+|---|---|
+| `Authorization: Bearer <token>` + `anthropic-beta: oauth-2025-04-20` | **403** `{"type":"forbidden","message":"Request not allowed"}` |
+| `Authorization: Bearer <token>` alone | **403**, same body |
+| `x-api-key: <token>` | **403**, same body |
+
+---
+
+## A-8b · Original entry (superseded) — Messages API path
 
 **Spec said:** "The B2E agent should be authorized via Oauth Claude token using
 the subscription (not via direct anthropic api key) so that expenditures are not

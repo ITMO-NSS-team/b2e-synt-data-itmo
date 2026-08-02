@@ -35,6 +35,18 @@ CONTEXT_STRATEGIES = (
     "summarised",    # older turns replaced by a running summary
 )
 
+#: How a turn is actually executed.
+#:
+#: ``claude_code`` runs a headless `claude -p` session. It is the default because
+#: the subscription OAuth token is scoped to Claude Code, and because a Claude
+#: Code session already *is* a ReAct agent with a fixed tool surface — the thing
+#: under test — rather than a reimplementation of one.
+#:
+#: ``messages_api`` drives the loop in ``sim.agent.loop`` against the Messages
+#: API. Kept because it is deterministic under replay, which CI needs, and
+#: because it gives finer-grained spans when a study is about the loop itself.
+HARNESSES = ("claude_code", "messages_api")
+
 #: Long-horizon memory shape. This is RQ3's independent variable: does importing
 #: an employee's data from other systems help, or pollute?
 MEMORY_STRATEGIES = (
@@ -66,6 +78,9 @@ class AgentConfig:
     )
     skill_registry_ref: str = "skill_registry"
 
+    # ---- execution
+    harness: str = "claude_code"
+
     # ---- behaviour
     budget_strategy: str = "ignore"
     context_strategy: str = "full"
@@ -81,6 +96,8 @@ class AgentConfig:
     windowed_turns: int = 6
 
     def __post_init__(self) -> None:
+        if self.harness not in HARNESSES:
+            raise ValueError(f"harness {self.harness!r} not in {HARNESSES}")
         if self.budget_strategy not in BUDGET_STRATEGIES:
             raise ValueError(
                 f"budget_strategy {self.budget_strategy!r} not in {BUDGET_STRATEGIES}")

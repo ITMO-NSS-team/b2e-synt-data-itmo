@@ -30,3 +30,35 @@ RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin b2e \
 USER b2e
 
 EXPOSE 8081 8082 8083 8084
+
+
+# ---------------------------------------------------------------- agent image
+#
+# Only b2e-agent needs the Claude Code CLI, and it costs a Node runtime. A
+# separate target keeps the emulator, research-api, admin-ui and sandbox on the
+# small base rather than paying for Node five times over.
+FROM base AS agent
+
+USER root
+
+# Node from the distro rather than a NodeSource pin: this image is rebuilt
+# rarely and the CLI is what actually matters here, not the Node minor version.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nodejs npm ca-certificates \
+ && npm install -g @anthropic-ai/claude-code@2.1.220 \
+ && npm cache clean --force \
+ && apt-get purge -y npm \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
+# The skill runner: the single binary the agent's Bash allowlist permits.
+COPY --chmod=0755 deploy/skills-run /opt/skills/run
+
+# Claude Code writes config and caches under HOME; uid 10001 must own one.
+RUN mkdir -p /home/b2e/.claude && chown -R b2e:b2e /home/b2e
+
+USER b2e
+ENV HOME=/home/b2e
+
+# Fail the build rather than discover at runtime that the CLI is missing.
+RUN claude --version
