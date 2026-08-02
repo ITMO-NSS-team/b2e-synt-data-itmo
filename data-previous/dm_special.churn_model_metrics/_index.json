@@ -1,0 +1,55 @@
+{
+ "columns": {
+  "age": {
+   "file": "age.5dc56b9a.col",
+   "sha256": "d92ee0a1ce4909fed200fa014bf1183c1a717911f05492a864982fa968003060",
+   "type": "Int64 (nullable)"
+  },
+  "child_count": {
+   "file": "child_count.773bc77c.col",
+   "sha256": "61c1df594395721fbcf12ccf9c7800dbe74eb41ebd51bf6f29a7eddc7a7a1769",
+   "type": "UInt64 (nullable)"
+  },
+  "days_since_last_vacation": {
+   "file": "days_since_last_vacation.d258a799.col",
+   "sha256": "6decc44f4abb95f0c9d1a47c11d83c382bdb37155bff2a978b0a56bc5acd9217",
+   "type": "Int64 (nullable)"
+  },
+  "family_status": {
+   "file": "family_status.2245d0ef.col",
+   "sha256": "c2ac797ac82bb53e11717c9d70e45961a63c466ebec0f6c8646170481307a62f",
+   "type": "UInt8 (nullable)"
+  },
+  "gender": {
+   "file": "gender.b02b5038.col",
+   "sha256": "fecb29667f7fd119098aca41317e7faecc5c5bde0ea045fda8387b8fd149b0e9",
+   "type": "UInt8 (nullable)"
+  },
+  "illness_days_12m_sum": {
+   "file": "illness_days_12m_sum.8687f76d.col",
+   "sha256": "dc7a75cb188c06e5aa6de3198c0a1b060c22ce04724f7c186b5cbbe280720da8",
+   "type": "Int64 (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "573751d33d23f7d4cfb7f78957325da08d4118d92b817b20f674bedc59265c4f",
+   "type": "String"
+  },
+  "pos_grade_num": {
+   "file": "pos_grade_num.e4bb51d6.col",
+   "sha256": "41a36ba84baae7b8fe8bfc2ff0ca76325f3e8b7f36650a4606dfb2bb805ea2f3",
+   "type": "Int64 (nullable)"
+  },
+  "report_date": {
+   "file": "report_date.8e371fd4.col",
+   "sha256": "d2158a10284700788c9708d941a1ef075bac4005bb0a9e248f5d05d9c28b7394",
+   "type": "Date"
+  },
+  "vacation_next_month_flag": {
+   "file": "vacation_next_month_flag.120be671.col",
+   "sha256": "1cb4eaf141ab5f9b8b104cf82ac7315903210ca1a6c593ebbef86c8dbf8ffa1f",
+   "type": "UInt8 (nullable)"
+  }
+ },
+ "rows": 294000
+}
