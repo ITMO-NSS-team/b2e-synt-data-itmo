@@ -413,7 +413,7 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         outcome = state.harness.run(
             question=question, config=config, system_prompt=system_prompt,
             employee_id=session["employee_id"], keep_stream=False)
-        emit_spans(outcome, root=root)
+        emit_spans(outcome, root=root, config=config)
 
     if outcome.is_error and not outcome.answer:
         raise HTTPException(502, f"claude session failed: {outcome.error[:500]}")

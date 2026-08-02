@@ -495,6 +495,112 @@ rows", because counting is not something the agent may do locally.
 
 ---
 
+## 11. The code-execution arm (`code_execution = allowed`)
+
+The project's premise has an obvious rival: *the constraint is what costs the
+agent its accuracy, and lifting it would improve every metric on the question
+basket.* That deserves a measurement, not an assumption — a project that only
+ever runs its own preferred condition is arguing with itself.
+
+`AgentConfig.code_execution` selects the arm. **`forbidden` is the default and
+the control**; the tool policy in that mode is byte-for-byte what it was before
+this option existed, and tests assert that, because a degree of freedom that
+silently drifts the control would invalidate every earlier measurement.
+
+### 11.1 What changes
+
+| | `forbidden` (default) | `allowed` |
+|---|---|---|
+| Bash | `Bash(<runner>:*)` only | **unqualified `Bash`** |
+| Read / Glob / Grep | denied | granted |
+| Write / Edit | denied | granted |
+| WebFetch / WebSearch / Task | denied | **still denied** |
+| Heimdall MCP tools | granted | granted |
+
+Egress and sub-agent tools stay denied in both arms deliberately. They change
+*what the agent can reach*, not *whether it can compute*, and leaving them on
+would confound the comparison the arm exists to make.
+
+The system prompt changes with the policy. Telling a code-execution arm that it
+may not compute would turn the experiment into a test of prompt compliance.
+
+Requires `harness = claude_code`. The `messages_api` loop exposes no tool capable
+of executing code, so that combination is **refused at config validation** rather
+than accepted — it would produce runs labelled "code allowed" that are really the
+control.
+
+### 11.2 Comparability
+
+`code_execution` is not a ninth fingerprint field. It travels inside
+`agent_config_version`, which *is* a fingerprint field, so the two arms already
+get different `condition_id`s — verified by test. It is additionally emitted as
+`b2e.code_execution` on the root span so a researcher can filter on the arm
+without first resolving a config version.
+
+### 11.3 Why the comparison is sound here, and where it would not be
+
+Once arbitrary Python runs, **no tool policy constrains `open()`**. The
+`Read`/`Glob`/`Grep` denials that protect the control arm are irrelevant in the
+treatment arm — the agent does not need them.
+
+So the arm is only valid where the agent cannot reach the corpus. Verified on
+the deployed stack:
+
+```
+$ docker exec b2e-sim-b2e-agent-1 ls /data /app/data-small
+ls: cannot access '/data': No such file or directory
+ls: cannot access '/app/data-small': No such file or directory
+$ ... find / -name people.json -path '*truth*'     → nothing
+mounts: /spool, /app/var, /app/cassettes
+```
+
+The corpus is mounted into the **emulator**, never into the agent. `truth/people.json`
+— the answer key — is unreachable, so a gain in this arm is a gain from
+computing, not from reading the answers.
+
+**On a host dev run this does not hold.** The repository is right there, and an
+agent with `Bash` can read `data-small/truth/people.json` with one `cat`. Results
+from a host run of this arm are worthless. Run it in the container.
+
+### 11.4 What the arm also lifts, whether or not you intended it
+
+Measured on the running stack, and it is more than "the agent may compute":
+
+* **`/app/var` is writable**, and it holds `registry.db` — the config registry
+  *and the skill approval store*. Arbitrary code in this container can approve
+  its own skills and append to the audit log. The arm therefore lifts the
+  approval gate too, not just the code ban.
+* **The credentials are readable.** The model token and the Heimdall bearer are
+  in the process environment; `env` is a tool policy away in the control arm and
+  a `print(os.environ)` away here.
+
+None of this is a bug in the arm — it is what "allow arbitrary code in the
+agent's container" means. It is recorded because a researcher enabling a
+checkbox labelled *code execution* would not otherwise expect the approval gate
+to come off with it.
+
+**Recommended for anyone running this arm:** a dedicated low-quota model token,
+and a compose override mounting `registry.db` read-only with the session store on
+a separate writable volume. Neither is wired by default, because the default arm
+does not need them.
+
+### 11.5 What this arm is expected to show
+
+Stated in advance so the result is a finding rather than a rationalisation.
+
+The first live control-arm turn spent **22 Heimdall calls and $0.13** answering
+"how many rows are in this mart", by binary-searching `offset` — and, partway
+through, tried to run `python3 -c … len(data)` and was refused (§10.6). The arm
+should collapse that class of question.
+
+What it should *not* automatically improve is the categories the basket exists
+for: `no_data`, `out_of_scope`, `ambiguous`, `access_control`,
+`prompt_injection`. Those measure caution, and caution is not a compute problem.
+If the treatment arm improves accuracy while *worsening* the refusal categories,
+that is the interesting result, and it is the one the basket was built to catch.
+
+---
+
 ## 9. Verification checklist
 
 Claims in this document that are covered by automated tests:

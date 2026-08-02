@@ -74,6 +74,19 @@ DENIED_TOOLS = (
     "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskOutput", "TaskStop",
 )
 
+#: Tools the code-execution arm needs in order to be a fair rival, rather than a
+#: straw man. An agent that may "generate code" but cannot save it, read it back
+#: or inspect its own output is not the condition anyone means by that phrase.
+CODE_EXECUTION_TOOLS = ("Bash", "Write", "Edit", "Read", "Glob", "Grep")
+
+#: Still denied even when code execution is on. These are not about code — they
+#: are network egress and sub-agent spawning, which would change *what the agent
+#: can reach* rather than *whether it can compute*, and would confound the very
+#: comparison the arm exists to make.
+ALWAYS_DENIED = ("WebFetch", "WebSearch", "Task", "Agent", "Artifact",
+                 "Workflow", "AskUserQuestion", "SendMessage",
+                 "PushNotification", "RemoteTrigger")
+
 #: MCP tool schemas are deferred in Claude Code 2.1.x — they are advertised by
 #: name and loaded on demand. ``ToolSearch`` is what loads them, so denying it
 #: would leave the Heimdall tools permanently unreachable. It reads a tool
@@ -89,6 +102,21 @@ MCP_SERVER_NAME = "heimdall"
 #: Appended to the system prompt. This is guidance, not enforcement — the
 #: enforcement is the tool policy above. It is here so the agent understands the
 #: shape of its world rather than discovering it through refusals.
+HARNESS_NOTE_CODE_ALLOWED = """
+Ты работаешь в закрытом контуре.
+
+* Данные — только через инструменты Heimdall. Интернета у тебя нет.
+* Инструменты Heimdall загружаются по требованию: сначала вызови
+  `ToolSearch` с запросом `select:mcp__heimdall__list_models,mcp__heimdall__mcp_query,mcp__heimdall__describe_model,mcp__heimdall__find_skills,mcp__heimdall__get_skill,mcp__heimdall__get_overview`,
+  затем пользуйся ими как обычно.
+* **В этом режиме тебе разрешено писать код и выполнять его.** Считай на месте
+  то, что дешевле посчитать, чем выспрашивать у API постранично.
+* Числа в ответе должны быть получены из данных API — своими вычислениями или
+  напрямую, но не выдуманы.
+* Отказ в доступе (403) — это результат, о котором надо сообщить, а не
+  препятствие, которое надо обойти.
+"""
+
 HARNESS_NOTE = """
 Ты работаешь в закрытом контуре.
 
@@ -208,9 +236,21 @@ class ClaudeCodeHarness:
         tools = [f"mcp__{MCP_SERVER_NAME}__{name}"
                  for name in HEIMDALL_TOOLS
                  if name in config.tool_subset or name in ("get_overview",)]
-        tools.append(f"Bash({self.runner_path}:*)")
         tools.append(TOOL_LOADER)
+
+        if config.code_execution == "allowed":
+            # Unqualified Bash: the whole point of the arm is that the agent may
+            # compute. Narrowing it here would produce a straw man that loses the
+            # comparison for the wrong reason.
+            tools.extend(CODE_EXECUTION_TOOLS)
+        else:
+            tools.append(f"Bash({self.runner_path}:*)")
         return tools
+
+    def denied_tools(self, config: AgentConfig) -> list[str]:
+        if config.code_execution == "allowed":
+            return [t for t in DENIED_TOOLS if t not in CODE_EXECUTION_TOOLS]
+        return list(DENIED_TOOLS)
 
     def build_argv(self, prompt: str, *, config: AgentConfig,
                    system_suffix: str, mcp_config_path: str) -> list[str]:
@@ -227,7 +267,7 @@ class ClaudeCodeHarness:
             "--strict-mcp-config",
             "--mcp-config", mcp_config_path,
             "--allowed-tools", ",".join(self.allowed_tools(config)),
-            "--disallowed-tools", ",".join(DENIED_TOOLS),
+            "--disallowed-tools", ",".join(self.denied_tools(config)),
             "--append-system-prompt", system_suffix,
         ]
 
@@ -260,9 +300,19 @@ class ClaudeCodeHarness:
 
     # ------------------------------------------------------------------ run
 
+    def harness_note(self, config: AgentConfig) -> str:
+        """The prompt must describe the policy the agent actually has.
+
+        Telling a code-execution arm that it may not compute would make the
+        comparison a test of prompt compliance rather than of capability.
+        """
+        if config.code_execution == "allowed":
+            return HARNESS_NOTE_CODE_ALLOWED
+        return HARNESS_NOTE.format(runner=self.runner_path)
+
     def run(self, *, question: str, config: AgentConfig, system_prompt: str,
             employee_id: str, keep_stream: bool = True) -> ClaudeCodeResult:
-        suffix = system_prompt + "\n" + HARNESS_NOTE.format(runner=self.runner_path)
+        suffix = system_prompt + "\n" + self.harness_note(config)
         workdir = Path(self.workdir or tempfile.mkdtemp(prefix="b2e-session-"))
         workdir.mkdir(parents=True, exist_ok=True)
         mcp_path = workdir / "mcp.json"
@@ -359,9 +409,16 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
     )
 
 
-def emit_spans(result: ClaudeCodeResult, *, root) -> None:
+def emit_spans(result: ClaudeCodeResult, *, root,
+               config: AgentConfig | None = None) -> None:
     """Attach what the session reported to the current trace."""
     telemetry.set_io(root, output_value=result.answer)
+    if config is not None:
+        # Not a ninth fingerprint field: it already travels inside
+        # agent_config_version, so condition_id separates the two arms
+        # correctly. This attribute exists so a researcher can filter on the
+        # arm directly without resolving the config version first.
+        root.set_attribute("b2e.code_execution", config.code_execution)
     root.set_attribute("b2e.turn.iterations", result.num_turns)
     root.set_attribute("b2e.turn.tool_calls", len(result.tool_calls))
     root.set_attribute("b2e.turn.heimdall_calls", result.heimdall_calls)

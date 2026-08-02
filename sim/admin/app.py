@@ -361,10 +361,24 @@ approval.</p>
                     f'<input name={name} value="{esc(value)}"></td></tr>')
 
         from sim.agent.config import (
-            BUDGET_STRATEGIES, CONTEXT_STRATEGIES, MEMORY_STRATEGIES,
+            BUDGET_STRATEGIES, CODE_EXECUTION_MODES, CONTEXT_STRATEGIES,
+            HARNESSES, MEMORY_STRATEGIES,
         )
+
+        code_warning = ""
+        if current.code_execution == "allowed":
+            code_warning = (
+                '<div class=warn><b>Code execution is ON.</b> This is the rival '
+                'arm, not the default. Two things are true while it is set: the '
+                'agent may run arbitrary Python, so no tool policy constrains '
+                'which files it opens — the comparison is only sound where the '
+                'corpus is not mounted into the agent container; and the agent '
+                'process holds the model credential, which arbitrary code can '
+                'read. Use a dedicated low-quota token for this arm.</div>')
+
         body = f"""
 <h2>Model parameters — {esc(version.ref)}</h2>
+{code_warning}
 <form method=post action="/config">
 {csrf_input(token)}
 <table>
@@ -373,6 +387,8 @@ approval.</p>
 {field("max_output_tokens", current.max_output_tokens)}
 {field("context_window_tokens", current.context_window_tokens)}
 {field("max_tool_iterations", current.max_tool_iterations)}
+{field("harness", current.harness, HARNESSES)}
+{field("code_execution", current.code_execution, CODE_EXECUTION_MODES)}
 {field("budget_strategy", current.budget_strategy, BUDGET_STRATEGIES)}
 {field("context_strategy", current.context_strategy, CONTEXT_STRATEGIES)}
 {field("memory_strategy", current.memory_strategy, MEMORY_STRATEGIES)}
@@ -382,6 +398,10 @@ approval.</p>
 </form>
 <p class=mut>The context window is a config value, not a constant: hardcoding
 200 000 becomes a lie the moment the model changes, and the failure is silent.</p>
+<p class=mut><code>code_execution=allowed</code> lifts the project's premise so the
+rival hypothesis can be measured rather than assumed. It requires
+<code>harness=claude_code</code>; the messages_api loop has no tool that can run
+code, so the combination is refused rather than silently mislabelled.</p>
 <h2>Version history</h2>
 <table><tr><th>version</th><th>actor</th><th>note</th></tr>{rows}</table>
 """
@@ -396,7 +416,7 @@ approval.</p>
         current = AgentConfig.from_dict(state.registry.load("agent_config")[1])
         updated = current.as_dict()
         for key in ("model_id", "budget_strategy", "context_strategy",
-                    "memory_strategy"):
+                    "memory_strategy", "harness", "code_execution"):
             if key in form:
                 updated[key] = str(form[key])
         for key in ("temperature",):

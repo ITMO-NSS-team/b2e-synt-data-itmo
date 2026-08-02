@@ -35,6 +35,26 @@ CONTEXT_STRATEGIES = (
     "summarised",    # older turns replaced by a running summary
 )
 
+#: Whether the agent may write code and run it in the same session.
+#:
+#: ``forbidden`` is the project's premise and the default: the agent may only
+#: call Heimdall and execute predefined code attached to an approved skill.
+#:
+#: ``allowed`` exists to test the obvious rival hypothesis — that the constraint
+#: is what costs the agent its accuracy, and lifting it would improve every
+#: metric on the question basket. That hypothesis deserves a measurement rather
+#: than an assumption, and without this arm the whole project is arguing with
+#: itself. Two warnings attach to it, both in docs/skill-execution-threat-model.md §11:
+#:
+#: * The comparison is only sound where the agent **cannot reach the corpus
+#:   files**. Once arbitrary Python runs, no tool policy constrains ``open()``,
+#:   and ``truth/people.json`` is the answer key. In the compose deployment the
+#:   corpus is not mounted into the agent, so the arm is fair. On a host dev run
+#:   it is not, and the result would be a measurement of cheating.
+#: * The agent's process holds the model credential. An arm that runs arbitrary
+#:   code can read it. Use a dedicated low-quota token for this arm.
+CODE_EXECUTION_MODES = ("forbidden", "allowed")
+
 #: How a turn is actually executed.
 #:
 #: ``claude_code`` runs a headless `claude -p` session. It is the default because
@@ -80,6 +100,7 @@ class AgentConfig:
 
     # ---- execution
     harness: str = "claude_code"
+    code_execution: str = "forbidden"
 
     # ---- behaviour
     budget_strategy: str = "ignore"
@@ -98,6 +119,18 @@ class AgentConfig:
     def __post_init__(self) -> None:
         if self.harness not in HARNESSES:
             raise ValueError(f"harness {self.harness!r} not in {HARNESSES}")
+        if self.code_execution not in CODE_EXECUTION_MODES:
+            raise ValueError(
+                f"code_execution {self.code_execution!r} not in {CODE_EXECUTION_MODES}")
+        if self.code_execution == "allowed" and self.harness != "claude_code":
+            # Refuse rather than ignore. The messages_api loop has no tool that
+            # can execute code, so this combination would produce runs labelled
+            # "code allowed" in which no code could ever run — a whole arm of
+            # the experiment quietly measuring the control condition.
+            raise ValueError(
+                "code_execution='allowed' requires harness='claude_code'; the "
+                "messages_api loop exposes no tool capable of executing code, "
+                "so the combination would mislabel the control arm")
         if self.budget_strategy not in BUDGET_STRATEGIES:
             raise ValueError(
                 f"budget_strategy {self.budget_strategy!r} not in {BUDGET_STRATEGIES}")
