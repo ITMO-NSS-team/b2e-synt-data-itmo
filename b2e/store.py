@@ -56,7 +56,31 @@ class ProceduralReader(TableReader):
         self._remember(name, values)
         return values
 
-    def _group_lengths(self, name: str, member) -> np.ndarray | None:
+    def sample(self, name: str, limit: int = 2) -> list[Any]:
+        """Первые ``limit`` значений, не разыгрывая колонку целиком.
+
+        Здесь выигрыш больше, чем у материализованной колонки, и он же был
+        причиной падения. Хвостовых колонок, которых нет на диске, около 3800 на
+        витрину — по замыслу, чтобы не материализовать 1,14 млрд ячеек. Но
+        ``column()`` разыгрывает их по требованию во всю длину корпуса, так что
+        генератор документации, спрашивая по два значения у каждой, просил
+        294 000 × 3800 сгенерированных ячеек и получал SIGKILL.
+
+        Заполнитель адресуем: он принимает список индексов строк и считает
+        ровно их. Просим два.
+        """
+        if name in self._index or self._model is None:
+            return super().sample(name, limit)
+        member = self._model.member(name)
+        if member is None or self.rows == 0:
+            return [None] * min(limit, self.rows)
+        take = min(limit, self.rows)
+        lengths = self._group_lengths(name, member, limit=take)
+        return fillers.column(name, member.ch, self.key, self._seed,
+                              np.arange(take), lengths=lengths)
+
+    def _group_lengths(self, name: str, member,
+                       limit: int | None = None) -> np.ndarray | None:
         """Длины массивов вложенной группы — по материализованному соседу.
 
         У группы вроде ``successors.*`` часть членов лежит на диске (status,
@@ -73,8 +97,9 @@ class ProceduralReader(TableReader):
                         if c.startswith(prefix) and _is_array(self._model, c)), None)
         if sibling is None:
             return None
-        return np.array([len(v or []) for v in super().column(sibling)],
-                        dtype=np.int64)
+        neighbour = (super().sample(sibling, limit) if limit is not None
+                     else super().column(sibling))
+        return np.array([len(v or []) for v in neighbour], dtype=np.int64)
 
     def available(self) -> set[str]:
         """Каталожные имена плюс материализованные служебные колонки."""

@@ -58,7 +58,7 @@ a { color:var(--accent); }
 
 def _sample(reader, name: str, limit: int = 2) -> str:
     try:
-        values = reader.column(name)[:limit]
+        values = reader.sample(name, limit)
     except Exception:
         return ""
     parts = []

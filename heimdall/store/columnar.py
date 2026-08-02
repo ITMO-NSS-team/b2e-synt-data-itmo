@@ -116,6 +116,26 @@ class TableReader:
     def columns(self, names: Iterable[str]) -> dict[str, list[Any]]:
         return {n: self.column(n) for n in names}
 
+    def sample(self, name: str, limit: int = 2) -> list[Any]:
+        """Первые ``limit`` значений колонки, не заполняя ими кэш.
+
+        Существует ради генератора документации, который просит по паре
+        значений у КАЖДОЙ колонки каталога — а их 4599 на 37 витрин. Через
+        ``column()`` каждая такая просьба материализует колонку целиком и
+        оставляет её в кэше на 64 позиции: на полном корпусе это 12,6 ГиБ и
+        SIGKILL от ядра, измерено. Прочитать с диска материализованную колонку
+        всё равно приходится целиком — она лежит одним сжатым pickle, — но
+        держать её после этого незачем.
+        """
+        cached = self._cache.get(name)
+        if cached is not None:
+            return cached[:limit]
+        meta = self._index.get(name)
+        if meta is None:
+            return [None] * min(limit, self.rows)
+        values = pickle.loads(gzip.decompress((self.dir / meta["file"]).read_bytes()))
+        return values[:limit]
+
     def _remember(self, name: str, values: list[Any]) -> None:
         self._cache[name] = values
         self._order.append(name)
