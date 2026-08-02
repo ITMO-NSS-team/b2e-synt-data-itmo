@@ -30,6 +30,7 @@ from sim.agent.config import AgentConfig
 from sim.agent.llm import ReplayMiss, build_client
 from sim.agent.loop import run_turn
 from sim.agent.prompt import DEFAULT_SYSTEM_PROMPT, render
+from sim.agent.shipped import INTERACTIVE_CONFIG_REF, audit, bootstrap_if_writable
 from sim.agent.store import Store
 from sim.agent.tools import HeimdallTools
 from sim.costguard import (
@@ -37,12 +38,6 @@ from sim.costguard import (
 )
 from sim.fingerprint import IncompleteFingerprint, RunFingerprint
 from sim.registry import Registry, canonical_bytes, sha256_hex
-
-
-#: Registry ref of the shipped conversational config. Named once here so the
-#: bootstrap, the API default and the Telegram bridge cannot drift onto three
-#: different strings.
-INTERACTIVE_CONFIG_REF = "agent_config_interactive"
 
 
 # ------------------------------------------------------------------- schemas
@@ -161,29 +156,16 @@ class AgentState:
             return f"failed: {type(exc).__name__}: {exc}"
 
     def _bootstrap_registry(self) -> None:
-        """Seed version 1 of every config so an untouched deployment still has a
-        version to name in the fingerprint."""
-        if self.registry.head("system_prompt") is None:
-            self.registry.commit("system_prompt", "prompt",
-                                 {"template": DEFAULT_SYSTEM_PROMPT},
-                                 actor="bootstrap", note="shipped default")
-        if self.registry.head("agent_config") is None:
-            self.registry.commit("agent_config", "agent", AgentConfig().as_dict(),
-                                 actor="bootstrap", note="shipped default")
-        # A second shipped config, differing from the default in exactly one
-        # field. The Telegram bridge points at this one so a researcher gets a
-        # conversation, while batch arms keep `agent_config` and its stateless
-        # turns. Separating them by *config ref* rather than by a flag on the
-        # request is what keeps the fingerprint able to tell the two apart:
-        # they are different conditions and `condition_id` says so.
-        if self.registry.head(INTERACTIVE_CONFIG_REF) is None:
-            self.registry.commit(
-                INTERACTIVE_CONFIG_REF, "agent",
-                AgentConfig(conversation_mode="resume").as_dict(),
-                actor="bootstrap", note="shipped default, resumable sessions")
-        if self.registry.head("skill_registry") is None:
-            self.registry.commit("skill_registry", "skills", {"active": []},
-                                 actor="bootstrap", note="empty registry")
+        """Seed the shipped configs, if this deployment lets us.
+
+        It usually does not. The registry is mounted read-only here so the agent
+        uid cannot reach the approval store, which means creating a config is
+        somebody else's job — see ``sim/agent/shipped.py``. Reported through
+        ``/healthz`` rather than raised: a missing config breaks the requests
+        that name it, but taking the whole service down at boot would break the
+        ones that do not.
+        """
+        self.registry_status = bootstrap_if_writable(self.registry)
 
     # --------------------------------------------------------- fingerprinting
 
@@ -227,7 +209,17 @@ class AgentState:
             ) from exc
 
     def build_fingerprint(self, config_ref: str) -> tuple[RunFingerprint, AgentConfig, str]:
-        config_version, config_body = self.registry.load(config_ref)
+        try:
+            config_version, config_body = self.registry.load(config_ref)
+        except KeyError as exc:
+            # A bare KeyError surfaces as a 500 and tells the caller nothing.
+            # The realistic cause is a shipped config that no writable service
+            # has created yet, so say that and say who can fix it.
+            _missing, status = audit(self.registry)
+            raise HTTPException(
+                status_code=503,
+                detail=f"config ref {config_ref!r} is not in the registry. {status}",
+            ) from exc
         config = AgentConfig.from_dict(config_body)
         prompt_version, prompt_body = self.registry.load(config.system_prompt_ref)
         condition = self.emulator_condition()
@@ -259,9 +251,15 @@ def create_app(state: AgentState | None = None) -> FastAPI:
 
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
+        missing, _status = audit(state.registry)
         return {"status": "ok", "llm_mode": state.llm_mode,
                 "heimdall": state.heimdall_url, "tracing": state.tracing,
-                "harness": state.harness_status}
+                "harness": state.harness_status,
+                # Re-read rather than served from the boot-time value: admin-ui
+                # owns registry writes and starts after this service, so a ref
+                # absent at boot is routinely present a few seconds later.
+                "registry": state.registry_status if not missing else _status,
+                "missing_configs": missing}
 
     @app.post("/sessions", status_code=201)
     def create_session(payload: CreateSession) -> dict[str, Any]:

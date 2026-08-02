@@ -25,12 +25,14 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_USER", AUTH[0])
     monkeypatch.setenv("ADMIN_PASSWORD", AUTH[1])
     monkeypatch.setenv("B2E_REGISTRY_DB", str(tmp_path / "registry.db"))
+    # AdminState seeds the shipped configs on construction — it holds the only
+    # read-write mount of the registry, so if it did not, nothing in the stack
+    # could. That makes the shipped defaults version 1, and the known-content
+    # template this suite asserts against version 2.
     state = AdminState()
+    assert state.seeded, "the fixture assumes a fresh registry to bootstrap"
     state.registry.commit("system_prompt", "prompt", {"template": "v1 {{ x }}"},
-                          actor="bootstrap")
-    state.registry.commit("agent_config", "agent",
-                          __import__("sim.agent.config", fromlist=["AgentConfig"])
-                          .AgentConfig().as_dict(), actor="bootstrap")
+                          actor="test-seed")
     yield TestClient(create_app(state)), state
     state.registry.close()
 
@@ -104,7 +106,8 @@ def test_mutation_with_the_real_token_succeeds(client):
     r = c.post("/prompt", auth=AUTH, follow_redirects=False,
                data={"template": "v2 {{ x }}", "note": "test", CSRF_FIELD: token})
     assert r.status_code == 303
-    assert state.registry.head("system_prompt").version == 2
+    # 1 = shipped default, 2 = the fixture's known content, 3 = this edit.
+    assert state.registry.head("system_prompt").version == 3
 
 
 # ------------------------------------------------------------ versioning
@@ -117,8 +120,8 @@ def test_saving_appends_and_never_edits_in_place(client):
         c.post("/prompt", auth=AUTH, follow_redirects=False,
                data={"template": f"v{i} {{{{ x }}}}", "note": f"n{i}",
                      CSRF_FIELD: token})
-    assert state.registry.head("system_prompt").version == 3
-    assert state.registry.load("system_prompt@1")[1]["template"] == "v1 {{ x }}"
+    assert state.registry.head("system_prompt").version == 4
+    assert state.registry.load("system_prompt@2")[1]["template"] == "v1 {{ x }}"
 
 
 def test_history_and_diff_are_shown(client):

@@ -28,6 +28,7 @@ from sim.admin.security import (
     verify_csrf,
 )
 from sim.agent.config import AgentConfig
+from sim.agent.shipped import bootstrap
 from sim.registry import Registry
 from sim.skills import SkillState, SkillStore, static_check
 
@@ -86,6 +87,13 @@ class AdminState:
     def __init__(self) -> None:
         env = os.environ
         self.registry = Registry(env.get("B2E_REGISTRY_DB", "var/registry.db"))
+        # This service holds the only read-write mount of the registry, which
+        # makes it the only one that can create a shipped config. b2e-agent
+        # reads the same file read-only by design (the agent uid must not reach
+        # the approval store), so if the seeding did not happen here it would
+        # not happen at all — and the first Telegram message would 503 on a ref
+        # that nothing in the stack was able to write.
+        self.seeded = bootstrap(self.registry)
         self.skills = SkillStore(self.registry)
         self.emulator_url = env.get("HEIMDALL_URL", "http://heimdall-emulator:8081")
         self.phoenix_url = env.get("PHOENIX_PUBLIC_URL",

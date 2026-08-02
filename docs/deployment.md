@@ -153,6 +153,20 @@ Claude Code has no `AskUserQuestion` in headless mode (probed on 2.1.220 — the
 tool is absent from the session's surface even when granted), so the turn
 boundary is the only asking mechanism there is.
 
+`agent_config_interactive` is created by **admin-ui**, not by the agent. The
+agent mounts the registry read-only — the threat model requires that the agent
+uid cannot reach the approval store — so it can read a config and never create
+one. In practice this is invisible: admin-ui seeds the shipped set at startup
+and the agent picks it up. It matters if you run the stack without admin-ui, in
+which case `/healthz` reports the missing ref and the first message returns 503
+with the seeding command rather than a bare 500. To seed by hand:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec admin-ui python -c \
+  "from sim.agent.shipped import bootstrap; from sim.registry import Registry; \
+   print(bootstrap(Registry('/app/registry/registry.db')))"
+```
+
 Session transcripts live on the agent's volume under `B2E_CLAUDE_HOME` and
 `B2E_SESSION_ROOT`, so a conversation survives `up --build`. If a transcript is
 lost anyway, the turn falls back to a fresh session, records
