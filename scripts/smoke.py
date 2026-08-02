@@ -166,8 +166,13 @@ def main() -> int:
     step("6 · change one config value, as the admin UI does")
     before = state.registry.head("agent_config")
     current = AgentConfig.from_dict(state.registry.load("agent_config")[1])
-    changed = {**current.as_dict(), "temperature": 0.7,
-               "context_strategy": "windowed"}
+    # temperature is the varied field on purpose. context_strategy used to be
+    # varied here too, but step 7 opens a session against the result, and
+    # windowed/summarised are now refused on the default claude_code harness —
+    # the CLI owns its window, so the value would have named an arm that ran
+    # identically to `full`. Varying temperature moves both the field and
+    # agent_config_version, which is all steps 7-8 assert.
+    changed = {**current.as_dict(), "temperature": 0.7}
     after = state.registry.commit("agent_config", "agent", changed,
                                   actor="smoke", note="smoke: vary temperature")
     check("a new version was appended, not edited in place",

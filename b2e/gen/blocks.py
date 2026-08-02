@@ -244,25 +244,82 @@ def successors(p: Population, rng_ns: str = "succ") -> Block:
     is_head = p["is_head"] == 1
     counts = np.where(is_head, integers(key64(seed, rng_ns, "n"), idx, 0, 3), 0)
     # У части руководителей преемников нет — это осмысленный ответ «резерв пуст».
+
+    block_of = p["block_idx"]
+    order = np.argsort(block_of, kind="stable")
+    block_sorted = block_of[order]
+    rank = np.empty(n, dtype=np.int64)            # позиция человека внутри order
+    rank[order] = np.arange(n)
+
+    # Кандидатов в блоке ровно на одного меньше, чем людей: сам себе преемником
+    # человек быть не может. Если в блоке он один, преемника нет вовсе, и это
+    # надо сказать счётчиком, а не выдать пустую строку с qty=1.
+    per_block_starts = np.searchsorted(block_sorted, block_of, side="left")
+    per_block_ends = np.searchsorted(block_sorted, block_of, side="right")
+    pool = per_block_ends - per_block_starts - 1
+    counts = np.minimum(counts, np.maximum(pool, 0))
+
     offsets, rows = _frame(counts)
     m = int(counts.sum())
     flat = np.arange(m)
 
-    # Кандидат берётся из того же блока и грейдом не ниже, чем на 2 ниже.
-    block_of = p["block_idx"]
-    order = np.argsort(block_of, kind="stable")
-    block_sorted = block_of[order]
-    starts = np.searchsorted(block_sorted, block_of[rows], side="left")
-    ends = np.searchsorted(block_sorted, block_of[rows], side="right")
-    span = np.maximum(ends - starts, 1)
-    choice = order[starts + (cells(key64(seed, rng_ns, "pick"), flat)
-                             % span.astype(np.uint64)).astype(np.int64)]
+    starts = per_block_starts[rows]
+    span = pool[rows]                              # ≥1 везде, где counts>0
+
+    # Розыгрыш по блоку, из которого исключён сам носитель позиции.
+    #
+    # Бросок делается ОДИН НА ЧЕЛОВЕКА (ключ — `rows`, не `flat`), а преемники
+    # внутри его списка берут последовательные позиции пула. Иначе список из
+    # двух изредка оказывался одним человеком, названным дважды: независимые
+    # броски на каждый элемент совпадают с вероятностью 1/span, и на 188
+    # руководителях это происходило. Прибавить порядковый номер к независимым
+    # броскам не помогает — они и так независимы; помогает именно общий бросок,
+    # потому что base+0 и base+1 по модулю span различны, пока counts ≤ span.
+    #
+    # Сдвиг на единицу при попадании в собственную позицию убирает
+    # самопреемственность: она случалась у одного руководителя из 188, и вопрос
+    # «кто может меня заменить» получал ответ «вы сами».
+    within = (flat - offsets[rows]).astype(np.uint64)
+    base = (cells(key64(seed, rng_ns, "pick"), rows) + within
+            ) % span.astype(np.uint64)
+    slot = base.astype(np.int64)
+    self_slot = rank[rows] - starts
+    slot += (slot >= self_slot)
+    choice = order[starts + slot]
     return Block(counts, offsets, {
         "row": choice,
         "status": np.array(["Готов сейчас", "Готов через 1–2 года",
                             "На рассмотрении", "Утверждён"], dtype=object)[
             pick(key64(seed, rng_ns, "st"), flat, 4)],
         "appoint_days": AS_OF_DAYS - integers(key64(seed, rng_ns, "d"), flat, 30, 1200),
+    })
+
+
+def predecessors(p: Population, succ: Block) -> Block:
+    """Обратная сторона того же ребра: чьим преемником человек назначен.
+
+    В каталоге это отдельная группа с собственным смыслом («Структура для
+    которых является преемником»), и только у неё есть ``positions_*`` — та
+    позиция, в резерв на которую человек поставлен. Витрины orion объявляют
+    ``predecessor.*`` и не объявляют ``successors.*``: технологический блок почти
+    целиком не руководители, и при зеркальном прочтении эти витрины были бы
+    пустыми, а при обратном — как раз содержательными.
+
+    Блок строится ПЕРЕСТАНОВКОЙ готового ``successors``, а не вторым розыгрышем.
+    Независимая генерация — ровно то, из-за чего ``predecessor.status`` был
+    побайтовой копией ``successors.status``: две стороны одного ребра обязаны
+    совпадать поимённо, иначе «Иванов — преемник Петрова» и «Петров в резерве у
+    Иванова» разъезжаются и агент видит два разных факта.
+    """
+    candidate = succ.fields["row"]               # кого поставили в резерв
+    incumbent = succ.flat_rows()                 # чью позицию он замещает
+    order = np.argsort(candidate, kind="stable")
+    counts = np.bincount(candidate, minlength=p.n).astype(np.int64)
+    offsets, _ = _frame(counts)
+    return Block(counts, offsets, {
+        "row": incumbent[order],
+        "status": succ.fields["status"][order],
+        "appoint_days": succ.fields["appoint_days"][order],
     })
 
 
@@ -315,4 +372,8 @@ BUILDERS = {
 
 
 def build_all(p: Population) -> dict[str, Block]:
-    return {name: fn(p) for name, fn in BUILDERS.items()}
+    out = {name: fn(p) for name, fn in BUILDERS.items()}
+    # Производный блок: ему нужен уже собранный successors, поэтому в BUILDERS
+    # он не помещается.
+    out["predecessors"] = predecessors(p, out["successors"])
+    return out

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 
@@ -83,12 +84,24 @@ _DOTTED = {
         "absence_name": "name", "absence_group_name": "group_name",
         "absence_code": "code", "absence_group": "group",
         "absence_start": "start_days", "absence_end": "end_days",
-        "flag_blocked": "blocked",
+        "flag_blocked": "blocked", "employee_id": "self:employee_id",
     }),
+    # ``row:`` — разыменование ссылки на другого человека, ``self:`` — на самого
+    # субъекта строки. Личность внутри вложенного массива обязана быть настоящей:
+    # в прежнем корпусе successors.full_name доставался заполнителю и содержал
+    # «итоговый», а successors.employee_id — выдуманный табельный номер, который
+    # ни с чем не соединялся.
     "successors": ("successors", {
+        "person_id": "row:person_id", "employee_id": "row:employee_id",
+        "full_name": "row:full_name",
         "status": "status", "appoint_date": "appoint_days",
     }),
-    "predecessor": ("successors", {"status": "status"}),
+    "predecessor": ("predecessors", {
+        "person_id": "row:person_id", "employee_id": "row:employee_id",
+        "full_name": "row:full_name",
+        "positions_id": "row:position_id", "positions_name": "row:position_name",
+        "status": "status", "appoint_date": "appoint_days",
+    }),
     "achievements": ("achievements", {
         "name": "name", "description": "description", "period": "period",
     }),
@@ -184,13 +197,16 @@ class Resolver:
                       mask: np.ndarray, member):
         block = self.blocks[ref[0]]
         field_name = ref[1]
-        if field_name == "row":                       # ссылка на другого человека
-            lists = block.lists("row", rows)
-            return [[self.p["full_name"][r] for r in ids] if ok else []
-                    for ids, ok in zip(lists, mask)]
-        lists = block.lists(field_name, rows)
-        if field_name in _DAY_FIELDS:
-            lists = [[None if d < 0 else _iso(d) for d in item] for item in lists]
+        if field_name.startswith("row:"):             # ссылка на другого человека
+            refs = self._refs(field_name[4:])
+            lists = [[refs[i] for i in ids] for ids in block.lists("row", rows)]
+        elif field_name.startswith("self:"):          # сам субъект строки
+            refs = self._refs(field_name[5:])
+            lists = [[refs[r]] * int(c) for r, c in zip(rows, block.counts[rows])]
+        else:
+            lists = block.lists(field_name, rows)
+            if field_name in _DAY_FIELDS:
+                lists = [[None if d < 0 else _iso(d) for d in item] for item in lists]
         if not getattr(member.ch, "is_array", False):
             # Витрина-развёртка просит скаляр: берётся первая запись.
             return [item[0] if item else None for item in lists]
@@ -243,6 +259,11 @@ class Resolver:
             elif what == "employee_id":
                 cached = np.array([str(int(v)) for v in self.p["employee_id"]],
                                   dtype=object)
+            elif what == "position_id":
+                cached = np.array([str(int(v)) for v in self.p["position_id"]],
+                                  dtype=object)
+            elif what == "position_name":
+                cached = self.position_names()
             else:
                 cached = self.p["full_name"]
             self._ref_cache[what] = cached
@@ -271,8 +292,17 @@ class Resolver:
         return self._position_name
 
 
+@lru_cache(maxsize=16384)
 def _iso(day: int) -> str:
-    return _days_to_iso(np.array([day]))[0]
+    """День → ISO. Кэш и ``str`` здесь не украшение.
+
+    Дат в блоках миллионы, а различных дней — тысячи: без кэша поэлементный
+    вызов стоит 6,6 мкс (отдельный numpy-массив на каждый элемент), и после
+    появления второй датированной группы (``predecessor.appoint_date`` на семи
+    витринах) это несколько секунд сборки на ровном месте. ``str`` — потому что
+    ``_days_to_iso`` отдаёт ``np.str_``, и он бы уехал в pickle витрины.
+    """
+    return str(_days_to_iso(np.array([day]))[0])
 
 
 def _mask_out(values, mask: np.ndarray, member):

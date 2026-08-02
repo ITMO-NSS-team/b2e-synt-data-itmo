@@ -71,6 +71,29 @@ def apply_upper(values: list, seed: int, person: np.ndarray, enabled: bool) -> l
             for m, v in zip(mask, values)]
 
 
+def apply_upper_nested(values: list, seed: int, refs: list, n_people: int,
+                       enabled: bool) -> list:
+    """Та же каверза для ФИО внутри вложенного массива.
+
+    Ключ — человек, НА КОТОРОГО ссылается элемент, а не строка витрины. Иначе
+    один и тот же сотрудник был бы «ИВАНОВ» в ``employee_full_name`` и «Иванов»
+    в чужом ``successors.full_name``: как только имена преемников стали
+    настоящими, забыть про каверзу здесь означало бы вернуть дефект W1 —
+    рассогласование личности — через заднюю дверь.
+    """
+    if not enabled:
+        return values
+    mask = bernoulli(key64(seed, "trap.upper"), np.arange(n_people), UPPER_RATE)
+    out = []
+    for item, ids in zip(values, refs):
+        if not item:
+            out.append(item)
+            continue
+        out.append([v.upper() if (mask[i] and isinstance(v, str)) else v
+                    for i, v in zip(ids, item)])
+    return out
+
+
 def describe(enabled: set[str] | None = None) -> str:
     """Человекочитаемый реестр — идёт в документацию корпуса."""
     on = DEFAULT_ENABLED if enabled is None else enabled

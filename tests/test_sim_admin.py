@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from sim.admin.app import AdminState, create_app
 from sim.admin.security import CSRF_COOKIE, CSRF_FIELD
+from sim.agent.config import AgentConfig
 from sim.registry import Registry
 from sim.skills import SkillState, SkillStore
 
@@ -142,6 +143,60 @@ def test_invalid_config_is_rejected_not_committed(client):
                data={"budget_strategy": "telepathy", CSRF_FIELD: token})
     assert r.status_code == 422
     assert state.registry.head("agent_config").version == before
+
+
+def test_a_context_strategy_the_harness_cannot_honour_is_rejected(client):
+    """The dropdown offers all three values because harness is edited on the
+    same form. Submitting windowed while the harness stays claude_code is the
+    incoherent half of that, and it must not commit a version whose declared
+    condition the run would ignore."""
+    c, state = client
+    token = _token(c)
+    before = state.registry.head("agent_config").version
+    r = c.post("/config", auth=AUTH, follow_redirects=False,
+               data={"context_strategy": "windowed", CSRF_FIELD: token})
+    assert r.status_code == 422
+    assert "messages_api" in r.json()["detail"]
+    assert state.registry.head("agent_config").version == before
+
+
+def test_switching_harness_and_context_strategy_together_is_accepted(client):
+    """The coherent half: the form must not block a researcher moving the whole
+    pair onto the loop that implements packing."""
+    c, state = client
+    token = _token(c)
+    before = state.registry.head("agent_config").version
+    r = c.post("/config", auth=AUTH, follow_redirects=False,
+               data={"context_strategy": "windowed", "harness": "messages_api",
+                     CSRF_FIELD: token})
+    assert r.status_code == 303
+    version, body = state.registry.load("agent_config")
+    assert version.version == before + 1
+    assert (body["context_strategy"], body["harness"]) == ("windowed", "messages_api")
+
+
+def test_a_stored_config_that_predates_the_constraint_renders_instead_of_500(client):
+    """windowed + claude_code was legal, and the registry validates nothing, so
+    such a blob survives the upgrade. If /config could not render it, the only
+    surface able to repair it would be the one refusing to load."""
+    c, state = client
+    stale = {**AgentConfig(harness="messages_api",
+                           context_strategy="windowed").as_dict(),
+             "harness": "claude_code"}
+    state.registry.commit("agent_config", "agent", stale, actor="test-seed")
+
+    r = c.get("/config", auth=AUTH)
+    assert r.status_code == 200
+    assert "not loadable" in r.text
+    assert "messages_api" in r.text
+
+    # ...and the form it rendered can be used to repair it.
+    token = c.cookies.get(CSRF_COOKIE)
+    fix = c.post("/config", auth=AUTH, follow_redirects=False,
+                 data={"context_strategy": "full", CSRF_FIELD: token})
+    assert fix.status_code == 303
+    assert AgentConfig.from_dict(
+        state.registry.load("agent_config")[1]).context_strategy == "full"
 
 
 # ------------------------------------------------------------- escaping

@@ -212,11 +212,17 @@ class AgentState:
                        f"{exc}. Refusing to start a run with a guessed fingerprint.",
             ) from exc
 
-    def build_fingerprint(self, config_ref: str) -> tuple[RunFingerprint, AgentConfig, str]:
+    def load_config(self, config_ref: str) -> tuple[Any, AgentConfig]:
+        """Resolve a config ref into a dataclass, or say what is wrong with it.
+
+        Both failures here are the same shape: the agent cannot serve, cannot
+        repair, and a bare exception would surface as "Internal Server Error"
+        naming neither the ref nor the remedy. So both become a 503 that says
+        who holds the pen — the registry is mounted read-only to this service.
+        """
         try:
             config_version, config_body = self.registry.load(config_ref)
         except KeyError as exc:
-            # A bare KeyError surfaces as a 500 and tells the caller nothing.
             # The realistic cause is a shipped config that no writable service
             # has created yet, so say that and say who can fix it.
             _missing, status = audit(self.registry)
@@ -224,7 +230,26 @@ class AgentState:
                 status_code=503,
                 detail=f"config ref {config_ref!r} is not in the registry. {status}",
             ) from exc
-        config = AgentConfig.from_dict(config_body)
+        try:
+            return config_version, AgentConfig.from_dict(config_body)
+        except (ValueError, TypeError) as exc:
+            # AgentConfig refuses pairs it cannot honour, and those refusals are
+            # added over time: `context_strategy` other than `full` on the
+            # `claude_code` harness only became one after registries in the
+            # field had already been written, and `sim.registry` validates
+            # nothing, so such a blob survives the upgrade untouched. It is read
+            # here, on every session and every batch cell, and the only surface
+            # that can rewrite it is admin-ui's /config page.
+            raise HTTPException(
+                status_code=503,
+                detail=f"config ref {config_ref!r} is stored but not loadable: "
+                       f"{exc} — repair it on the admin-ui /config page, which "
+                       f"owns registry writes; this service mounts the registry "
+                       f"read-only and cannot fix it.",
+            ) from exc
+
+    def build_fingerprint(self, config_ref: str) -> tuple[RunFingerprint, AgentConfig, str]:
+        config_version, config = self.load_config(config_ref)
         prompt_version, prompt_body = self.registry.load(config.system_prompt_ref)
         condition = self.emulator_condition()
 
@@ -416,8 +441,7 @@ def create_app(state: AgentState | None = None) -> FastAPI:
                 "idempotent_replay": True})
 
         guard = register(CostGuard(budget, experiment_id=job_id))
-        base_config = AgentConfig.from_dict(
-            state.registry.load("agent_config")[1])
+        _version, base_config = state.load_config("agent_config")
         projection = Projection(
             questions=runs,
             expected_calls_per_question=payload.expected_calls_per_question,

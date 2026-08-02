@@ -280,13 +280,28 @@ silently again.
   *does* run live: turns through the deployed stack on 2026-08-02 cost ~$0.10 and
   made real Heimdall calls. The `messages_api` arm still needs
   `ANTHROPIC_API_KEY` and one cassette recording to close this.
-- **`context_strategy` is still ignored by the default harness.** `full` /
-  `windowed` / `summarised` is an experimental variable that `claude_code` does
-  not implement in either conversation mode: under `stateless` there is no
-  history to pack, and under `resume` the CLI owns the window and compacts on
-  its own terms. So every condition on that axis runs the same way while the
-  fingerprint claims otherwise. Fixing it means implementing context packing for
-  `claude_code`; it is a feature, not a patch, and it is not done.
+- **`context_strategy` is still not implemented for the default harness — but it
+  can no longer be declared there.** `windowed` and `summarised` live only in
+  `sim.agent.loop.pack_context`, which only the `messages_api` path calls;
+  `claude_code` never reads the field, in either conversation mode (under
+  `stateless` there is no history to pack, and under `resume` the CLI owns the
+  window and compacts on its own terms). Declaring one of them on `claude_code`
+  used to be accepted, so an axis sweep produced three condition_ids over one
+  behaviour and would have supported the conclusion "context handling does not
+  matter". `AgentConfig.__post_init__` now refuses that pair the way it already
+  refuses `code_execution=allowed` with `messages_api`, and the message names the
+  remedy. `full` stays legal everywhere: it is the default, and on `claude_code`
+  it is the true description of what the harness does.
+
+  What is *not* done is context packing for `claude_code`. That remains a
+  feature with real design questions, and it is out of scope of the refusal —
+  the refusal only stops the dial from lying about it. Note also where the check
+  sits: `sim.registry` validates nothing, so a caller writing a body straight
+  through `registry.commit` can still store the illegal pair; it is refused when
+  loaded, which is the only path a harness takes. Both ends of that path say so
+  in a usable way: `/config` renders such a blob with a warning rather than 500,
+  and `AgentState.load_config` answers 503 naming the ref and pointing at that
+  page, because the agent mounts the registry read-only and cannot repair it.
 
   What *was* fixed is the cruder problem underneath it. A turn used to carry no
   history at all — verified at the time: asked to remember a number, the next

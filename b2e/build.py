@@ -34,6 +34,11 @@ CHANGES_COLUMN = "_changes"
 #: Колонки, к которым применяется регистровая каверза.
 _NAME_COLUMNS = {"employee_full_name", "full_name"}
 
+#: Вложенные массивы ФИО: колонка → блок, чьё поле ``row`` даёт человека для
+#: каждого элемента. Каверза привязана к человеку, поэтому ей нужен именно он.
+_NESTED_NAME_COLUMNS = {"successors.full_name": "successors",
+                        "predecessor.full_name": "predecessors"}
+
 
 def build(seed: int, n_people: int, out: str | Path,
           catalog_path: str | Path = "catalog/snapshot.json",
@@ -74,6 +79,12 @@ def build(seed: int, n_people: int, out: str | Path,
                 if name in _NAME_COLUMNS:
                     values = traps.apply_upper(values, seed, frame.person,
                                                "upper_cyrillic" in enabled_traps)
+                elif name in _NESTED_NAME_COLUMNS:
+                    refs = blocks[_NESTED_NAME_COLUMNS[name]].lists(
+                        "row", np.maximum(frame.person, 0))
+                    values = traps.apply_upper_nested(
+                        values, seed, refs, int(pop.n),
+                        "upper_cyrillic" in enabled_traps)
                 writer.write(name, values, member.type)
                 written += 1
             if model.is_history:

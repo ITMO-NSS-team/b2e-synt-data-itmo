@@ -98,6 +98,29 @@ def csrf_input(token: str) -> str:
     return f'<input type=hidden name={CSRF_FIELD} value="{esc(token)}">'
 
 
+def _config_for_form(body_json: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Stored agent config as a plain dict, loadable or not.
+
+    ``AgentConfig`` gains constraints over time — ``context_strategy`` other than
+    ``full`` now requires ``harness='messages_api'``, and that pair was legal (and
+    offered by the dropdown on this very page) until it wasn't. The registry is a
+    dumb versioned store that validates nothing, so a blob written before the
+    constraint stays exactly where it is. Constructing it here would 500 both the
+    GET and the POST, and the only surface that can repair the blob is the form
+    those two handlers render — an unrepairable loop.
+
+    So: merge over the shipped defaults instead. Every known key is then present
+    for rendering whatever the blob is missing, unknown keys ride along so a save
+    still refuses them by name, and the caller gets the exception text to show.
+    """
+    merged = {**AgentConfig().as_dict(), **body_json}
+    try:
+        AgentConfig.from_dict(body_json)
+    except (ValueError, TypeError) as exc:
+        return merged, str(exc)
+    return merged, None
+
+
 class AdminState:
     def __init__(self) -> None:
         env = os.environ
@@ -367,7 +390,7 @@ approval.</p>
                     actor: str = Depends(require_admin)) -> HTMLResponse:
         token = _csrf(request, response)
         version, body_json = state.registry.load("agent_config")
-        current = AgentConfig.from_dict(body_json)
+        current, load_error = _config_for_form(body_json)
         history = state.registry.history("agent_config")
         rows = "".join(
             f'<tr><td><code>{esc(v.ref)}</code></td><td class=mut>{esc(v.actor)}</td>'
@@ -388,8 +411,17 @@ approval.</p>
             HARNESSES, MEMORY_STRATEGIES,
         )
 
+        stale_warning = ""
+        if load_error:
+            stale_warning = (
+                '<div class=warn><b>The stored config is not loadable.</b> '
+                f'{esc(load_error)} The form below shows it merged over the '
+                'shipped defaults so you can correct the offending pair and '
+                'save a legal version; until you do, every session and every '
+                'batch cell against this ref fails.</div>')
+
         code_warning = ""
-        if current.code_execution == "allowed":
+        if current["code_execution"] == "allowed":
             code_warning = (
                 '<div class=warn><b>Code execution is ON.</b> This is the rival '
                 'arm, not the default. Two things are true while it is set: the '
@@ -401,20 +433,21 @@ approval.</p>
 
         body = f"""
 <h2>Model parameters — {esc(version.ref)}</h2>
+{stale_warning}
 {code_warning}
 <form method=post action="config">
 {csrf_input(token)}
 <table>
-{field("model_id", current.model_id)}
-{field("temperature", current.temperature)}
-{field("max_output_tokens", current.max_output_tokens)}
-{field("context_window_tokens", current.context_window_tokens)}
-{field("max_tool_iterations", current.max_tool_iterations)}
-{field("harness", current.harness, HARNESSES)}
-{field("code_execution", current.code_execution, CODE_EXECUTION_MODES)}
-{field("budget_strategy", current.budget_strategy, BUDGET_STRATEGIES)}
-{field("context_strategy", current.context_strategy, CONTEXT_STRATEGIES)}
-{field("memory_strategy", current.memory_strategy, MEMORY_STRATEGIES)}
+{field("model_id", current["model_id"])}
+{field("temperature", current["temperature"])}
+{field("max_output_tokens", current["max_output_tokens"])}
+{field("context_window_tokens", current["context_window_tokens"])}
+{field("max_tool_iterations", current["max_tool_iterations"])}
+{field("harness", current["harness"], HARNESSES)}
+{field("code_execution", current["code_execution"], CODE_EXECUTION_MODES)}
+{field("budget_strategy", current["budget_strategy"], BUDGET_STRATEGIES)}
+{field("context_strategy", current["context_strategy"], CONTEXT_STRATEGIES)}
+{field("memory_strategy", current["memory_strategy"], MEMORY_STRATEGIES)}
 </table>
 <div class=row><input name=note placeholder="why this change" size=48>
 <button class=primary type=submit>Save as new version</button></div>
@@ -425,6 +458,13 @@ approval.</p>
 rival hypothesis can be measured rather than assumed. It requires
 <code>harness=claude_code</code>; the messages_api loop has no tool that can run
 code, so the combination is refused rather than silently mislabelled.</p>
+<p class=mut><code>context_strategy=windowed</code> and <code>summarised</code> are
+implemented only by the messages_api loop's packer, so they require
+<code>harness=messages_api</code>. Under <code>claude_code</code> the CLI owns its
+own context window and the field was read by nothing at all — three values, three
+condition_ids, one behaviour. Both dropdowns stay fully populated because harness
+is edited on this same form: switch the pair together and the save succeeds;
+submit an incoherent pair and you get a 422 naming it.</p>
 <h2>Version history</h2>
 <table><tr><th>version</th><th>actor</th><th>note</th></tr>{rows}</table>
 """
@@ -436,8 +476,7 @@ code, so the combination is refused rather than silently mislabelled.</p>
                           actor: str = Depends(require_admin)) -> RedirectResponse:
         form = await request.form()
         verify_csrf(request, csrf_token)
-        current = AgentConfig.from_dict(state.registry.load("agent_config")[1])
-        updated = current.as_dict()
+        updated, _load_error = _config_for_form(state.registry.load("agent_config")[1])
         for key in ("model_id", "budget_strategy", "context_strategy",
                     "memory_strategy", "harness", "code_execution"):
             if key in form:
@@ -451,7 +490,7 @@ code, so the combination is refused rather than silently mislabelled.</p>
                 updated[key] = int(form[key])
         try:
             AgentConfig.from_dict(updated)
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise HTTPException(422, str(exc)) from exc
         state.registry.commit("agent_config", "agent", updated, actor=actor,
                               note=str(form.get("note", "")))

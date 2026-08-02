@@ -240,6 +240,7 @@ def test_full_strategy_keeps_everything():
 def test_windowed_strategy_shrinks_context():
     messages = _history(30)
     packed = pack_context(messages, AgentConfig(context_strategy="windowed",
+                                                harness="messages_api",
                                                 windowed_turns=3))
     assert len(packed) < len(messages)
 
@@ -247,6 +248,7 @@ def test_windowed_strategy_shrinks_context():
 def test_summarised_strategy_preserves_recent_turns_verbatim():
     messages = _history(30)
     packed = pack_context(messages, AgentConfig(context_strategy="summarised",
+                                                harness="messages_api",
                                                 windowed_turns=3))
     assert packed[0]["content"].startswith("[сводка")
     assert packed[-1] == messages[-1]
@@ -288,6 +290,93 @@ def test_a_config_predating_conversation_mode_still_loads():
     legacy = AgentConfig().as_dict()
     del legacy["conversation_mode"]
     assert AgentConfig.from_dict(legacy).conversation_mode == "stateless"
+
+
+@pytest.mark.parametrize("strategy", ["windowed", "summarised"])
+@pytest.mark.parametrize("mode", ["stateless", "resume"])
+def test_a_context_strategy_the_default_harness_cannot_honour_is_refused(
+        strategy, mode):
+    """Only sim.agent.loop.pack_context implements these, and only messages_api
+    calls it — claude_code.py never reads the field in either conversation mode.
+    Accepting the pair gave three condition_ids to one behaviour, so a sweep
+    over the axis would have concluded that context handling does not matter."""
+    with pytest.raises(ValueError) as exc:
+        AgentConfig(context_strategy=strategy, harness="claude_code",
+                    conversation_mode=mode)
+    assert "messages_api" in str(exc.value)
+
+
+@pytest.mark.parametrize("mode", ["stateless", "resume"])
+def test_context_strategy_full_stays_legal_on_the_default_harness(mode):
+    """`full` is the default and every stored config carries it; on claude_code
+    it is also the honest label, since the loop applies no packing of its own.
+    Refusing it would make the shipped default unconstructible."""
+    config = AgentConfig(context_strategy="full", conversation_mode=mode)
+    assert config.harness == "claude_code"
+
+
+@pytest.mark.parametrize("strategy", ["full", "windowed", "summarised"])
+@pytest.mark.parametrize("mode", ["stateless", "resume"])
+def test_every_context_strategy_is_legal_on_messages_api(strategy, mode):
+    """The packer runs inside run_turn, on the messages the loop appends as it
+    goes, so it bites in both conversation modes — the constraint is on the
+    harness alone."""
+    assert AgentConfig(context_strategy=strategy, harness="messages_api",
+                       conversation_mode=mode).context_strategy == strategy
+
+
+def test_a_config_predating_the_context_strategy_constraint_still_loads():
+    """Same argument as the conversation_mode case above: a deployment that has
+    ever started keeps its original blob, and blobs written before `harness`
+    existed carry no such key. `context_strategy='full'` is what all of them
+    say, so the new check must not make them unloadable on boot."""
+    legacy = AgentConfig().as_dict()
+    del legacy["harness"]
+    loaded = AgentConfig.from_dict(legacy)
+    assert loaded.harness == "claude_code"
+    assert loaded.context_strategy == "full"
+
+
+def test_both_shipped_configs_still_construct():
+    """sim.agent.shipped commits these at bootstrap, from admin-ui, which holds
+    the only writable registry mount. A constraint that refused one of them
+    would take the operator surface down at boot."""
+    from sim.agent.shipped import shipped_configs
+
+    for ref, (kind, body, _note) in shipped_configs().items():
+        if kind == "agent":
+            assert AgentConfig.from_dict(body).context_strategy == "full", ref
+
+
+def test_a_stored_config_the_constraint_refuses_is_a_503_not_a_bare_500(
+        tmp_path, monkeypatch):
+    """The other half of the admin-UI repair path, on the side that reads.
+
+    `windowed` + `claude_code` was legal when registries in the field were
+    written, and `sim.registry` validates nothing, so the blob survives the
+    upgrade and is read here — on every session and every batch cell. A bare
+    ValueError out of `from_dict` is an "Internal Server Error" naming neither
+    the ref nor the field, and the agent mounts the registry read-only, so the
+    caller also has to be told where the repair lives."""
+    monkeypatch.setenv("B2E_REGISTRY_DB", str(tmp_path / "registry.db"))
+    monkeypatch.setenv("B2E_AGENT_DB", str(tmp_path / "agent.db"))
+    monkeypatch.setenv("B2E_LLM_MODE", "replay")
+    from fastapi import HTTPException
+
+    from sim.agent.app import AgentState
+
+    state = AgentState()
+    stale = {**AgentConfig(harness="messages_api",
+                           context_strategy="windowed").as_dict(),
+             "harness": "claude_code"}
+    state.registry.commit("agent_config", "agent", stale, actor="test-seed")
+
+    with pytest.raises(HTTPException) as exc:
+        state.build_fingerprint("agent_config")
+    assert exc.value.status_code == 503
+    assert "agent_config" in exc.value.detail
+    assert "messages_api" in exc.value.detail
+    assert "/config" in exc.value.detail
 
 
 def test_the_shipped_interactive_config_differs_in_exactly_one_field():

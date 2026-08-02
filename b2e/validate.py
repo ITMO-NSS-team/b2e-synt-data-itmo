@@ -32,6 +32,19 @@ PERSON_MARTS = [
 EDU_GROUP = ["educational_institution_name", "educational_speciality",
              "education_type_name"]
 
+#: Витрины, на которых проверяется выравнивание вложенных групп (``successors.*``,
+#: ``educ.*``, ``reaction.*``). Список ограничен намеренно: вложенных колонок в
+#: каталоге 1 758, и чтение их всех на корпусе в 300 000 строк стоило бы дороже
+#: самой сборки. Здесь перечислены витрины, где эти группы объявлены впервые.
+NESTED_MARTS = ["dm_core.employee_actual", "dm_core.employee_hist",
+                "dm_core.employee_actual_orion", "dm_core.evolution_item"]
+
+#: Полная группа преемников по каталогу — все пять членов должны быть реальными.
+SUCCESSOR_GROUP = ["successors.person_id", "successors.employee_id",
+                   "successors.full_name", "successors.status",
+                   "successors.appoint_date"]
+SUCCESSOR_GROUP_SET = set(SUCCESSOR_GROUP)
+
 
 class Report:
     def __init__(self) -> None:
@@ -56,6 +69,34 @@ class Report:
         lines.append(f"проверок: {len(self.rows)}, отказов: {self.failed}, "
                      f"предупреждений: {warns}")
         return "\n".join(lines)
+
+
+def _nested_groups(model, table) -> dict[str, list[str]]:
+    """Объявленные группы вложенных массивов, у которых есть смысловое ядро.
+
+    Группа берётся в проверку, только если хотя бы один её член материализован.
+    У полностью процедурных групп длину массива диктует общая координата группы
+    (``fillers._length_key``), а прочитать все вложенные колонки каталога на
+    полном корпусе нельзя по времени.
+    """
+    groups: dict[str, list[str]] = {}
+    for name, member in model.columns.items():
+        if "." in name and getattr(member.ch, "is_array", False):
+            groups.setdefault(name.split(".", 1)[0], []).append(name)
+    return {group: sorted(cols) for group, cols in groups.items()
+            if len(cols) >= 2 and any(c in table._index for c in cols)}
+
+
+def _lengths(table, name: str) -> list[int]:
+    """Длины массивов колонки; сами значения сразу отпускаются.
+
+    Групп на витрине до шестнадцати, в каждой до двадцати членов. Держать их все
+    в кэше читателя — сотни мегабайт на корпусе в 300 000 строк, а для проверки
+    выравнивания нужны только длины.
+    """
+    out = [len(v or []) for v in table.column(name)]
+    table._cache.pop(name, None)
+    return out
 
 
 def run(root: str | Path, catalog_path: str | Path = "catalog/snapshot.json") -> Report:
@@ -110,6 +151,23 @@ def run(root: str | Path, catalog_path: str | Path = "catalog/snapshot.json") ->
         rep.check("W3 образование выровнено позиционно", aligned == len(cols[0]),
                   f"{aligned}/{len(cols[0])}")
 
+    # --- W3b: вложенные группы массивов выровнены -------------------------
+    # Обобщение W3 на группы с точкой в имени. Живой замер на employee_id
+    # 9877478: successors.status — 3 элемента, successors.full_name — 2,
+    # successors.employee_id — 1, то есть i-й статус описывал другого человека.
+    for key in NESTED_MARTS:
+        if not snap.has(key):
+            continue
+        table = snap.table(key)
+        model = snap.catalog.models.get(key)
+        if model is None or table.rows == 0:
+            continue
+        for group, cols in sorted(_nested_groups(model, table).items()):
+            lengths = [_lengths(table, c) for c in cols]
+            aligned = sum(1 for row in zip(*lengths) if len(set(row)) == 1)
+            rep.check(f"W3 группа {group}.* выровнена: {key}",
+                      aligned == table.rows, f"{aligned}/{table.rows}")
+
     # --- W5: компетенции различимы ---------------------------------------
     cc = snap.table("dm_special.employee_competence_actual")
     comp_names = ["personality_traits_group_score", "cognitive_features_group_score",
@@ -142,6 +200,66 @@ def run(root: str | Path, catalog_path: str | Path = "catalog/snapshot.json") ->
         hit = sum(1 for h in heads if str(h) in emp_ids)
         rep.check("W7 руководители подразделений — реальные сотрудники",
                   heads and hit == len(heads), f"{hit}/{len(heads)}")
+
+    # --- W7b: преемники — существующие люди, а не выдуманные строки --------
+    # Условие — по КАТАЛОГУ, а не по ``t._index``. Проверено на копии корпуса, с
+    # которой убраны те же колонки, что не писались до починки: при проверке по
+    # ``_index`` гейт не падал, а просто терял четыре проверки (42 → 38) и
+    # рапортовал «отказов: 0», хотя successors.full_name снова содержал
+    # «итоговый». Гейт против дефекта «колонка досталась заполнителю» не имеет
+    # права отключаться ровно тогда, когда этот дефект вернулся.
+    declared = set(snap.catalog.models["dm_core.employee_actual"].columns)
+    if SUCCESSOR_GROUP_SET <= declared:
+        succ = {c: t.column(c) for c in SUCCESSOR_GROUP}
+        qty = t.column("successors_qty")
+        fits = sum(1 for i, q in enumerate(qty)
+                   if all(len(succ[c][i] or []) == int(q) for c in SUCCESSOR_GROUP))
+        rep.check("W7 длина successors.* равна successors_qty", fits == len(qty),
+                  f"{fits}/{len(qty)}")
+        # Личности сверяются с dm_core.employee_actual, а не с самой витриной:
+        # у orion и ``_dep``-копий строковое пространство урезано, и преемник
+        # законно может отсутствовать в той же витрине, где на него ссылаются.
+        by_employee = dict(zip((str(v) for v in t.column("employee_id")), names))
+        total = wrong = 0
+        for pids, eids, fios in zip(succ["successors.person_id"],
+                                    succ["successors.employee_id"],
+                                    succ["successors.full_name"]):
+            for pid, eid, fio in zip(pids or [], eids or [], fios or []):
+                total += 1
+                if by_id.get(pid) != fio or by_employee.get(str(eid)) != fio:
+                    wrong += 1
+        rep.check("W7 личность преемника настоящая", total and wrong == 0,
+                  f"{total - wrong}/{total}")
+
+    # --- W7c: predecessor — обратная сторона того же ребра ----------------
+    if {"predecessor.employee_id", "predecessor.status", "predecessor.positions_id",
+            "successors.employee_id", "successors.status"} <= declared:
+        subject = [str(v) for v in t.column("employee_id")]
+        forward = Counter(
+            (who, str(e), s)
+            for who, eids, sts in zip(subject, t.column("successors.employee_id"),
+                                      t.column("successors.status"))
+            for e, s in zip(eids or [], sts or []))
+        backward = Counter(
+            (str(e), who, s)
+            for who, eids, sts in zip(subject, t.column("predecessor.employee_id"),
+                                      t.column("predecessor.status"))
+            for e, s in zip(eids or [], sts or []))
+        drift = sum((forward - backward).values()) + sum((backward - forward).values())
+        rep.check("W7 predecessor обратен successors", forward and drift == 0,
+                  f"{sum(forward.values())} рёбер, расхождений {drift}")
+        # positions_* у predecessor — позиция ТОГО, кого замещают: единственный
+        # член группы, которого нет у successors, и потому единственный, чья
+        # ошибка не всплыла бы в сверке рёбер выше.
+        by_position = dict(zip(subject, t.column("position_id")))
+        total = wrong = 0
+        for eids, pos in zip(t.column("predecessor.employee_id"),
+                             t.column("predecessor.positions_id")):
+            for e, p in zip(eids or [], pos or []):
+                total += 1
+                wrong += by_position.get(str(e)) != p
+        rep.check("W7 predecessor.positions_id — позиция замещаемого",
+                  total and wrong == 0, f"{total - wrong}/{total}")
 
     # --- W10: пустых витрин нет, кроме объявленных ------------------------
     from b2e.gen.marts import EMPTY_BY_DESIGN

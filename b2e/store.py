@@ -29,6 +29,11 @@ from heimdall.store.columnar import TableReader, TableWriter, write_manifest
 from b2e.gen import fillers
 
 
+def _is_array(model, name: str) -> bool:
+    member = model.member(name) if model else None
+    return bool(member is not None and getattr(member.ch, "is_array", False))
+
+
 class ProceduralReader(TableReader):
     """Читатель витрины: с диска, а чего нет — из процедурного генератора."""
 
@@ -46,9 +51,30 @@ class ProceduralReader(TableReader):
         if member is None or self.rows == 0:
             return [None] * self.rows
         values = fillers.column(name, member.ch, self.key, self._seed,
-                                np.arange(self.rows))
+                                np.arange(self.rows),
+                                lengths=self._group_lengths(name, member))
         self._remember(name, values)
         return values
+
+    def _group_lengths(self, name: str, member) -> np.ndarray | None:
+        """Длины массивов вложенной группы — по материализованному соседу.
+
+        У группы вроде ``successors.*`` часть членов лежит на диске (status,
+        appoint_date), а часть достаётся заполнителю. Если заполнитель разыграет
+        длину сам, i-й элемент его массива будет описывать другого человека,
+        чем i-й элемент соседа: именно так ``successors.full_name`` из двух
+        элементов оказывался рядом со ``status`` из трёх. Сосед стоит одного
+        чтения колонки и не стоит ни байта на диске.
+        """
+        if "." not in name or not getattr(member.ch, "is_array", False):
+            return None
+        prefix = name.split(".", 1)[0] + "."
+        sibling = next((c for c in sorted(self._index)
+                        if c.startswith(prefix) and _is_array(self._model, c)), None)
+        if sibling is None:
+            return None
+        return np.array([len(v or []) for v in super().column(sibling)],
+                        dtype=np.int64)
 
     def available(self) -> set[str]:
         """Каталожные имена плюс материализованные служебные колонки."""

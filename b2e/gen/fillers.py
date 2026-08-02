@@ -267,9 +267,26 @@ def by_type(ch, base, rows: np.ndarray) -> np.ndarray:
     return _from(dicts.GENERIC_WORDS, base, rows)
 
 
+def _length_key(name: str, mart: str, seed: int) -> np.uint64:
+    """Координата длины массива. Для вложенной группы — общая на всю группу.
+
+    ``successors.status`` и ``successors.full_name`` описывают одного и того же
+    человека под индексом i, поэтому длина принадлежит ГРУППЕ, а не колонке.
+    Пока координата включала имя колонки, у одного сотрудника выходило
+    ``status`` из трёх элементов, ``full_name`` из двух и ``employee_id`` из
+    одного — и позиционное соответствие означало неверного человека.
+    """
+    group = name.rsplit(".", 1)[0] if "." in name else name
+    return key64(seed, mart, group) ^ np.uint64(11)
+
+
 def column(name: str, ch, mart: str, seed: int, rows: np.ndarray,
-           names_book=None) -> list:
-    """Полное значение колонки, включая массивы и NULL."""
+           names_book=None, lengths: np.ndarray | None = None) -> list:
+    """Полное значение колонки, включая массивы и NULL.
+
+    ``lengths`` задаёт длины массивов извне: у вложенной группы длину диктует
+    материализованный сосед, а не собственный розыгрыш колонки.
+    """
     base = key64(seed, mart, name)
     if is_embedding(name):
         n = len(rows)
@@ -277,7 +294,8 @@ def column(name: str, ch, mart: str, seed: int, rows: np.ndarray,
         return [vals[i * EMBEDDING_DIM:(i + 1) * EMBEDDING_DIM].tolist()
                 for i in range(n)]
     if getattr(ch, "is_array", False):
-        lengths = integers(base ^ np.uint64(11), rows, 0, MAX_ARRAY)
+        if lengths is None:
+            lengths = integers(_length_key(name, mart, seed), rows, 0, MAX_ARRAY)
         flat_rows = np.repeat(rows, lengths)
         flat = scalar(name, ch, base, flat_rows + np.arange(len(flat_rows)) * 7919,
                       names_book)

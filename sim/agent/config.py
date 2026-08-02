@@ -10,6 +10,16 @@ The context window is read from config rather than hardcoded, for the reason the
 spec gives: a hardcoded 200 000 becomes a lie the moment the model changes, and
 the failure is silent — the agent simply starts truncating differently than the
 trace claims.
+
+Some fields constrain each other, and ``__post_init__`` refuses the impossible
+combinations instead of ignoring them — see ``code_execution`` and
+``context_strategy`` below. A declared-but-inert condition is worse than a
+crash: it still gets its own ``condition_id``, so the run *looks* like an arm
+that was measured. Note where that check lives: ``sim.registry`` is a dumb
+versioned store and validates nothing, so a caller writing a body straight
+through ``registry.commit`` can still persist an illegal pair. The refusal
+happens when the blob is loaded into this dataclass, which is the only path any
+harness takes to read a config.
 """
 from __future__ import annotations
 
@@ -29,6 +39,21 @@ BUDGET_STRATEGIES = (
 )
 
 #: How the agent assembles context for each model call.
+#:
+#: Only ``sim.agent.loop.pack_context`` implements these, and that packer is
+#: reached only through ``harness="messages_api"``. So:
+#:
+#: * ``full`` — no loop-level packing at all. Honoured everywhere, because it is
+#:   the honest label for "the harness applies no strategy of its own", which is
+#:   exactly what ``claude_code`` does: the CLI owns its own window and compacts
+#:   on its own terms.
+#: * ``windowed`` / ``summarised`` — implemented by ``pack_context``, reachable
+#:   only under ``messages_api``. Declaring either on ``claude_code`` used to be
+#:   accepted and then do nothing: ``sim/agent/claude_code.py`` never reads the
+#:   field, in either conversation mode. A sweep over the three values on the
+#:   default harness would therefore have produced three identical arms with
+#:   three different ``condition_id``s and supported the conclusion "context
+#:   handling does not matter". ``__post_init__`` refuses that pair now.
 CONTEXT_STRATEGIES = (
     "full",          # every prior message, until the window forces truncation
     "windowed",      # last N turns only
@@ -161,6 +186,25 @@ class AgentConfig:
         if self.context_strategy not in CONTEXT_STRATEGIES:
             raise ValueError(
                 f"context_strategy {self.context_strategy!r} not in {CONTEXT_STRATEGIES}")
+        if self.context_strategy != "full" and self.harness != "messages_api":
+            # Same argument as the code_execution refusal above, other axis.
+            # Only sim.agent.loop.pack_context implements windowing and
+            # summarisation, and only the messages_api path calls it; the Claude
+            # Code CLI owns its own context window. So this pair used to name a
+            # condition that ran identically to `full` — an experiment sweeping
+            # the axis on the default harness would have measured nothing and
+            # concluded that context handling does not matter.
+            #
+            # `full` is deliberately exempt: it is the default, every stored
+            # config carries it, and on claude_code it is the true description
+            # of what the harness does — no loop-level packing.
+            raise ValueError(
+                f"context_strategy={self.context_strategy!r} requires "
+                f"harness='messages_api'; only the sim.agent.loop packer "
+                f"implements windowing and summarisation, and the Claude Code "
+                f"CLI owns its own context window, so the combination would "
+                f"label an arm that runs identically to 'full'. Set "
+                f"harness='messages_api', or leave context_strategy='full'.")
         if self.memory_strategy not in MEMORY_STRATEGIES:
             raise ValueError(
                 f"memory_strategy {self.memory_strategy!r} not in {MEMORY_STRATEGIES}")
