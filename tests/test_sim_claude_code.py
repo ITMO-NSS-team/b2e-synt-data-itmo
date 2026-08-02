@@ -350,3 +350,137 @@ def test_parse_reports_an_errored_session():
 def test_empty_stream_does_not_crash():
     out = parse_stream("")
     assert out.answer == "" and out.total_tokens == 0
+
+
+# ------------------------------------------------- conversation_mode
+
+
+CONVERSING = AgentConfig(conversation_mode="resume")
+
+
+def test_stateless_is_the_default():
+    """A batch arm must not silently start sharing context between turns.
+
+    Runs that carry each other's history are not independent samples, and the
+    per-turn token counts stop meaning what the RQ2 tables say they mean.
+    """
+    assert AgentConfig().conversation_mode == "stateless"
+
+
+def test_resume_turns_off_session_persistence(harness):
+    """`--no-session-persistence` and `--resume` are mutually exclusive: the
+    flag forbids writing the transcript the other one needs to read."""
+    argv = harness.build_argv("q", config=CONVERSING, system_suffix="s",
+                              mcp_config_path="/tmp/mcp.json")
+    assert "--no-session-persistence" not in argv
+
+
+def test_first_turn_of_a_conversation_does_not_resume(harness):
+    """There is nothing to resume yet, and `--resume` with no session would
+    fail the turn rather than start one."""
+    argv = harness.build_argv("q", config=CONVERSING, system_suffix="s",
+                              mcp_config_path="/tmp/mcp.json",
+                              resume_session_id=None)
+    assert "--resume" not in argv
+
+
+def test_later_turns_resume_the_bound_session(harness):
+    argv = harness.build_argv("q", config=CONVERSING, system_suffix="s",
+                              mcp_config_path="/tmp/mcp.json",
+                              resume_session_id="abc-123")
+    assert argv[argv.index("--resume") + 1] == "abc-123"
+
+
+def test_a_stateless_config_never_resumes(harness):
+    """Defence in depth against a caller passing a stale id: the mode decides,
+    not the presence of an id."""
+    argv = harness.build_argv("q", config=AgentConfig(), system_suffix="s",
+                              mcp_config_path="/tmp/mcp.json",
+                              resume_session_id="abc-123")
+    assert "--resume" not in argv
+    assert "--no-session-persistence" in argv
+
+
+def test_resumable_sessions_get_a_stable_workdir(harness):
+    """Claude Code files a transcript under the project it was started in, so
+    two turns of one conversation must run in the same directory."""
+    first = harness.session_workdir(CONVERSING, "ses_abc")
+    second = harness.session_workdir(CONVERSING, "ses_abc")
+    assert first == second
+    assert harness.session_workdir(CONVERSING, "ses_other") != first
+
+
+def test_stateless_sessions_get_a_throwaway_workdir(harness):
+    """None means mkdtemp: no transcript is left behind to resume."""
+    assert harness.session_workdir(AgentConfig(), "ses_abc") is None
+
+
+def test_session_workdir_does_not_escape_its_root(harness):
+    """The id comes from the store, but it is used to build a path."""
+    evil = harness.session_workdir(CONVERSING, "../../etc/passwd")
+    assert evil is not None
+    assert ".." not in evil.parts
+    assert str(evil).startswith(harness.session_root)
+
+
+# ------------------------------------------------ the dialogue note
+
+
+def test_dialogue_note_replaces_the_stateless_one(harness):
+    """A resumable session told "истории у тебя нет" is being lied to, and the
+    lie costs exactly the follow-up questions this mode exists to allow."""
+    note = harness.harness_note(CONVERSING)
+    assert "Каждый ход самодостаточен" not in note
+    assert "Это диалог" in note
+
+
+@pytest.mark.parametrize("config", [
+    AgentConfig(),
+    CONVERSING,
+    AgentConfig(code_execution="allowed"),
+    AgentConfig(code_execution="allowed", conversation_mode="resume"),
+])
+def test_permission_refusal_is_final_in_every_mode(harness, config):
+    """The bd0d86d fix is about who can grant a scope, not about how many turns
+    the session runs for. A researcher reading answers in Telegram cannot widen
+    a Heimdall permission however long the conversation lasts.
+    """
+    note = harness.harness_note(config)
+    assert "не проси разрешений" in note.lower()
+    assert "Отказ инструмента окончателен" in note
+
+
+@pytest.mark.parametrize("config", [
+    AgentConfig(),
+    CONVERSING,
+    AgentConfig(code_execution="allowed"),
+    AgentConfig(code_execution="allowed", conversation_mode="resume"),
+])
+def test_note_never_names_a_refused_tool_in_any_mode(harness, config):
+    granted = {t.removeprefix(f"mcp__{MCP_SERVER_NAME}__")
+               for t in harness.allowed_tools(config) if t.startswith("mcp__")}
+    assert _named_in_note(harness.harness_note(config)) <= granted
+
+
+# ---------------------------------------------------- AskUserQuestion
+
+
+def test_ask_user_question_stays_denied_in_every_mode(harness):
+    """Probed on Claude Code 2.1.220: headless `-p` has no AskUserQuestion at
+    all. The `init` event enumerates the whole surface, deferred tools included,
+    and the name is absent even when passed to --allowed-tools — under both
+    --input-format text and --input-format stream-json.
+
+    So granting it would add a name the session cannot resolve. Under `resume`
+    the turn boundary is the asking mechanism instead: the agent ends a turn
+    with a question and the researcher answers in the next message.
+
+    If a later CLI does expose it, this test is the place that should fail.
+    """
+    assert "AskUserQuestion" in DENIED_TOOLS
+    for config in (AgentConfig(), CONVERSING,
+                   AgentConfig(code_execution="allowed"),
+                   AgentConfig(code_execution="allowed",
+                               conversation_mode="resume")):
+        assert "AskUserQuestion" in harness.denied_tools(config)
+        assert "AskUserQuestion" not in harness.allowed_tools(config)

@@ -39,6 +39,12 @@ from sim.fingerprint import IncompleteFingerprint, RunFingerprint
 from sim.registry import Registry, canonical_bytes, sha256_hex
 
 
+#: Registry ref of the shipped conversational config. Named once here so the
+#: bootstrap, the API default and the Telegram bridge cannot drift onto three
+#: different strings.
+INTERACTIVE_CONFIG_REF = "agent_config_interactive"
+
+
 # ------------------------------------------------------------------- schemas
 
 
@@ -122,6 +128,12 @@ class AgentState:
             runner_path=env.get("B2E_SKILL_RUNNER", "/opt/skills/run"),
             claude_bin=claude_bin,
             proxy=proxy,
+            # Both live on the agent's writable volume, so a conversation
+            # survives a container rebuild. The CLI files session transcripts
+            # per (HOME, project dir); a resumable session needs both to be the
+            # same on the next turn as they were on this one.
+            session_root=env.get("B2E_SESSION_ROOT", "var/sessions"),
+            claude_home=env.get("B2E_CLAUDE_HOME") or None,
             timeout_seconds=int(env.get("B2E_TURN_TIMEOUT", "600")),
         )
 
@@ -158,6 +170,17 @@ class AgentState:
         if self.registry.head("agent_config") is None:
             self.registry.commit("agent_config", "agent", AgentConfig().as_dict(),
                                  actor="bootstrap", note="shipped default")
+        # A second shipped config, differing from the default in exactly one
+        # field. The Telegram bridge points at this one so a researcher gets a
+        # conversation, while batch arms keep `agent_config` and its stateless
+        # turns. Separating them by *config ref* rather than by a flag on the
+        # request is what keeps the fingerprint able to tell the two apart:
+        # they are different conditions and `condition_id` says so.
+        if self.registry.head(INTERACTIVE_CONFIG_REF) is None:
+            self.registry.commit(
+                INTERACTIVE_CONFIG_REF, "agent",
+                AgentConfig(conversation_mode="resume").as_dict(),
+                actor="bootstrap", note="shipped default, resumable sessions")
         if self.registry.head("skill_registry") is None:
             self.registry.commit("skill_registry", "skills", {"active": []},
                                  actor="bootstrap", note="empty registry")
@@ -289,10 +312,16 @@ def create_app(state: AgentState | None = None) -> FastAPI:
             tools = HeimdallTools(state.heimdall_url,
                                   employee_id=session["employee_id"],
                                   token=state.heimdall_token)
+            # The same switch the claude_code arm reads, so the two harnesses
+            # agree on what a session *is*. They had not: messages_api always
+            # replayed history while claude_code never did, which made any
+            # cross-harness comparison partly a comparison of memory.
+            history = (state.store.history_for_model(session_id)[:-1]
+                       if config.conversation_mode == "resume" else [])
             try:
                 result = run_turn(
                     question=payload.content,
-                    history=state.store.history_for_model(session_id)[:-1],
+                    history=history,
                     config=config, system_prompt=system_prompt,
                     client=state.client, tools=tools, fingerprint=fingerprint,
                     session_id=session_id, employee_id=session["employee_id"],
@@ -432,8 +461,15 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         trace_id = telemetry.current_trace_id()
         outcome = state.harness.run(
             question=question, config=config, system_prompt=system_prompt,
-            employee_id=session["employee_id"], keep_stream=False)
+            employee_id=session["employee_id"], keep_stream=False,
+            b2e_session_id=session_id,
+            resume_session_id=session.get("claude_session_id"))
         emit_spans(outcome, root=root, config=config)
+
+    # Bound after the turn, not before: the id is what the CLI actually used,
+    # which is not always the one we asked it to resume.
+    if config.conversation_mode == "resume" and outcome.session_id:
+        state.store.bind_claude_session(session_id, outcome.session_id)
 
     if guard is not None:
         guard.record(tokens=outcome.total_tokens, usd=outcome.cost_usd)

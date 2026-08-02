@@ -201,6 +201,11 @@ services:
       B2E_CLAUDE_BIN: claude
       B2E_SKILL_RUNNER: /opt/skills/run
       B2E_MCP_BRIDGE: /app/heimdall/bridge.py
+      # Resumable sessions live on the agent's volume, not in the image layer,
+      # so a conversation survives `up --build`. The CLI files transcripts per
+      # (HOME, project dir) and needs both stable to resume.
+      B2E_SESSION_ROOT: /app/var/sessions
+      B2E_CLAUDE_HOME: /app/var/claude-home
       # Egress to Anthropic goes through the host's proxy. NO_PROXY must list
       # every internal name, or Heimdall and Phoenix calls would be tunnelled
       # out to the internet and fail.
@@ -301,6 +306,10 @@ services:
       B2E_AGENT_URL: http://b2e-agent:8082
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
       TELEGRAM_DEFAULT_EMPLOYEE: ${TELEGRAM_DEFAULT_EMPLOYEE:?set TELEGRAM_DEFAULT_EMPLOYEE in .env}
+      # A chat is a conversation: this config ships with conversation_mode=
+      # "resume", so consecutive messages share one Claude Code session.
+      # Point it at `agent_config` to get the stateless batch behaviour instead.
+      B2E_TELEGRAM_CONFIG_REF: ${B2E_TELEGRAM_CONFIG_REF:-agent_config_interactive}
       HTTP_PROXY: ${AGENT_HTTP_PROXY:-http://172.20.0.1:10810}
       HTTPS_PROXY: ${AGENT_HTTP_PROXY:-http://172.20.0.1:10810}
       NO_PROXY: localhost,127.0.0.1,::1,b2e-agent,heimdall-emulator,phoenix

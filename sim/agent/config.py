@@ -67,6 +67,25 @@ CODE_EXECUTION_MODES = ("forbidden", "allowed")
 #: because it gives finer-grained spans when a study is about the loop itself.
 HARNESSES = ("claude_code", "messages_api")
 
+#: Whether a session is a conversation or a sequence of independent turns.
+#:
+#: ``stateless`` is the default and the measurement baseline: every turn starts
+#: cold. For ``claude_code`` that is ``--no-session-persistence``; for
+#: ``messages_api`` it is an empty history. A batch arm must stay here — runs
+#: that share context are not independent samples, and the per-turn token counts
+#: stop being comparable once turn *n* is paying to re-read turns 1..n-1.
+#:
+#: ``resume`` makes the session an actual dialogue. ``claude_code`` reopens the
+#: same headless session with ``--resume``, so the model sees its own prior tool
+#: calls and results, not a flattened transcript. This exists for the Telegram
+#: bridge, where a researcher asks a follow-up and means it as a follow-up.
+#:
+#: It is a config field rather than a property of the calling surface because
+#: the spec's rule applies: it changes behaviour, so it must be versioned and
+#: must reach the fingerprint. Two runs that differ only in this are two
+#: conditions, and ``condition_id`` has to say so.
+CONVERSATION_MODES = ("stateless", "resume")
+
 #: Long-horizon memory shape. This is RQ3's independent variable: does importing
 #: an employee's data from other systems help, or pollute?
 MEMORY_STRATEGIES = (
@@ -101,6 +120,7 @@ class AgentConfig:
     # ---- execution
     harness: str = "claude_code"
     code_execution: str = "forbidden"
+    conversation_mode: str = "stateless"
 
     # ---- behaviour
     budget_strategy: str = "ignore"
@@ -131,6 +151,10 @@ class AgentConfig:
                 "code_execution='allowed' requires harness='claude_code'; the "
                 "messages_api loop exposes no tool capable of executing code, "
                 "so the combination would mislabel the control arm")
+        if self.conversation_mode not in CONVERSATION_MODES:
+            raise ValueError(
+                f"conversation_mode {self.conversation_mode!r} not in "
+                f"{CONVERSATION_MODES}")
         if self.budget_strategy not in BUDGET_STRATEGIES:
             raise ValueError(
                 f"budget_strategy {self.budget_strategy!r} not in {BUDGET_STRATEGIES}")

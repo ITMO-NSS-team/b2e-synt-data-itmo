@@ -280,18 +280,24 @@ silently again.
   *does* run live: turns through the deployed stack on 2026-08-02 cost ~$0.10 and
   made real Heimdall calls. The `messages_api` arm still needs
   `ANTHROPIC_API_KEY` and one cassette recording to close this.
-- **A turn carries no history.** `_run_claude_code` hands the harness the
-  question and nothing else, and `--no-session-persistence` forbids resuming, so
-  every Telegram message is a fresh session. Verified: asked to remember a
-  number, the next turn replied *«В нашем текущем диалоге вы ничего не просили
-  запомнить — это первое ваше сообщение»*. Two consequences. A clarifying
-  question from the agent is unanswerable, which is why `NON_INTERACTIVE_NOTE`
-  tells it to assume rather than ask (§10.8 of the threat model). And
-  `context_strategy` — `full` / `windowed` / `summarised` — is an experimental
-  variable that the **default** harness ignores entirely, so every condition on
-  that axis currently runs the same way while the fingerprint claims otherwise.
-  Fixing it means implementing context packing for `claude_code`; it is a
-  feature, not a patch, and it is not done.
+- **`context_strategy` is still ignored by the default harness.** `full` /
+  `windowed` / `summarised` is an experimental variable that `claude_code` does
+  not implement in either conversation mode: under `stateless` there is no
+  history to pack, and under `resume` the CLI owns the window and compacts on
+  its own terms. So every condition on that axis runs the same way while the
+  fingerprint claims otherwise. Fixing it means implementing context packing for
+  `claude_code`; it is a feature, not a patch, and it is not done.
+
+  What *was* fixed is the cruder problem underneath it. A turn used to carry no
+  history at all — verified at the time: asked to remember a number, the next
+  turn replied *«В нашем текущем диалоге вы ничего не просили запомнить»*.
+  `AgentConfig.conversation_mode` now chooses. `stateless` keeps that behaviour
+  and remains the default, because batch arms need independent samples.
+  `resume` reopens the same headless session with `--resume`, and the Telegram
+  bridge uses it. Re-verified end to end on 2026-08-02 against CLI 2.1.220: turn
+  one was told a code word, turn two returned it, and the same two turns run
+  under `stateless` with the same session ids did not — so the mode gates it,
+  not luck.
 - **No cassettes are recorded yet**, so a live question through the deployed
   stack returns a replay miss by design rather than silently calling out.
 - **The sandbox's kernel-level controls are configured but not adversarially

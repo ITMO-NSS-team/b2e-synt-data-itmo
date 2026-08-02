@@ -266,6 +266,40 @@ def test_invalid_strategy_names_are_refused():
         AgentConfig(budget_strategy="guess")
     with pytest.raises(ValueError):
         AgentConfig(memory_strategy="telepathy")
+    with pytest.raises(ValueError):
+        AgentConfig(conversation_mode="remembers_everything")
+
+
+def test_conversation_mode_reaches_the_fingerprinted_config():
+    """It changes behaviour, so the spec's rule applies: it must be versionable
+    and it must land in the config blob the fingerprint hashes. A mode that
+    lived only on the calling surface would make two different conditions share
+    one condition_id."""
+    body = AgentConfig(conversation_mode="resume").as_dict()
+    assert body["conversation_mode"] == "resume"
+    assert AgentConfig.from_dict(body).conversation_mode == "resume"
+
+
+def test_a_config_predating_conversation_mode_still_loads():
+    """`_bootstrap_registry` only commits when a ref is absent, so a deployment
+    that has ever started keeps its original `agent_config` blob. If that blob
+    could not be loaded, the upgrade would take the service down on boot."""
+    legacy = AgentConfig().as_dict()
+    del legacy["conversation_mode"]
+    assert AgentConfig.from_dict(legacy).conversation_mode == "stateless"
+
+
+def test_the_shipped_interactive_config_differs_in_exactly_one_field():
+    """The Telegram bridge opens sessions against it, and the fingerprint has to
+    be able to attribute any difference in results to the one variable that
+    changed — not to a second edit that came along for the ride."""
+    from sim.agent.app import INTERACTIVE_CONFIG_REF
+
+    default = AgentConfig().as_dict()
+    interactive = AgentConfig(conversation_mode="resume").as_dict()
+    differing = {k for k in default if default[k] != interactive[k]}
+    assert differing == {"conversation_mode"}
+    assert INTERACTIVE_CONFIG_REF == "agent_config_interactive"
 
 
 def test_empty_tool_subset_is_refused():

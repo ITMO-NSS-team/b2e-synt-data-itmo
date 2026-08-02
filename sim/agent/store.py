@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     config_ref     TEXT NOT NULL,
     created_at     REAL NOT NULL,
     fingerprint    TEXT NOT NULL,
-    metadata       TEXT NOT NULL DEFAULT '{}'
+    metadata       TEXT NOT NULL DEFAULT '{}',
+    -- The headless Claude Code session this B2E session is bound to, once one
+    -- exists. Null under conversation_mode="stateless", where every turn is
+    -- deliberately its own session and there is nothing to bind to.
+    claude_session_id TEXT
 );
 CREATE INDEX IF NOT EXISTS sessions_by_employee ON sessions(employee_id, created_at DESC);
 
@@ -67,7 +71,23 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns that postdate a deployment's first run.
+
+        ``CREATE TABLE IF NOT EXISTS`` is a no-op against an existing database,
+        so a new column in SCHEMA reaches fresh installs only. Every deployment
+        already carrying sessions would keep the old shape and fail on first
+        read — which is the sort of thing that surfaces in production and not in
+        CI, because CI always starts from an empty file.
+        """
+        have = {r["name"] for r in
+                self._conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "claude_session_id" not in have:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN claude_session_id TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -95,7 +115,22 @@ class Store:
         return {"id": row["id"], "employee_id": row["employee_id"],
                 "config_ref": row["config_ref"], "created_at": row["created_at"],
                 "fingerprint": json.loads(row["fingerprint"]),
-                "metadata": json.loads(row["metadata"])}
+                "metadata": json.loads(row["metadata"]),
+                "claude_session_id": row["claude_session_id"]}
+
+    def bind_claude_session(self, session_id: str, claude_session_id: str) -> None:
+        """Remember the headless session a resumable conversation lives in.
+
+        Written after every turn rather than only the first. Claude Code is free
+        to hand back a different id — a compaction or a fork produces one — and
+        binding once would leave later turns resuming a session that has been
+        superseded.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET claude_session_id = ? WHERE id = ?",
+                (claude_session_id, session_id))
+            self._conn.commit()
 
     def list_sessions(self, *, employee_id: str | None = None,
                       limit: int = 50) -> list[dict[str, Any]]:

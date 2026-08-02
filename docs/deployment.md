@@ -68,6 +68,8 @@ $EDITOR deploy/.env
 | `CLAUDE_CODE_OAUTH_TOKEN` | subscription token; preferred, cheaper for simulation |
 | `ANTHROPIC_API_KEY` | fallback if no OAuth token |
 | `TELEGRAM_BOT_TOKEN` | only needed with `PROFILE=telegram` |
+| `TELEGRAM_DEFAULT_EMPLOYEE` | identity a chat acts as until `/employee` changes it |
+| `B2E_TELEGRAM_CONFIG_REF` | `agent_config_interactive` (default) gives a chat one resumable session; `agent_config` makes every message start cold |
 
 If a credential is ever pasted into a chat, an issue, or a commit, treat it as
 burned and rotate it. This has already happened twice on this project
@@ -125,6 +127,37 @@ make openapi         # regenerate docs/openapi/*.json from the live apps
 Without a traps-off corpus the emulator **refuses** to switch rather than serve
 traps-on data under a traps-off label, which would silently corrupt the RQ1
 comparison the flag exists to enable.
+
+### The Telegram bridge
+
+A chat is a conversation, not a sequence of unrelated questions. The bridge
+opens one B2E session per chat against `agent_config_interactive`, whose
+`conversation_mode` is `resume`, so consecutive messages continue the same
+headless Claude Code session and the agent sees its own earlier tool calls and
+their results.
+
+| Command | Effect |
+|---|---|
+| *(any text)* | forwarded to the agent verbatim, in the current session |
+| `/start_new_session` | drops the session; the next message opens a fresh one with no history |
+| `/new` | same thing, kept for muscle memory |
+| `/whoami` | acting employee, current session id, config ref |
+| `/employee <id>` | switch identity; resets the session, since it carries a permission scope |
+
+Two consequences worth knowing before reading transcripts. A follow-up costs
+context tokens — turn *n* pays to re-read turns 1..n-1, so a long thread gets
+steadily more expensive per answer; `/start_new_session` is how you stop paying
+for a thread you are done with. And because the session persists, the agent may
+end a turn with a clarifying question and expect an answer. That is deliberate:
+Claude Code has no `AskUserQuestion` in headless mode (probed on 2.1.220 — the
+tool is absent from the session's surface even when granted), so the turn
+boundary is the only asking mechanism there is.
+
+Session transcripts live on the agent's volume under `B2E_CLAUDE_HOME` and
+`B2E_SESSION_ROOT`, so a conversation survives `up --build`. If a transcript is
+lost anyway, the turn falls back to a fresh session, records
+`b2e.resume_failed` on the span, and says so in `errors` — an answer that
+quietly lost its context is worse than one that admits it.
 
 ## 6 · Hardening applied
 

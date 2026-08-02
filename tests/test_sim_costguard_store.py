@@ -200,3 +200,61 @@ def test_sessions_and_messages_round_trip(store):
         {"role": "user", "content": "вопрос"},
         {"role": "assistant", "content": "ответ"}]
     assert store.get_session(sid)["employee_id"] == "42"
+
+
+# --------------------------------------------------- resumable sessions
+
+
+def test_a_new_session_is_not_bound_to_a_claude_session(store):
+    """Null until a turn actually runs. Under conversation_mode="stateless" it
+    stays null forever, which is the honest record of "there was no session to
+    come back to"."""
+    sid = store.create_session(employee_id="42", config_ref="cfg@1",
+                               fingerprint=FP.as_dict())
+    assert store.get_session(sid)["claude_session_id"] is None
+
+
+def test_binding_a_claude_session_round_trips(store):
+    sid = store.create_session(employee_id="42", config_ref="cfg@1",
+                               fingerprint=FP.as_dict())
+    store.bind_claude_session(sid, "11111111-2222-3333-4444-555555555555")
+    assert (store.get_session(sid)["claude_session_id"]
+            == "11111111-2222-3333-4444-555555555555")
+
+
+def test_rebinding_replaces_the_previous_id(store):
+    """Claude Code hands back a different id after a compaction or a fork.
+    Binding once would leave later turns resuming a superseded session."""
+    sid = store.create_session(employee_id="42", config_ref="cfg@1",
+                               fingerprint=FP.as_dict())
+    store.bind_claude_session(sid, "first")
+    store.bind_claude_session(sid, "second")
+    assert store.get_session(sid)["claude_session_id"] == "second"
+
+
+def test_an_existing_database_gains_the_column(tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` is a no-op against a database that already
+    has the table, so a new column reaches fresh installs only. Every deployment
+    already holding sessions would keep the old shape and fail on first read —
+    a failure that cannot appear in CI, because CI always starts empty.
+    """
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(path)
+    legacy.execute(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, "
+        "config_ref TEXT NOT NULL, created_at REAL NOT NULL, "
+        "fingerprint TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}')")
+    legacy.execute(
+        "INSERT INTO sessions VALUES ('ses_old', '42', 'cfg@1', 0.0, '{}', '{}')")
+    legacy.commit()
+    legacy.close()
+
+    store = Store(path)
+    try:
+        assert store.get_session("ses_old")["claude_session_id"] is None
+        store.bind_claude_session("ses_old", "resumed")
+        assert store.get_session("ses_old")["claude_session_id"] == "resumed"
+    finally:
+        store.close()

@@ -36,6 +36,39 @@ empty and the matcher was never consulted. Only benign payloads
 
 ``permission_denials`` is carried into the trace. An agent that *tries* to
 generate and run code is a measurable RQ1 event rather than an assumption.
+
+Stateless turns and resumable sessions
+--------------------------------------
+Both exist, chosen by ``AgentConfig.conversation_mode``.
+
+``stateless`` keeps ``--no-session-persistence``: every turn starts cold. Batch
+arms must stay here. Turns that share context are not independent samples, and
+per-turn token counts stop being comparable the moment turn *n* pays to re-read
+turns 1..n-1.
+
+``resume`` reopens the same headless session with ``--resume <id>``. The model
+sees its own prior tool calls and their results, not a transcript someone
+flattened for it — which is the difference between a follow-up question landing
+in context and landing in a vacuum. Verified against Claude Code 2.1.220: a
+second ``claude -p --resume`` reported ``cache_read_input_tokens`` exactly equal
+to the first turn's cache read plus cache creation, so the conversation was
+genuinely reloaded rather than restarted.
+
+Why there is no ``AskUserQuestion``
+-----------------------------------
+Because the CLI does not have one in this mode. Probed on 2.1.220: the ``init``
+event enumerates the session's whole tool surface, deferred tools included, and
+``AskUserQuestion`` is absent even when it is named in ``--allowed-tools`` —
+under ``--input-format text`` and under ``--input-format stream-json`` alike.
+The model confirms it in its own words and asks in prose instead. The tool is
+gated to the interactive TUI, so granting it here would add a name the session
+cannot resolve; it stays in ``DENIED_TOOLS`` so that intent is explicit rather
+than accidental.
+
+What replaces it is the turn boundary. Under ``resume`` the agent can end a turn
+with a question, the human answers in the next message, and the session picks up
+with everything still in context — the same exchange, at a coarser grain, over a
+channel that actually exists.
 """
 from __future__ import annotations
 
@@ -64,6 +97,12 @@ from sim.agent.config import AgentConfig
 #: ``Write``/``Edit`` would let it author code into the workspace; ``Task`` would
 #: spawn a sub-agent outside this tool policy; ``WebFetch``/``WebSearch`` would
 #: give it an egress channel the Heimdall-only premise forbids.
+#:
+#: ``AskUserQuestion`` is a special case worth stating, because someone will
+#: reasonably propose granting it once sessions became resumable. It does not
+#: exist in headless mode — see the module docstring for the probe — so granting
+#: it would change nothing except to imply a capability the session cannot
+#: resolve. It is listed here to record that this was checked, not assumed.
 DENIED_TOOLS = (
     "Read", "Glob", "Grep", "NotebookRead",
     "Write", "Edit", "MultiEdit", "NotebookEdit", "Task", "Agent",
@@ -152,7 +191,7 @@ HARNESS_NOTE_CODE_ALLOWED = """
   напрямую, но не выдуманы.
 * Отказ в доступе (403) — это результат, о котором надо сообщить, а не
   препятствие, которое надо обойти.
-{non_interactive}"""
+{channel}"""
 
 HARNESS_NOTE = """
 Ты работаешь в закрытом контуре.
@@ -167,25 +206,58 @@ HARNESS_NOTE = """
   командой: `{runner} <sha256> '<json>'`. Никаких других команд не будет.
 * Отказ в доступе (403) — это результат, о котором надо сообщить, а не
   препятствие, которое надо обойти.
-{non_interactive}"""
+{channel}"""
 
-#: The channel has no second party. Shared by both arms, because non-interactivity
-#: is a property of the harness rather than of the code-execution condition.
+#: True in every arm and every conversation mode: a tool refusal is the
+#: environment's final word, and there is no operator standing by to lift it.
 #:
-#: It is here and not in the registry system prompt on purpose: the prompt is
+#: This is the ``bd0d86d`` fix and it is independent of interactivity. Even in a
+#: dialogue the human on the other end is a researcher reading answers, not an
+#: administrator who can grant a scope — so "ask for permission" remains a dead
+#: end however many turns the session runs for.
+#:
+#: It lives here and not in the registry system prompt on purpose: the prompt is
 #: committed once at bootstrap and only if absent, so an already-running
 #: deployment stays on ``system_prompt@1`` and would never see the change. It
 #: also keeps the fingerprint honest — a harness fact does not belong to a
 #: versioned experimental prompt.
-NON_INTERACTIVE_NOTE = """\
-* Спрашивать некого. Ответ уходит человеку в мессенджер: никто не подтвердит
-  доступ, не выдаст разрешение и не согласует шаг. Не проси разрешений.
+PERMISSION_NOTE = """\
+* Разрешений просить не у кого. Никто не подтвердит доступ и не согласует шаг.
+  Не проси разрешений.
+* Отказ инструмента окончателен. Это факт среды, а не пауза перед согласованием.
+  Сообщи о нём в ответе и закончи задачу тем, что у тебя осталось.
+"""
+
+#: ``conversation_mode="stateless"``: the channel has no second party and no
+#: memory. A clarifying question here is not merely unhelpful — it is
+#: unanswerable, because the next turn will not exist and would not see this one
+#: if it did.
+NON_INTERACTIVE_NOTE = PERMISSION_NOTE + """\
+* Спрашивать некого — ответ уходит человеку в мессенджер и разговор на этом
+  заканчивается.
 * Каждый ход самодостаточен. Истории прошлых сообщений у тебя нет, и следующий
   ход не увидит этого. Встречный вопрос поэтому обрывает разговор, а не
   продолжает его: вместо вопроса выбери разумное допущение, назови его вслух и
   доведи ответ до конца.
-* Отказ инструмента окончателен. Это факт среды, а не пауза перед согласованием.
-  Сообщи о нём в ответе и закончи задачу тем, что у тебя осталось.
+"""
+
+#: ``conversation_mode="resume"``: the session continues, so a question is now a
+#: real move rather than a dead end.
+#:
+#: It is still not a free one, and the note says so. An agent that opens every
+#: task by asking what the user meant costs the researcher a round trip for
+#: something a stated assumption would have covered — and the whole point of
+#: measuring this bench is that the agent finishes the job. So: ask when the
+#: answer genuinely changes the shape of the work, otherwise assume out loud.
+DIALOGUE_NOTE = PERMISSION_NOTE + """\
+* Это диалог. Ты видишь свои прошлые ходы этой сессии — и вопросы человека, и
+  свои вызовы инструментов, и то, что они вернули. Следующее сообщение придёт в
+  эту же сессию, так что «как я говорил выше» здесь имеет смысл.
+* Уточняющий вопрос разрешён, но стоит человеку хода. Задавай его только тогда,
+  когда без ответа задача решается принципиально по-разному. Во всех остальных
+  случаях выбери разумное допущение, назови его вслух и доведи ответ до конца.
+* Если спрашиваешь — спрашивай коротко и по делу: один вопрос, а не список, и
+  сразу скажи, что сделаешь при каждом варианте ответа.
 """
 
 
@@ -207,6 +279,11 @@ class ClaudeCodeResult:
     is_error: bool = False
     error: str = ""
     stream_path: str | None = None
+    #: A resume was attempted and did not take, so this turn ran without the
+    #: history it was supposed to have. Surfaced on the span because an answer
+    #: that silently lost its context looks, from the outside, like an agent
+    #: that suddenly forgot what it was doing.
+    resumed_failed: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -246,6 +323,8 @@ class ClaudeCodeHarness:
         python_bin: str = "python3",
         proxy: dict[str, str] | None = None,
         workdir: str | None = None,
+        session_root: str = "var/sessions",
+        claude_home: str | None = None,
         timeout_seconds: int = 600,
     ) -> None:
         self.heimdall_url = heimdall_url
@@ -256,6 +335,12 @@ class ClaudeCodeHarness:
         self.python_bin = python_bin
         self.proxy = proxy or {}
         self.workdir = workdir
+        self.session_root = session_root
+        # Claude Code keeps session transcripts under ``$HOME/.claude``. In the
+        # container HOME is a layer directory, so conversations would not
+        # survive `docker compose up --build`; pointing this at the agent's
+        # volume makes a resumable session actually durable.
+        self.claude_home = claude_home
         self.timeout = timeout_seconds
 
     # ------------------------------------------------------------- assembly
@@ -338,13 +423,26 @@ class ClaudeCodeHarness:
         return list(DENIED_TOOLS)
 
     def build_argv(self, prompt: str, *, config: AgentConfig,
-                   system_suffix: str, mcp_config_path: str) -> list[str]:
-        return [
+                   system_suffix: str, mcp_config_path: str,
+                   resume_session_id: str | None = None) -> list[str]:
+        argv = [
             self.claude_bin, "-p", prompt,
             "--model", config.model_id,
             "--output-format", "stream-json",
             "--verbose",
-            "--no-session-persistence",
+        ]
+
+        if config.conversation_mode == "resume":
+            # Persistence has to be on for a later turn to have anything to
+            # resume. Note the asymmetry: the *first* turn of a conversation
+            # looks exactly like a stateless turn except that it leaves a
+            # transcript behind, and that transcript is the whole mechanism.
+            if resume_session_id:
+                argv += ["--resume", resume_session_id]
+        else:
+            argv.append("--no-session-persistence")
+
+        argv += [
             # The host user's own settings, hooks and plugins stay out: a run
             # whose behaviour depends on ~/.claude is not reproducible, and the
             # fingerprint would be describing a configuration it cannot see.
@@ -356,6 +454,24 @@ class ClaudeCodeHarness:
             "--disallowed-tools", ",".join(self.denied_tools(config)),
             "--append-system-prompt", system_suffix,
         ]
+        return argv
+
+    def session_workdir(self, config: AgentConfig,
+                        b2e_session_id: str | None) -> Path | None:
+        """Where the CLI runs, or None to mean "a throwaway temp dir".
+
+        Claude Code files a session transcript under the project it was started
+        in, so a conversation that wants to be resumable must come back to the
+        same working directory. A fresh ``mkdtemp`` per turn — which is what the
+        stateless path does, correctly — would file every turn under a different
+        project and leave ``--resume`` with nothing to find.
+        """
+        if config.conversation_mode != "resume" or not b2e_session_id:
+            return None
+        # The id is generated by the store (`ses_` + hex) and never user input,
+        # but this path is assembled from it, so it is filtered anyway.
+        safe = "".join(c for c in str(b2e_session_id) if c.isalnum() or c in "-_")
+        return Path(self.session_root) / safe
 
     def child_env(self) -> dict[str, str]:
         """Environment for the CLI: the token, the proxy, and nothing else.
@@ -371,9 +487,11 @@ class ClaudeCodeHarness:
                 "no model credential: set CLAUDE_CODE_OAUTH_TOKEN (from "
                 "`claude setup-token`) or ANTHROPIC_API_KEY")
 
+        home = self.claude_home or os.environ.get("HOME", "/tmp")
+        Path(home).mkdir(parents=True, exist_ok=True)
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            "HOME": os.environ.get("HOME", "/tmp"),
+            "HOME": home,
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
         }
@@ -395,22 +513,68 @@ class ClaudeCodeHarness:
         refuse is a false description of the world, and the agent pays for it.
         """
         select = self.tool_select_query(config)
+        # Same argument, applied to the channel: telling a resumable session
+        # that it has no history, or a stateless one that it may ask a
+        # follow-up, describes a world the agent is not in.
+        channel = (DIALOGUE_NOTE if config.conversation_mode == "resume"
+                   else NON_INTERACTIVE_NOTE)
         if config.code_execution == "allowed":
             return HARNESS_NOTE_CODE_ALLOWED.format(
-                tool_select=select, non_interactive=NON_INTERACTIVE_NOTE)
+                tool_select=select, channel=channel)
         return HARNESS_NOTE.format(runner=self.runner_path, tool_select=select,
-                                   non_interactive=NON_INTERACTIVE_NOTE)
+                                   channel=channel)
 
     def run(self, *, question: str, config: AgentConfig, system_prompt: str,
-            employee_id: str, keep_stream: bool = True) -> ClaudeCodeResult:
+            employee_id: str, keep_stream: bool = True,
+            b2e_session_id: str | None = None,
+            resume_session_id: str | None = None) -> ClaudeCodeResult:
         suffix = system_prompt + "\n" + self.harness_note(config)
-        workdir = Path(self.workdir or tempfile.mkdtemp(prefix="b2e-session-"))
+
+        persistent = self.session_workdir(config, b2e_session_id)
+        workdir = Path(self.workdir or persistent
+                       or tempfile.mkdtemp(prefix="b2e-session-"))
         workdir.mkdir(parents=True, exist_ok=True)
         mcp_path = workdir / "mcp.json"
         mcp_path.write_text(json.dumps(self.mcp_config(employee_id, config)), "utf-8")
 
-        argv = self.build_argv(question, config=config, system_suffix=suffix,
-                               mcp_config_path=str(mcp_path))
+        if config.conversation_mode != "resume":
+            resume_session_id = None
+
+        result = self._invoke(question, config=config, system_suffix=suffix,
+                              mcp_path=mcp_path, workdir=workdir,
+                              resume_session_id=resume_session_id,
+                              keep_stream=keep_stream)
+
+        # A resume can fail for reasons that have nothing to do with the
+        # question: the transcript was pruned, the volume was recreated, the CLI
+        # was upgraded across an on-disk format change. Losing the thread is a
+        # real cost, but it is a smaller one than answering nothing at all — so
+        # fall back to a fresh session once, and say so in `error` rather than
+        # papering over it.
+        if resume_session_id and result.is_error and not result.answer:
+            result = self._invoke(question, config=config, system_suffix=suffix,
+                                  mcp_path=mcp_path, workdir=workdir,
+                                  resume_session_id=None, keep_stream=keep_stream)
+            result.resumed_failed = True
+            if not result.is_error:
+                result.error = (f"resume of {resume_session_id} failed; "
+                                f"continued in a new session without history")
+
+        # The MCP config carries the Heimdall bearer token; it does not outlive
+        # the turn. The workdir itself does, when the session is resumable —
+        # that is where the transcript lives.
+        mcp_path.unlink(missing_ok=True)
+        if self.workdir is None and persistent is None:
+            shutil.rmtree(workdir, ignore_errors=True)
+        return result
+
+    def _invoke(self, question: str, *, config: AgentConfig, system_suffix: str,
+                mcp_path: Path, workdir: Path, resume_session_id: str | None,
+                keep_stream: bool) -> ClaudeCodeResult:
+        argv = self.build_argv(question, config=config,
+                               system_suffix=system_suffix,
+                               mcp_config_path=str(mcp_path),
+                               resume_session_id=resume_session_id)
         started = time.perf_counter()
         try:
             proc = subprocess.run(argv, capture_output=True, text=True,
@@ -422,10 +586,6 @@ class ClaudeCodeHarness:
                 output_tokens=0, cache_read_tokens=0, cache_creation_tokens=0,
                 cost_usd=0.0, duration_ms=int((time.perf_counter() - started) * 1000),
                 is_error=True, error=f"claude timed out after {self.timeout}s")
-        finally:
-            # The MCP config carries the Heimdall bearer token; it does not
-            # outlive the turn.
-            mcp_path.unlink(missing_ok=True)
 
         stream_file = None
         if keep_stream:
@@ -439,8 +599,6 @@ class ClaudeCodeHarness:
         if not result.answer and proc.returncode != 0:
             result.is_error = True
             result.error = result.error or (proc.stderr or "")[:2000]
-        if self.workdir is None:
-            shutil.rmtree(workdir, ignore_errors=True)
         return result
 
 
@@ -554,6 +712,10 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute("b2e.turn.skill_runs", result.skill_runs)
     root.set_attribute("b2e.turn.cost_usd", round(result.cost_usd, 6))
     root.set_attribute("b2e.harness", "claude_code")
+    if config is not None:
+        root.set_attribute("b2e.conversation_mode", config.conversation_mode)
+    if result.resumed_failed:
+        root.set_attribute("b2e.resume_failed", True)
     if result.session_id:
         root.set_attribute("b2e.claude_session_id", result.session_id)
     if result.context_window:

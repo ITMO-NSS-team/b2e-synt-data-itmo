@@ -9,6 +9,25 @@ any "helpful" summarisation here would appear in the traces as agent behaviour
 and quietly contaminate every comparison a researcher makes between manual and
 batch runs.
 
+A chat is a conversation
+------------------------
+The chat -> session mapping outlives a single question, and the session it points
+at is opened against ``agent_config_interactive`` — the shipped config whose
+``conversation_mode`` is ``resume``. Consecutive messages therefore land in one
+headless Claude Code session, and the agent sees its own earlier tool calls and
+results rather than meeting each question cold.
+
+That is what makes a clarifying question worth asking here. The CLI has no
+``AskUserQuestion`` in headless mode (probed on 2.1.220 — see
+``sim/agent/claude_code.py``), so the turn boundary *is* the asking mechanism:
+the agent ends a turn with a question, the researcher answers in the next
+message, and the session continues with everything still in context.
+
+``/start_new_session`` drops the mapping. The next message opens a fresh session
+with no history — which is the thing you want when the previous thread has
+wandered, or when you are about to measure something and do not want the last
+ten messages priced into the context of the first.
+
 Long polling rather than webhooks: a webhook needs a public HTTPS endpoint for
 Telegram to call, which would mean another hole in the reverse proxy. Polling
 keeps the bot strictly outbound, so it adds no exposed surface at all.
@@ -31,17 +50,26 @@ API = "https://api.telegram.org/bot{token}/{method}"
 
 HELP = (
     "B2E — исследовательский стенд.\n\n"
-    "Просто напишите вопрос: он уйдёт в агента как есть.\n\n"
-    "/new — начать новую сессию\n"
+    "Просто напишите вопрос: он уйдёт в агента как есть.\n"
+    "Сообщения идут одной сессией — агент помнит предыдущие ходы, "
+    "так что уточнения и «а теперь то же самое, но по отделу» работают.\n\n"
+    "/start_new_session — начать сессию заново, без прежнего контекста\n"
     "/whoami — какая личность сотрудника сейчас используется\n"
     "/employee <id> — переключить личность\n"
 )
+
+#: ``/new`` predates ``/start_new_session`` and did the same thing. Kept, because
+#: removing a command someone has in their muscle memory is a silent failure:
+#: Telegram does not error on an unknown command, it just forwards the text to
+#: the agent, and the researcher gets an answer to "/new" instead of a reset.
+NEW_SESSION_COMMANDS = ("/start_new_session", "/new")
 
 
 class TelegramBridge:
     """Chat id -> B2E session. Nothing else is remembered here."""
 
-    def __init__(self, *, token: str, agent_url: str, default_employee: str) -> None:
+    def __init__(self, *, token: str, agent_url: str, default_employee: str,
+                 config_ref: str = "agent_config_interactive") -> None:
         if not token:
             raise RuntimeError(
                 "TELEGRAM_BOT_TOKEN is unset. It is read from the environment "
@@ -50,6 +78,7 @@ class TelegramBridge:
         self.token = token
         self.agent_url = agent_url.rstrip("/")
         self.default_employee = default_employee
+        self.config_ref = config_ref
         self.sessions: dict[int, str] = {}
         self.employees: dict[int, str] = {}
         # trust_env is left ON here, unlike internal clients: reaching
@@ -77,8 +106,9 @@ class TelegramBridge:
         if chat_id in self.sessions:
             return self.sessions[chat_id]
         employee = self.employees.get(chat_id, self.default_employee)
-        response = self._agent.post(f"{self.agent_url}/sessions",
-                                    json={"employee_id": employee})
+        response = self._agent.post(
+            f"{self.agent_url}/sessions",
+            json={"employee_id": employee, "config_ref": self.config_ref})
         response.raise_for_status()
         session_id = response.json()["session_id"]
         self.sessions[chat_id] = session_id
@@ -108,19 +138,31 @@ class TelegramBridge:
         if not text:
             return
 
-        if text.startswith("/start") or text.startswith("/help"):
+        # The whole first word, not a prefix. `startswith("/new")` also matched
+        # `/newcomers`, so a question about new hires reset the session and was
+        # never asked — and `startswith("/start")` would now swallow
+        # `/start_new_session`. The `@botname` suffix is what Telegram appends
+        # to every command in a group chat.
+        command = text.split(maxsplit=1)[0].split("@")[0]
+
+        if command in ("/start", "/help"):
             self.send(chat_id, HELP)
             return
-        if text.startswith("/new"):
-            self.sessions.pop(chat_id, None)
-            self.send(chat_id, "Новая сессия открыта.")
+        if command in NEW_SESSION_COMMANDS:
+            previous = self.sessions.pop(chat_id, None)
+            self.send(chat_id, (
+                f"Новая сессия. Прежний контекст сброшен (была {previous}); "
+                f"сама сессия откроется на первом же вопросе."
+                if previous else
+                "Открытой сессии и не было — следующий вопрос начнёт новую."))
             return
-        if text.startswith("/whoami"):
+        if command == "/whoami":
             employee = self.employees.get(chat_id, self.default_employee)
             self.send(chat_id, f"employee_id = {employee}\n"
-                               f"session = {self.sessions.get(chat_id, '—')}")
+                               f"session = {self.sessions.get(chat_id, '—')}\n"
+                               f"config_ref = {self.config_ref}")
             return
-        if text.startswith("/employee"):
+        if command == "/employee":
             parts = text.split(maxsplit=1)
             if len(parts) != 2:
                 self.send(chat_id, "Использование: /employee <employee_id>")
@@ -166,6 +208,8 @@ def main() -> None:
         token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         agent_url=os.environ.get("B2E_AGENT_URL", "http://b2e-agent:8082"),
         default_employee=os.environ.get("TELEGRAM_DEFAULT_EMPLOYEE", ""),
+        config_ref=os.environ.get("B2E_TELEGRAM_CONFIG_REF",
+                                  "agent_config_interactive"),
     ).run()
 
 
