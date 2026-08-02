@@ -29,6 +29,14 @@ ENDPOINT_DOCS = "get_docs"
 ENDPOINT_QUERY = "mcp_query"
 ENDPOINT_FIND_SKILLS = "find_skills"
 ENDPOINT_GET_SKILL = "get_skill"
+ENDPOINT_OVERVIEW = "get_overview"
+
+#: The canonical tool surface. Both harnesses and AgentConfig validate against
+#: this one tuple so they cannot drift apart again.
+KNOWN_TOOLS: tuple[str, ...] = (
+    ENDPOINT_LIST_MODELS, ENDPOINT_DESCRIBE, ENDPOINT_DOCS, ENDPOINT_QUERY,
+    ENDPOINT_FIND_SKILLS, ENDPOINT_GET_SKILL, ENDPOINT_OVERVIEW,
+)
 
 
 def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -106,8 +114,22 @@ def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
                 "required": ["name"],
             },
         },
+        ENDPOINT_OVERVIEW: {
+            "name": "get_overview",
+            "description": ("Обзор каталога скиллов: домены, активные скиллы, "
+                            "грамматика фильтров. Начинай отсюда, если не знаешь, "
+                            "что вообще есть."),
+            "input_schema": {"type": "object", "properties": {}, "required": []},
+        },
     }
-    return [all_tools[name] for name in subset if name in all_tools]
+    unknown = [name for name in subset if name not in all_tools]
+    if unknown:
+        # Filtering silently is how the two harnesses drifted apart. A name that
+        # cannot be mapped means the run would proceed with a smaller tool
+        # surface than the config it is fingerprinted against claims.
+        raise ValueError(
+            f"unknown tools in tool_subset: {unknown}; known: {sorted(all_tools)}")
+    return [all_tools[name] for name in subset]
 
 
 class HeimdallTools:

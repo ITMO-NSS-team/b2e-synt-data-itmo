@@ -94,7 +94,14 @@ ALWAYS_DENIED = ("WebFetch", "WebSearch", "Task", "Agent", "Artifact",
 TOOL_LOADER = "ToolSearch"
 
 #: The six Heimdall tools, as the MCP bridge names them.
-HEIMDALL_TOOLS = ("get_overview", "find_skills", "get_skill",
+#: Must stay in step with `heimdall/bridge.py`'s TOOLS and with the
+#: `all_tools` table in `sim/agent/tools.py`. They had drifted: `get_docs` was in
+#: the default `tool_subset` but absent here, so the claude_code harness silently
+#: dropped it, while `get_overview` was force-granted regardless of the subset.
+#: Under one `agent_config_version` the two harnesses ran with different
+#: capabilities, which makes any harness comparison partly a comparison of tool
+#: surfaces. `tests/test_sim_claude_code.py` now asserts the two agree.
+HEIMDALL_TOOLS = ("get_overview", "get_docs", "find_skills", "get_skill",
                   "list_models", "describe_model", "mcp_query")
 
 MCP_SERVER_NAME = "heimdall"
@@ -234,8 +241,7 @@ class ClaudeCodeHarness:
         get away with), and a wildcard would silently ignore it.
         """
         tools = [f"mcp__{MCP_SERVER_NAME}__{name}"
-                 for name in HEIMDALL_TOOLS
-                 if name in config.tool_subset or name in ("get_overview",)]
+                 for name in HEIMDALL_TOOLS if name in config.tool_subset]
         tools.append(TOOL_LOADER)
 
         if config.code_execution == "allowed":
@@ -380,7 +386,22 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
                         "name": block.get("name"),
                         "input": block.get("input"),
                         "id": block.get("id"),
+                        "output": None,
                     })
+        elif event.get("type") == "user":
+            # Tool RESULTS come back as user-role messages. Without capturing
+            # them the trace records what the agent asked for but never what the
+            # API returned — and "the agent invented this number" is only
+            # checkable against what was actually returned.
+            content = (event.get("message") or {}).get("content") or []
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                use_id = block.get("tool_use_id")
+                for call in tool_calls:
+                    if call.get("id") == use_id:
+                        call["output"] = _tool_result_text(block.get("content"))
+                        break
         elif event.get("type") == "result":
             final = event
 
@@ -407,6 +428,29 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
         is_error=bool(final.get("is_error")),
         error=str(final.get("api_error_status") or ""),
     )
+
+
+def _tool_result_text(content: Any) -> str:
+    """Flatten a tool_result payload to text.
+
+    Claude Code delivers it either as a bare string or as a list of content
+    blocks, and the shape varies by tool. Rendering it here rather than at the
+    call site keeps the span attribute a plain string, which is what the scorer
+    scans for identifiers and numbers.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    if content is None:
+        return ""
+    return json.dumps(content, ensure_ascii=False, default=str)
 
 
 def emit_spans(result: ClaudeCodeResult, *, root,
@@ -443,5 +487,10 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     for call in result.tool_calls:
         with telemetry.start_tool(str(call.get("name")),
                                   parameters=call.get("input"),
-                                  tool_call_id=call.get("id")):
-            pass
+                                  tool_call_id=call.get("id")) as span:
+            # The output is the evidence half of the trace. A tool span with
+            # only its input records that the agent asked something, not what
+            # came back — and the fabrication metric compares the answer against
+            # exactly this.
+            if call.get("output") is not None:
+                telemetry.set_io(span, output_value=call["output"])

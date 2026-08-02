@@ -145,6 +145,17 @@ class AgentConfig:
         if not self.tool_subset:
             raise ValueError("tool_subset must not be empty: an agent with no tools "
                              "cannot reach Heimdall and every answer would be invented")
+        # Membership, not just non-emptiness. A typo'd tool name used to pass
+        # here and then be silently dropped by both harnesses, producing exactly
+        # the empty surface the check above refuses — while the fingerprint
+        # claimed the full config. This is the same argument `from_dict` already
+        # makes for unknown keys, applied to values.
+        from sim.agent.tools import KNOWN_TOOLS
+
+        unknown = sorted(set(self.tool_subset) - set(KNOWN_TOOLS))
+        if unknown:
+            raise ValueError(
+                f"unknown tools in tool_subset: {unknown}; known: {list(KNOWN_TOOLS)}")
 
     def as_dict(self) -> dict[str, Any]:
         data = asdict(self)

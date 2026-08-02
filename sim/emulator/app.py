@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 
 from sim import latency as latency_mod
 from sim.emulator.config import EmulatorConfig, SnapshotUnavailable
-from sim.emulator.identity import AccessDenied, IdentityIndex, enforce
+from sim.emulator.identity import AccessDenied, IdentityIndex, enforce, restrict
 from sim.emulator.rpc import rpc_router
 
 #: Header carrying the employee the agent is acting for. Separate from the
@@ -88,6 +88,9 @@ class EmulatorState:
         self.config = config
         self.traps_enabled = config.traps_enabled
         self.latency_profile = config.latency_profile
+        #: Set by create_app. Needed to decide whether a model even has a person
+        #: column before a row-scope predicate is appended to a query.
+        self.catalog = None
         self._identities: dict[bool, IdentityIndex] = {}
         #: (endpoint, canonical request) -> times seen, for latency occurrence.
         self._occurrence: dict[tuple[str, str], int] = {}
@@ -113,6 +116,25 @@ class EmulatorState:
         seen = self._occurrence.get(key, 0)
         self._occurrence[key] = seen + 1
         return seen
+
+    def scope_column(self, schema: str, model: str) -> str | None:
+        """The person-key column this model can be restricted on, if any.
+
+        Returns None for reference data (org units, positions, dictionaries),
+        which has no person dimension and must not be filtered — appending a
+        predicate on a column that does not exist would turn every such query
+        into an ``unknown-column`` error instead of an authorised read.
+        """
+        if self.catalog is None:
+            return None
+        found = self.catalog.get(schema, model)
+        if found is None:
+            return None
+        names = {c.name if hasattr(c, "name") else str(c) for c in found.columns}
+        for candidate in ("person_id", "employee_id"):
+            if candidate in names:
+                return candidate
+        return None
 
     def fingerprint_fragment(self) -> dict[str, Any]:
         return {
@@ -190,34 +212,88 @@ class SimulationMiddleware:
             if denial is not None:
                 await denial(scope, receive, send)
                 return
+            # Refusing named people is not enough; a query with no person filter
+            # would otherwise return the whole mart. Rewrite the body so the
+            # restriction is part of the query the engine actually runs.
+            restricted = self._restrict_body(scope, path, parsed)
+            if restricted is not None:
+                parsed = restricted
+                body = json.dumps(restricted, ensure_ascii=False).encode("utf-8")
+
+                async def replay_restricted(_state={"done": False}):
+                    if _state["done"]:
+                        return {"type": "http.disconnect"}
+                    _state["done"] = True
+                    return {"type": "http.request", "body": body,
+                            "more_body": False}
+
+                receive = replay_restricted
 
         endpoint = _classify(path)
-        rows_holder = {"n": 0}
         started = time.perf_counter()
 
-        async def send_wrapper(message):
+        # The response is BUFFERED rather than streamed through, because in ASGI
+        # a `http.response.body` with more_body=False completes the response.
+        # Sleeping after `await self.app(...)` therefore delays only this
+        # coroutine and not the caller — measured at 4ms for `degraded` against
+        # 3ms for `instant`, i.e. RQ2's independent variable did nothing at all
+        # while the fingerprint dutifully labelled the runs as different
+        # conditions. The delay has to happen before the first byte goes out.
+        buffered: list[dict] = []
+        body_chunks: list[bytes] = []
+
+        async def buffer(message):
+            buffered.append(message)
             if message["type"] == "http.response.body":
-                chunk = message.get("body", b"")
-                if chunk and rows_holder["n"] == 0:
-                    rows_holder["n"] = _count_rows(chunk)
-            await send(message)
+                body_chunks.append(message.get("body", b""))
 
-        await self.app(scope, receive, send_wrapper)
+        await self.app(scope, receive, buffer)
 
-        # ---- latency, charged after the fact
         profile = latency_mod.get_profile(self.state.latency_profile)
+        n_rows = _count_rows(b"".join(body_chunks))
         n_columns = _count_columns(parsed)
         target_ms = latency_mod.sample_ms(
             profile, endpoint, request=parsed,
             occurrence=self.state.next_occurrence(endpoint, parsed),
-            n_columns=n_columns, n_rows=rows_holder["n"],
+            n_columns=n_columns, n_rows=n_rows,
         )
         spent_ms = (time.perf_counter() - started) * 1000.0
         remaining = (target_ms - spent_ms) / 1000.0
         if remaining > 0:
             await asyncio.sleep(remaining)
 
+        # Report what was actually injected, so a p95 built from these traces can
+        # be separated into simulated and real time instead of blending them.
+        for message in buffered:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                headers.append((b"x-b2e-injected-latency-ms",
+                                f"{max(0.0, target_ms - spent_ms):.1f}".encode()))
+                message = {**message, "headers": headers}
+            await send(message)
+
     # ------------------------------------------------------------------ scope
+
+    def _restrict_body(self, scope, path: str, parsed: dict[str, Any]):
+        """Row-scope the query, or None when no restriction applies."""
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                   for k, v in scope.get("headers", [])}
+        employee = headers.get(ACTING_EMPLOYEE_HEADER)
+        if not employee:
+            return None
+        schema, model = _target_model(path, parsed)
+        if schema is None or model is None:
+            return None
+        try:
+            employee_scope = self.state.identity_index().scope_for(employee)
+        except (AccessDenied, SnapshotUnavailable):
+            return None
+        if employee_scope.sees_everything:
+            return None
+        column = self.state.scope_column(schema, model)
+        if column is None:
+            return None
+        return restrict(employee_scope, parsed, column=column)
 
     def _check_scope(self, scope, path: str, parsed: dict[str, Any]):
         headers = {k.decode("latin-1").lower(): v.decode("latin-1")
@@ -320,6 +396,7 @@ def create_app(config: EmulatorConfig | None = None) -> FastAPI:
                               config.skills_root, quirks=quirks)
     app.title = "Heimdall Emulator (simulation)"
     app.state.sim = state
+    state.catalog = getattr(app.state, "heimdall", None) and app.state.heimdall.catalog
     app.state.quirks = quirks
 
     app.include_router(rpc_router(state))

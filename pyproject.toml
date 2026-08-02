@@ -25,3 +25,6 @@ packages = ["b2e", "b2e.gen", "heimdall", "heimdall.catalog", "heimdall.engine",
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: uses a real socket or the wall clock. Slower, but an in-process test client would not have caught the latency-injection bug that motivated it.",
+]

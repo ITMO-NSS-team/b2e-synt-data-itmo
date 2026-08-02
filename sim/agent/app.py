@@ -165,9 +165,21 @@ class AgentState:
     # --------------------------------------------------------- fingerprinting
 
     def skill_registry_hash(self, ref: str) -> str:
-        version, body = self.registry.load(ref)
-        active = sorted(body.get("active", []))
-        return "sha256:" + sha256_hex(canonical_bytes(active))
+        """Digest over the skills that are actually executable right now.
+
+        This reads the skills *table*, not the ``skill_registry`` config blob.
+        The blob was written once at bootstrap as ``{"active": []}`` and nothing
+        ever updated it — approving and enabling a skill goes through
+        ``SkillStore.transition``, which writes the table. So the fingerprint
+        field carried the SHA-256 of an empty list for the life of every
+        deployment, and two runs with entirely different executable skill sets
+        shared a ``condition_id`` and were treated as one experimental
+        condition. The field whose whole purpose is "which skills could run"
+        was a constant.
+        """
+        from sim.skills import SkillStore
+
+        return SkillStore(self.registry).registry_hash()
 
     def emulator_condition(self) -> dict[str, Any]:
         """Ask the emulator what condition it is currently serving.
@@ -517,17 +529,25 @@ def _run_single(state: AgentState, employee_id: str, config_ref: str,
         "memory_block": _memory_block(config, {"employee_id": employee_id}),
         **config.prompt_variables,
     })
-    tools = HeimdallTools(state.heimdall_url, employee_id=employee_id,
-                          token=state.heimdall_token)
-    try:
-        result = run_turn(
-            question=question, history=[], config=config,
-            system_prompt=system_prompt, client=state.client, tools=tools,
-            fingerprint=fingerprint, session_id=session_id,
-            employee_id=employee_id, guard=_guard_for(experiment_id),
-            metadata={"experiment_id": experiment_id})
-    finally:
-        tools.close()
+    started = time.perf_counter()
+    if config.harness == "claude_code":
+        result = _run_claude_code(
+            state, {"employee_id": employee_id, "metadata": {}}, config,
+            system_prompt, question, fingerprint, session_id,
+            {"experiment_id": experiment_id})
+    else:
+        tools = HeimdallTools(state.heimdall_url, employee_id=employee_id,
+                              token=state.heimdall_token)
+        try:
+            result = run_turn(
+                question=question, history=[], config=config,
+                system_prompt=system_prompt, client=state.client, tools=tools,
+                fingerprint=fingerprint, session_id=session_id,
+                employee_id=employee_id, guard=_guard_for(experiment_id),
+                metadata={"experiment_id": experiment_id})
+        finally:
+            tools.close()
+    latency_ms = round((time.perf_counter() - started) * 1000, 1)
 
     state.store.append_message(session_id=session_id, role="user", content=question)
     state.store.append_message(session_id=session_id, role="assistant",
@@ -540,4 +560,8 @@ def _run_single(state: AgentState, employee_id: str, config_ref: str,
         "heimdall_calls": result.heimdall_calls,
         "total_tokens": result.total_tokens, "cost_usd": round(result.cost_usd, 6),
         "stop_reason": result.stop_reason,
+        # RQ2's headline number. Nothing produced this field before, so every
+        # latency percentile the research API reported was null with n=0 while
+        # the whole log-normal profile machinery sat unused behind it.
+        "latency_ms": latency_ms,
     }

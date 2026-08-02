@@ -81,8 +81,22 @@ class Scope:
     person_id: str
     role: str
     unit_id: int
-    #: person_ids this identity may read. Empty set with role 'hr' means "all".
+    #: Every reference this identity may read, in either key space. Used for the
+    #: "did the query name someone forbidden" check, where the caller may have
+    #: written either kind of id.
     visible_person_ids: frozenset[str]
+    #: The two key spaces kept apart, because a row-scope filter goes against a
+    #: specific column and the columns have different types: `person_id` is a
+    #: UUID and `employee_id` is numeric. Filtering one column with a mixed set
+    #: is rejected outright by the engine — `filter-value-invalid`, "колонка
+    #: person_id — UUID, а значение '2457060' не UUID" — which would turn every
+    #: scoped read into a 400 rather than an authorised answer.
+    visible_uuids: frozenset[str] = frozenset()
+    visible_employee_ids: frozenset[str] = frozenset()
+
+    def visible_for(self, column: str) -> frozenset[str]:
+        return (self.visible_employee_ids if column == "employee_id"
+                else self.visible_uuids)
 
     @property
     def sees_everything(self) -> bool:
@@ -197,18 +211,23 @@ class IdentityIndex:
         unit = int(self.unit_id[idx])
 
         if role == "hr":
-            visible: frozenset[str] = frozenset()
-        elif role == "manager" and self._descendants:
+            uuids: frozenset[str] = frozenset()
+            employees: frozenset[str] = frozenset()
+        elif role == "manager":
             units = self._descendants.get(unit, {unit})
-            mask = np.isin(self.unit_id, np.fromiter(units, dtype=np.int64, count=len(units)))
-            people = {self.person_id[i] for i in np.nonzero(mask)[0]}
-            people.update({self.employee_id[i] for i in np.nonzero(mask)[0]})
-            visible = frozenset(people)
+            mask = np.isin(self.unit_id,
+                           np.fromiter(units, dtype=np.int64, count=len(units)))
+            rows = np.nonzero(mask)[0]
+            uuids = frozenset(self.person_id[i] for i in rows)
+            employees = frozenset(self.employee_id[i] for i in rows)
         else:
-            visible = frozenset({self.person_id[idx], employee_id})
+            uuids = frozenset({self.person_id[idx]})
+            employees = frozenset({employee_id})
 
         scope = Scope(employee_id=employee_id, person_id=self.person_id[idx],
-                      role=role, unit_id=unit, visible_person_ids=visible)
+                      role=role, unit_id=unit,
+                      visible_person_ids=uuids | employees,
+                      visible_uuids=uuids, visible_employee_ids=employees)
         self._cache[employee_id] = scope
         return scope
 
@@ -261,6 +280,46 @@ def collect_person_filters(filters: Any) -> list[str]:
 
     walk(filters)
     return found
+
+
+def scope_filter(scope: Scope, column: str = "person_id") -> dict[str, Any]:
+    """A predicate restricting rows to what this identity may see.
+
+    Node shape follows the engine exactly: ``condition_in`` takes ``value`` (not
+    ``values``) and the operator is upper-case ``IN``. The engine enforces
+    ``additionalProperties:false``, so a near-miss here is not a soft failure —
+    it rejects the whole request with 400 and the identity sees nothing at all.
+    """
+    return {"type": "condition_in", "column": column, "operator": "IN",
+            "value": sorted(scope.visible_for(column))}
+
+
+def restrict(scope: Scope, body: dict[str, Any], *,
+             column: str = "person_id") -> dict[str, Any]:
+    """Return ``body`` with a mandatory scope predicate ANDed onto its filters.
+
+    Without this, :func:`enforce` is advisory rather than enforcing. It refuses a
+    query that *names* a forbidden person, but a query with no person filter at
+    all passed straight through and returned the whole mart — measured: an
+    identity entitled to see 2 records received 50 rows, 49 of them other
+    people's. Any agent that pages a mart and filters client-side sidestepped the
+    boundary entirely, and the access-control question category was measuring
+    the agent's phrasing habits rather than the permission system.
+
+    The explicit-reference 403 in :func:`enforce` is kept alongside this on
+    purpose: asking for a specific forbidden person should be refused, not
+    silently answered with an empty result, because an empty result asserts that
+    the person does not exist.
+    """
+    if scope.sees_everything:
+        return body
+
+    predicate = scope_filter(scope, column)
+    existing = body.get("filters")
+    if not existing:
+        return {**body, "filters": predicate}
+    # The engine's `and` node holds its children under `conditions`.
+    return {**body, "filters": {"type": "and", "conditions": [existing, predicate]}}
 
 
 def enforce(scope: Scope, schema: str, model: str, body: dict[str, Any]) -> None:

@@ -55,6 +55,14 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "get_docs",
+        "description": "Документация по теме: описание витрины, правил фильтрации "
+                       "или конкретного приёма. Дешевле, чем describe_model, "
+                       "когда нужно понять смысл, а не перечень колонок.",
+        "inputSchema": {"type": "object", "required": ["topic"],
+                        "properties": {"topic": dict(_STR, description="Тема")}},
+    },
+    {
         "name": "find_skills",
         "description": "Найти рецепт или справочный приём под задачу. Возвращает "
                        "карточки с relevance 0..1. Значение «*» вернёт всё. "
@@ -177,6 +185,8 @@ def _dispatch(tool: str, args: dict) -> tuple[int, dict]:
     if tool == "get_skill":
         name = urllib.parse.quote(str(args.get("name", "")))
         return _http("GET", f"/api/v2/mcp/skills/{name}/")
+    if tool == "get_docs":
+        return _http("GET", "/api/v1/mcp/docs/", params=args)
     raise KeyError(tool)
 
 

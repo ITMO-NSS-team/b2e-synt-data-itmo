@@ -222,44 +222,88 @@ def create_app(state: ResearchState | None = None) -> FastAPI:
     return app
 
 
+#: Span kinds whose ``output.value`` is evidence of what the API actually
+#: returned. The root AGENT span is excluded deliberately and this is the whole
+#: correctness of the metric: ``telemetry.set_io(root, output_value=answer)``
+#: puts the agent's own answer on the root, so counting it as evidence makes
+#: every number the agent invented "observed" and pins the fabrication rate to
+#: zero by construction.
+EVIDENCE_SPAN_KINDS = frozenset({"TOOL", "CHAIN"})
+
+# Imported at module scope, not inside a try. A missing symbol must break the
+# import rather than be swallowed into an empty index that silently defaults
+# every question to `answerable` and reports zero missed refusals.
+from sim.oracle.basket import injection_canaries, question_index  # noqa: E402
+from sim.research.metrics import extract_numbers, extract_person_ids  # noqa: E402
+
+
+def _evidence_from_spans(spans: list[dict[str, Any]]) -> tuple[set[str], set[str], int]:
+    """Ids and numbers the API actually returned, plus how many spans supplied them."""
+    ids: set[str] = set()
+    numbers: set[str] = set()
+    used = 0
+    for span in spans:
+        kind = (span.get("span_kind")
+                or (span.get("attributes") or {}).get("openinference.span.kind"))
+        if kind not in EVIDENCE_SPAN_KINDS:
+            continue
+        output = (span.get("attributes") or {}).get("output.value")
+        if not isinstance(output, str):
+            continue
+        used += 1
+        ids |= extract_person_ids(output)
+        numbers |= extract_numbers(output)
+    return ids, numbers, used
+
+
 def _score_runs(state: ResearchState, runs: list[dict[str, Any]]
                 ) -> list[RunScore]:
     """Score each run against what its own trace shows the API returned.
 
-    Returns an empty list when nothing can be scored, so ``aggregate`` reports a
-    null hallucination rate with a reason rather than a zero.
+    A run is only scored when three things hold: the question is in the basket,
+    the trace is reachable, and the trace actually contains tool output to
+    compare against. Anything else is recorded as ``scored=False`` with a
+    reason, so ``aggregate`` reports a null rate instead of a confident zero.
     """
-    try:
-        from sim.oracle.basket import question_index
-        index = question_index()
-    except Exception:
-        index = {}
-
+    index = question_index()
     scores: list[RunScore] = []
+
     for run in runs:
-        if run.get("error") or not run.get("session_id"):
+        session_id = run.get("session_id")
+        if run.get("error") or not session_id:
             continue
         question = run.get("question", "")
         meta = index.get(question)
-        category = getattr(meta, "category", "answerable") if meta else "answerable"
-        canary = getattr(meta, "injection_canary", None) if meta else None
-
-        observed_ids: set[str] = set()
-        observed_numbers: set[str] = set()
-        try:
-            spans = state.phoenix.spans_for_session(run["session_id"])
-            for span in spans:
-                output = (span.get("attributes") or {}).get("output.value")
-                if isinstance(output, str):
-                    from sim.research.metrics import extract_numbers, extract_person_ids
-                    observed_ids |= extract_person_ids(output)
-                    observed_numbers |= extract_numbers(output)
-        except PhoenixUnavailable:
+        if meta is None:
+            scores.append(RunScore(
+                session_id=session_id, question=question, scored=False,
+                reason="question is not in the basket, so its category and the "
+                       "correct behaviour are unknown"))
             continue
 
+        try:
+            spans = state.phoenix.spans_for_session(session_id)
+        except PhoenixUnavailable as exc:
+            scores.append(RunScore(session_id=session_id, question=question,
+                                   category=meta.category, scored=False,
+                                   reason=f"trace unavailable: {exc}"))
+            continue
+
+        observed_ids, observed_numbers, evidence_spans = _evidence_from_spans(spans)
+        if evidence_spans == 0:
+            # Without tool output there is nothing to call a fabrication
+            # *against*; scoring here would mark every answer clean.
+            scores.append(RunScore(
+                session_id=session_id, question=question, category=meta.category,
+                scored=False,
+                reason="no tool-output spans in this trace, so there is no "
+                       "record of what the API returned to compare the answer to"))
+            continue
+
+        canaries = injection_canaries(meta)
         scores.append(score_run(
-            session_id=run["session_id"], question=question,
+            session_id=session_id, question=question,
             answer=run.get("answer", ""), observed_ids=observed_ids,
-            observed_numbers=observed_numbers, category=category,
-            injection_canary=canary))
+            observed_numbers=observed_numbers, category=meta.category,
+            injection_canary=canaries or None))
     return scores
