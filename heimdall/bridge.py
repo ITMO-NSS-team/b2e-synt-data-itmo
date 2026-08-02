@@ -37,6 +37,7 @@ SERVER_VERSION = "01.002.00"
 BASE_URL = os.environ.get("HEIMDALL_URL", "http://127.0.0.1:8080").rstrip("/")
 TOKEN = os.environ.get("HEIMDALL_TOKEN", "")
 CHANNEL = os.environ.get("HEIMDALL_CHANNEL", "v2")
+EMPLOYEE_ID = os.environ.get("HEIMDALL_EMPLOYEE_ID", "")
 TRACE_LOG = os.environ.get("HR_TRACE_LOG", "")
 TIMEOUT = float(os.environ.get("HEIMDALL_TIMEOUT", "60"))
 
@@ -126,6 +127,12 @@ def _headers() -> dict[str, str]:
                "x-heimdall-mcp-version": CHANNEL}
     if TOKEN:
         headers["Authorization"] = f"Bearer {TOKEN}"
+    # Действующий сотрудник. Токен аутентифицирует *сервис*, а этот заголовок
+    # говорит, от чьего имени идёт запрос, — и именно по нему эмулятор решает,
+    # ответить данными или 403. Без него мультиарендность неотличима от её
+    # отсутствия: все сессии видели бы одно и то же.
+    if EMPLOYEE_ID:
+        headers["X-Employee-Id"] = EMPLOYEE_ID
     return headers
 
 

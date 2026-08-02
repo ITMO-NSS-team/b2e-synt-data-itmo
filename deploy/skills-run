@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""The only executable the agent may invoke. Mounted at /opt/skills/run.
+
+    /opt/skills/run <sha256> '<json args>'
+
+Refuses, in this order:
+
+1. a hash that is not in the registry
+2. a hash whose skill is not ``active`` — approved-but-disabled included
+3. a hash whose stored bytes no longer digest to it
+
+The third check is what defeats approve-then-swap: get benign bytes approved
+under a name, then replace them. Because the agent names a *hash* and the bytes
+are re-hashed immediately before dispatch, swapped bytes have no approval to
+inherit. See ``docs/skill-execution-threat-model.md`` §4.
+
+The code itself never runs here. This process only resolves and hands off to the
+sandbox worker over the spool, so the agent's container never executes skill
+code even for an approved skill.
+
+Output is one JSON document on stdout. Errors are JSON too, not tracebacks: the
+agent reads this, and a traceback is an unstructured surprise it will try to
+interpret as data.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import uuid
+
+sys.path.insert(0, "/app")
+
+
+def emit(payload: dict, code: int = 0) -> int:
+    json.dump(payload, sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+    return code
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        return emit({"ok": False, "error": {
+            "kind": "usage",
+            "detail": "usage: run <sha256> '<json args>'"}}, 2)
+
+    code_hash = argv[1].strip()
+    try:
+        args = json.loads(argv[2]) if len(argv) > 2 and argv[2].strip() else {}
+    except ValueError as exc:
+        return emit({"ok": False, "error": {
+            "kind": "bad-args", "detail": f"args are not valid JSON: {exc}"}}, 2)
+    if not isinstance(args, dict):
+        return emit({"ok": False, "error": {
+            "kind": "bad-args", "detail": "args must be a JSON object"}}, 2)
+
+    try:
+        from sim.registry import Registry
+        from sim.sandbox.worker import Spool
+        from sim.skills import NotExecutable, SkillStore
+    except ImportError as exc:
+        return emit({"ok": False, "error": {
+            "kind": "runner", "detail": f"cannot load the skill store: {exc}"}}, 1)
+
+    registry = Registry(os.environ.get("B2E_REGISTRY_DB", "/app/var/registry.db"))
+    try:
+        store = SkillStore(registry)
+        try:
+            code = store.resolve_for_execution(code_hash)
+        except NotExecutable as exc:
+            # Not an error in the agent's world — a refusal it should report.
+            return emit({"ok": False, "error": {
+                "kind": "not-executable", "detail": str(exc),
+                "hint": "only skills a human has approved AND enabled will run"}}, 0)
+
+        record = store.get(code_hash)
+        spool = Spool(os.environ.get("SANDBOX_SPOOL", "/spool"))
+        job_id = f"job_{uuid.uuid4().hex[:20]}"
+        spool.submit(job_id, {
+            "code": code.decode("utf-8"),
+            "payload": args,
+            "wall_seconds": float(os.environ.get("SKILL_WALL_SECONDS", "10")),
+        })
+        result = spool.collect(
+            job_id, timeout=float(os.environ.get("SKILL_COLLECT_TIMEOUT", "45")))
+        if result is None:
+            return emit({"ok": False, "error": {
+                "kind": "timeout",
+                "detail": "the sandbox did not return a result in time"}}, 0)
+
+        result.setdefault("skill", {})
+        result["skill"] = {"name": record.name if record else None,
+                           "hash": code_hash, "state": record.state.value if record else None}
+        return emit(result, 0)
+    finally:
+        registry.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
