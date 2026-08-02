@@ -163,6 +163,48 @@
     }
    }
   },
+  "/sessions/{session_id}/progress": {
+   "get": {
+    "summary": "Get Progress",
+    "description": "What the current turn is doing right now.\n\nExists because a turn takes upwards of a minute and a bridge with a\nhuman on it needs something to show. Strictly a view: polling it cannot\nchange the turn, and nothing it returns is recorded anywhere.\n\n404 rather than an empty body when there is no turn — \"nothing is\nrunning\" and \"something is running silently\" must not look alike to a\npoller.",
+    "operationId": "get_progress_sessions__session_id__progress_get",
+    "parameters": [
+     {
+      "name": "session_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Session Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true,
+         "title": "Response Get Progress Sessions  Session Id  Progress Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/sessions/{session_id}/messages": {
    "post": {
     "summary": "Post Message",

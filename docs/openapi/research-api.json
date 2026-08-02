@@ -170,15 +170,33 @@
    "post": {
     "summary": "Launch a batch run",
     "operationId": "create_experiment_experiments_post",
+    "parameters": [
+     {
+      "name": "idempotency-key",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
     "requestBody": {
+     "required": true,
      "content": {
       "application/json": {
        "schema": {
         "$ref": "#/components/schemas/ExperimentIn"
        }
       }
-     },
-     "required": true
+     }
     },
     "responses": {
      "202": {
