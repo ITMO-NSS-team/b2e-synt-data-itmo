@@ -1,0 +1,55 @@
+{
+ "columns": {
+  "agent_name": {
+   "file": "agent_name.9a9b77c8.col",
+   "sha256": "eac3a15fceb2d5dc53db1bfd97525c7d4feb5e4d9ce192a7f36317ca0b69793c",
+   "type": "String (nullable)"
+  },
+  "agent_version": {
+   "file": "agent_version.2d2f2f79.col",
+   "sha256": "2ea9a3ca97b14ea84be3a843d16951429909088127dfc590637b79fedc9aefc8",
+   "type": "String (nullable)"
+  },
+  "dialog_answer": {
+   "file": "dialog_answer.db1475f4.col",
+   "sha256": "bfef0efae99907166e76234f17d185dd2e5d9533988952c4df54cf3796d875c8",
+   "type": "Array"
+  },
+  "dialog_order": {
+   "file": "dialog_order.06d263e3.col",
+   "sha256": "db2107fbc9aa7153b4db9c32d2fc60429c7ea52b4449988d99dfbc861b75901b",
+   "type": "Array"
+  },
+  "dialog_question": {
+   "file": "dialog_question.debfb053.col",
+   "sha256": "0f37ba45a18028645c1525d4936d0e8f2c2f56f4b8e591be8e075902ec90fa50",
+   "type": "Array"
+  },
+  "explanation": {
+   "file": "explanation.73b8427e.col",
+   "sha256": "877b98ed0f02d084412cd1cd35d0730cb26913d0fb091152d64dbfecd9fe8a2a",
+   "type": "String (nullable)"
+  },
+  "model_name": {
+   "file": "model_name.b19ef255.col",
+   "sha256": "7847299d98b6d02b6669eafe771160d7643ba001431adba1c4ae023c41edd878",
+   "type": "String (nullable)"
+  },
+  "question_type": {
+   "file": "question_type.91578dce.col",
+   "sha256": "2cfc3592b02e9cd9f3046f6ce491b61f5f6070f5d600555b5e889ee8308b3311",
+   "type": "String (nullable)"
+  },
+  "score": {
+   "file": "score.75ebcb36.col",
+   "sha256": "821045545f68e69f8148bb128aa0a300e18928e76ef00269339676c5ac456f95",
+   "type": "Int64 (nullable)"
+  },
+  "summary": {
+   "file": "summary.05535ecf.col",
+   "sha256": "72ae0f2a7b712476fe2977140f360d8afc1931793c4487aaa45b0fbe5d571768",
+   "type": "String (nullable)"
+  }
+ },
+ "rows": 5880
+}

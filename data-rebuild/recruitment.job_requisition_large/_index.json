@@ -1,0 +1,15 @@
+{
+ "columns": {
+  "position_name": {
+   "file": "position_name.94b556b2.col",
+   "sha256": "3d3fc1411047877e643ff1dab61e077a0a8b071184435ad74b960b297703014a",
+   "type": "String"
+  },
+  "status": {
+   "file": "status.48a3661d.col",
+   "sha256": "a60bdfc60dc1cc2d4aa48d8d818b603aa4f924426274ee8a04bab6655bbd5f29",
+   "type": "String"
+  }
+ },
+ "rows": 22050
+}

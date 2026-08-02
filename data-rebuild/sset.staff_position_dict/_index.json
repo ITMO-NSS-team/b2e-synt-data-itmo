@@ -1,0 +1,15 @@
+{
+ "columns": {
+  "position_id": {
+   "file": "position_id.b7f48358.col",
+   "sha256": "6b9da85a4b25c25bbdb20f374636e99efa655c133140c41357ae6c1b153b9e1e",
+   "type": "String"
+  },
+  "position_name": {
+   "file": "position_name.94b556b2.col",
+   "sha256": "b336e85fe2e7808ef234a01f7a22cf5a6a0843a945e17ac7f6a1002a9e978981",
+   "type": "String"
+  }
+ },
+ "rows": 114
+}

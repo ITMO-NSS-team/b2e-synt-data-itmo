@@ -1,0 +1,10 @@
+{
+ "columns": {
+  "skill_name": {
+   "file": "skill_name.0f49a593.col",
+   "sha256": "bbb98c9aa9f0be4d7ca99da2003130d4a3d4e2e92a88755bd69dde0be49dc124",
+   "type": "String"
+  }
+ },
+ "rows": 94
+}

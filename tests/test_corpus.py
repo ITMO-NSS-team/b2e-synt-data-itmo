@@ -127,6 +127,22 @@ def test_successor_arrays_are_aligned_with_qty(snap):
         assert lengths == {int(q)}, (i, q, lengths)
 
 
+def test_employee_id_addresses_exactly_one_person(snap):
+    """Табельный номер — ключ, по которому агента просят ссылаться на человека.
+
+    Он разыгрывался как `1_000_000 + hash % 8_999_999` без проверки на
+    совпадения. На 3000 человек их не бывает, на 294 000 их около 4800 — и
+    `sim/emulator/identity.py` строит по номеру словарь скоупов, так что двое
+    делили один набор прав, а побеждал тот, кто позже в массиве.
+
+    Тест идёт по data-small и потому НЕ ловит сам масштабный эффект. Он
+    закрепляет свойство; ловит его гейт, который гоняют на полном корпусе.
+    """
+    t = snap.table("dm_core.employee_actual")
+    ids = [str(x) for x in t.column("employee_id")]
+    assert len(set(ids)) == len(ids)
+
+
 def test_nobody_is_their_own_successor(snap):
     """«Кто может меня заменить» не должно отвечать «вы сами».
 

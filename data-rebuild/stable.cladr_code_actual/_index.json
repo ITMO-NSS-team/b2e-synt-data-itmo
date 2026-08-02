@@ -1,0 +1,35 @@
+{
+ "columns": {
+  "area_name": {
+   "file": "area_name.644ffaf8.col",
+   "sha256": "b1a8ceed7733db4a9c2c4678f9b639ece2702bc4d88cdb0e345e6b1055c5bdf4",
+   "type": "String"
+  },
+  "city_name": {
+   "file": "city_name.f8c08586.col",
+   "sha256": "86b5bd89bdbbce1b8ed30d43afd32d8e1a317700af8c28007b7114ca12ac6513",
+   "type": "String"
+  },
+  "city_ordering": {
+   "file": "city_ordering.824f258b.col",
+   "sha256": "10d4f72c8456f980b586d917285ea442bb79640c9d9dae6c1702fa2978add22a",
+   "type": "String"
+  },
+  "code": {
+   "file": "code.e6fb0621.col",
+   "sha256": "85122ddc290cdc2af469b257b1a33d56cec4eaff2425adc4199374eeaeb12277",
+   "type": "String"
+  },
+  "position_city": {
+   "file": "position_city.6ddaab6e.col",
+   "sha256": "86b5bd89bdbbce1b8ed30d43afd32d8e1a317700af8c28007b7114ca12ac6513",
+   "type": "String"
+  },
+  "region_name": {
+   "file": "region_name.8d766fc1.col",
+   "sha256": "923a49a60fd9d8495806647fc216beb031515ce2b30b8c8e7f39727469d5f66e",
+   "type": "String"
+  }
+ },
+ "rows": 71
+}

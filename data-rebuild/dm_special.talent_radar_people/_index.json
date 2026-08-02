@@ -1,0 +1,50 @@
+{
+ "columns": {
+  "birth_year": {
+   "file": "birth_year.c47790a3.col",
+   "sha256": "757d3a6d2de52afd20d2f2739c64b261c92226c0596356cbc92e38d72f5e06fd",
+   "type": "Int16 (nullable)"
+  },
+  "current_company": {
+   "file": "current_company.7697e9e2.col",
+   "sha256": "45db9283bafc23a90890fc06e2e811ec72c01b50831310a8ee49f1c2d282fc7a",
+   "type": "String (nullable)"
+  },
+  "full_name": {
+   "file": "full_name.8510b934.col",
+   "sha256": "d9efd1df8b282698853a91e70bc06a9d660f2c817b1f4129242ace8bcf1fc5b1",
+   "type": "String"
+  },
+  "has_embedding": {
+   "file": "has_embedding.ef744282.col",
+   "sha256": "1aa75ac068b38c64ead261afbb1fd03ff03e19df55d7dd47290ab2778fdaa7ab",
+   "type": "Bool"
+  },
+  "id": {
+   "file": "id.87ea5dfc.col",
+   "sha256": "6e02a0a56ea64b5e352f4e6249f55159cf37089a106ad141c59d269f150e834a",
+   "type": "UUID"
+  },
+  "primary_domain": {
+   "file": "primary_domain.e2ed5b5c.col",
+   "sha256": "578c91409ac1baccd9d3cd1c1e760c7b694b64c7322797a08ddee64badf5d4c4",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "region": {
+   "file": "region.a94a5840.col",
+   "sha256": "74772e6d59c71c66291dcd2dfa95bd6c89c63b85e14cdbb83b9d578585ab15ad",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "score_total": {
+   "file": "score_total.b1baab32.col",
+   "sha256": "341fb81c6cd4f1c728495b8570f330b22e3c19903453aff3600aa57933ed1e39",
+   "type": "Float32 (nullable)"
+  },
+  "star_index": {
+   "file": "star_index.2d8e6e7c.col",
+   "sha256": "341fb81c6cd4f1c728495b8570f330b22e3c19903453aff3600aa57933ed1e39",
+   "type": "Float32 (nullable)"
+  }
+ },
+ "rows": 102900
+}

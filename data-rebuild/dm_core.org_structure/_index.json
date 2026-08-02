@@ -1,0 +1,45 @@
+{
+ "columns": {
+  "agile_curator_employee_id": {
+   "file": "agile_curator_employee_id.ed0522eb.col",
+   "sha256": "930384bb168588c4313ff2fabfe68eadfdbdc5df1b2e504917048c589fd385ce",
+   "type": "Array"
+  },
+  "agile_director_employee_id": {
+   "file": "agile_director_employee_id.2a88c0f6.col",
+   "sha256": "930384bb168588c4313ff2fabfe68eadfdbdc5df1b2e504917048c589fd385ce",
+   "type": "Array"
+  },
+  "company": {
+   "file": "company.71b21161.col",
+   "sha256": "f6b788e0b2bd49fcd5b7ce86cfec5c44ca82ea6d0324efb28a7fc3c1b911fffa",
+   "type": "String"
+  },
+  "oshs_curator_employee_id": {
+   "file": "oshs_curator_employee_id.f8419fa7.col",
+   "sha256": "930384bb168588c4313ff2fabfe68eadfdbdc5df1b2e504917048c589fd385ce",
+   "type": "Array"
+  },
+  "oshs_director_employee_id": {
+   "file": "oshs_director_employee_id.23a2e68e.col",
+   "sha256": "930384bb168588c4313ff2fabfe68eadfdbdc5df1b2e504917048c589fd385ce",
+   "type": "Array"
+  },
+  "oshs_hrbp_employee_id": {
+   "file": "oshs_hrbp_employee_id.b16cc76d.col",
+   "sha256": "893a1d63c206b8e20c869ac68beb1da42e96e563e11635cf1ec7908aeed37cc7",
+   "type": "String"
+  },
+  "unit_id": {
+   "file": "unit_id.4252c4be.col",
+   "sha256": "739023b39d5da0aa1f210128fc04f8a19a39b0c70c84c8404c2eed6d99320826",
+   "type": "String"
+  },
+  "unit_name": {
+   "file": "unit_name.56181004.col",
+   "sha256": "f1a6f8f41681fb5dde33696af6a45fbade098d02cdf202bdc9061b21e82de26a",
+   "type": "String"
+  }
+ },
+ "rows": 32522
+}

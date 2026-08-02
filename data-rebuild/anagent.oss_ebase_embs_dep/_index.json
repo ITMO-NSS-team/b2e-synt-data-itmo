@@ -1,0 +1,20 @@
+{
+ "columns": {
+  "structure_code": {
+   "file": "structure_code.0c007849.col",
+   "sha256": "093a21b81bc92843daa0c3a3665635ab689a466c70b169649630d8f0207b6107",
+   "type": "UInt32"
+  },
+  "structure_name": {
+   "file": "structure_name.c8c00863.col",
+   "sha256": "f1a6f8f41681fb5dde33696af6a45fbade098d02cdf202bdc9061b21e82de26a",
+   "type": "String"
+  },
+  "structure_type": {
+   "file": "structure_type.d79acbd9.col",
+   "sha256": "51ac521ed5ee9287860c896f9be9c5bea03e2546e5b0d0df22ba62f39aaccf48",
+   "type": "String"
+  }
+ },
+ "rows": 32522
+}

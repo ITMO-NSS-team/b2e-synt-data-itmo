@@ -1,0 +1,95 @@
+{
+ "columns": {
+  "_changes": {
+   "file": "_changes.89291932.col",
+   "sha256": "c5e5f4c470c1719e277d11b1c4839ab365d200a81f9ab6843fe865dcb5c5d8d0",
+   "type": "internal"
+  },
+  "birthday_date": {
+   "file": "birthday_date.b1feba0d.col",
+   "sha256": "dd1302f2896735cde8626f430b4d0645e522c052db8595c29768fc0d60a843ae",
+   "type": "String (nullable)"
+  },
+  "candidate_id": {
+   "file": "candidate_id.b0ddec15.col",
+   "sha256": "de60ac01a4f0dc4f059e7f51ab5b6ec7d62028097312b2489c588bb7545b830f",
+   "type": "Array (nullable)"
+  },
+  "city": {
+   "file": "city.2c54892c.col",
+   "sha256": "9616cd3538b103db2127dc82ad0b2f60eb04047c75de0650549027aac806891b",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "company_name": {
+   "file": "company_name.a76c5cd4.col",
+   "sha256": "a6490a83119c00e62d9cc6debf3f5c9f795b5f2afc476cd5edb23b22df268e15",
+   "type": "Array (nullable)"
+  },
+  "education_end_month": {
+   "file": "education_end_month.284ec5f9.col",
+   "sha256": "ed97362e917f690e28c175e97d27fda5b657d85d67ed1d5cb79497eff53461bf",
+   "type": "Array (nullable)"
+  },
+  "education_end_year": {
+   "file": "education_end_year.a2174fef.col",
+   "sha256": "3d55dbff7936d2686d92eba2e7a17b83d545c5a58e796013f05e2a81c621e2b8",
+   "type": "Array (nullable)"
+  },
+  "education_name": {
+   "file": "education_name.9ae53e1f.col",
+   "sha256": "e31f192d86dc7c3f527ef5aa81ff054a0e68d2cf74e6377e6bfdb1cab86f4680",
+   "type": "Array (nullable)"
+  },
+  "first_name": {
+   "file": "first_name.f9b4cb17.col",
+   "sha256": "89aeca8772fa2800b18f9109355a75404d1a2dad4f1963ad0aa936b47ea00865",
+   "type": "String (nullable)"
+  },
+  "full_name": {
+   "file": "full_name.8510b934.col",
+   "sha256": "b6ed456d546407f402370a644514b5287d5189c58c33cc21a805801d8c0e0ba7",
+   "type": "String (nullable)"
+  },
+  "gender": {
+   "file": "gender.b02b5038.col",
+   "sha256": "0173abdf5a373a7c8f68a9ce4b1505e9b1f1fc26cf5b3579feaae4df347990ee",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "institute_name": {
+   "file": "institute_name.94af9a29.col",
+   "sha256": "80cca392a69c09c9a4df14b6f8cd5190b3212635115279e3d3622b10bbca7ffa",
+   "type": "Array (nullable)"
+  },
+  "last_name": {
+   "file": "last_name.52807545.col",
+   "sha256": "4da970dbe5c7fc553cc1a029afe83670cd9cf4d779f51845c95dff448804538b",
+   "type": "String (nullable)"
+  },
+  "middle_name": {
+   "file": "middle_name.1eee7d47.col",
+   "sha256": "bcca72d9429c76fdd6b25e5229516c494de0c9231d77acdd5965526cea7d0657",
+   "type": "String (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "dfebf7cc30db5de4fffc3483a9778f49d88e49760573a8992dc768680555d3d1",
+   "type": "UUID"
+  },
+  "position_name": {
+   "file": "position_name.94b556b2.col",
+   "sha256": "b0fd0ac69eb0866679a7380024cc9ac5f4c2c5c6d5f46c6cc25b7d79ec0d3aa8",
+   "type": "Array (nullable)"
+  },
+  "report_date": {
+   "file": "report_date.8e371fd4.col",
+   "sha256": "746b3d344f423479ca50892d754b46825d7142f561d7a8ad5b6ac232418c1aa4",
+   "type": "Date"
+  },
+  "specialty": {
+   "file": "specialty.6cde6c81.col",
+   "sha256": "a88edc37cdbbee877cd965620c34198b4ef565e5231d2dac49abf71a1c810167",
+   "type": "Array (nullable)"
+  }
+ },
+ "rows": 26460
+}

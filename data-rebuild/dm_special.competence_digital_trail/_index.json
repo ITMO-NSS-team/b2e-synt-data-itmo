@@ -1,0 +1,25 @@
+{
+ "columns": {
+  "grade": {
+   "file": "grade.39a6bd43.col",
+   "sha256": "6ad7d5818de768c4cb977d25ffdb1be1eb815b1e71d57a969e2426cff5fddbc3",
+   "type": "String (nullable)"
+  },
+  "grade_level": {
+   "file": "grade_level.76a6e784.col",
+   "sha256": "cb791118c247198d7f32c4da0c74164901cb6fee645e3d9641aeba3006121871",
+   "type": "Int64 (nullable)"
+  },
+  "mobility_status": {
+   "file": "mobility_status.20f32ffe.col",
+   "sha256": "88b2715dace7574ed773b62130be7a0174a5315c16590989a62405aad897ea27",
+   "type": "String (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "bd2f9a3948c010322f66a465fa41abefbc80c7ab584ab4d5a017e60844aa24f2",
+   "type": "UUID"
+  }
+ },
+ "rows": 161700
+}

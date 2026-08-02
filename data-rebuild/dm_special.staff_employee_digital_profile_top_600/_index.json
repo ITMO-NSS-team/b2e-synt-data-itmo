@@ -1,0 +1,65 @@
+{
+ "columns": {
+  "age": {
+   "file": "age.5dc56b9a.col",
+   "sha256": "5f6fbcdfeb4477e78da83c404dec99e43612c328a22b54b50048e14127ef84b5",
+   "type": "Int64 (nullable)"
+  },
+  "company_name": {
+   "file": "company_name.a76c5cd4.col",
+   "sha256": "d0ac4b85ebc13636604234f27a0eb0a3df2f88b876eb27310b1623e9425382ce",
+   "type": "String (nullable)"
+  },
+  "employee_full_name": {
+   "file": "employee_full_name.726b8b02.col",
+   "sha256": "dce01efefef01cd77ff15b5ea8e74fcf881e3270d58b4dc3cc510b7d4a7f857c",
+   "type": "String (nullable)"
+  },
+  "employee_id": {
+   "file": "employee_id.3c2bc72f.col",
+   "sha256": "fa831c475d522a31f54a307d0cda62204dd989b2442877fe7850a059a5ff42f0",
+   "type": "UInt32 (nullable)"
+  },
+  "employee_short_name": {
+   "file": "employee_short_name.4be9f9e1.col",
+   "sha256": "2f2f2772bde6abf786a7335fb6f10d887d902584c8c2e02e5eb6505b149a7fd5",
+   "type": "String (nullable)"
+  },
+  "family_status": {
+   "file": "family_status.2245d0ef.col",
+   "sha256": "14fe90509d9fe5dca46a0d129a66350c84db8bf606c4c1cf7136878987285ced",
+   "type": "String (nullable)"
+  },
+  "fblock_name": {
+   "file": "fblock_name.5532e24b.col",
+   "sha256": "2a262d4eb99fc4b06d2a2ff9920877141f741b63fba7dc540753e6cfb1d200db",
+   "type": "String (nullable)"
+  },
+  "gender": {
+   "file": "gender.b02b5038.col",
+   "sha256": "554588981f832f15e708a2d90556fe99ee0d803ef4c32f366934b206d0ae7026",
+   "type": "String (nullable)"
+  },
+  "grade_level_position": {
+   "file": "grade_level_position.a361e1bd.col",
+   "sha256": "3d64f4313b05528594268a29ae8689f51410dae1c35f2fb2f53cf55b0ed67fc5",
+   "type": "Int64 (nullable)"
+  },
+  "oshs_level_2_unit_name": {
+   "file": "oshs_level_2_unit_name.c9c95ba7.col",
+   "sha256": "34a8a1a6531884928aa1ec67aed75c8336718312bfcbf9743e91b1bd88e40c4a",
+   "type": "String (nullable)"
+  },
+  "oshs_level_3_unit_name": {
+   "file": "oshs_level_3_unit_name.a05e93bf.col",
+   "sha256": "769a35b9ce7ae413e50ca26fbd99e715b817139e1aa6e43342b8ed2e76a3e69f",
+   "type": "String (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "8dcc94f993314c8ee2755fb72de963cf4099070a15d8fec34c98f84c96432ced",
+   "type": "UUID"
+  }
+ },
+ "rows": 600
+}

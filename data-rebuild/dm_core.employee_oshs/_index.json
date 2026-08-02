@@ -1,0 +1,25 @@
+{
+ "columns": {
+  "company": {
+   "file": "company.71b21161.col",
+   "sha256": "50546d8a06dedc9ceda5e9575e9e5f6d71f0647bb927222e38befed9a34fc111",
+   "type": "String (LowCardinality)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "573751d33d23f7d4cfb7f78957325da08d4118d92b817b20f674bedc59265c4f",
+   "type": "UUID"
+  },
+  "unit_id": {
+   "file": "unit_id.4252c4be.col",
+   "sha256": "6007972378b0393f6b221adb1f37ae30018047b4020c9e48b4c0e7bfc0418bb4",
+   "type": "String (nullable)"
+  },
+  "unit_name": {
+   "file": "unit_name.56181004.col",
+   "sha256": "1c3f60b8a7df50cc100a3b86e16c48c93be209746e317fb4fe420393e05dff16",
+   "type": "String (nullable)"
+  }
+ },
+ "rows": 294000
+}

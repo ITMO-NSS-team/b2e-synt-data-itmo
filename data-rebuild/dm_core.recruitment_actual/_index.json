@@ -1,0 +1,45 @@
+{
+ "columns": {
+  "city_name": {
+   "file": "city_name.f8c08586.col",
+   "sha256": "9616cd3538b103db2127dc82ad0b2f60eb04047c75de0650549027aac806891b",
+   "type": "String (nullable)"
+  },
+  "company": {
+   "file": "company.71b21161.col",
+   "sha256": "bbb4458ca40cbf1c45f2766c531e4671090e0f0701f9e86fcf30afe3416833c3",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "gosb_name": {
+   "file": "gosb_name.fe794ec7.col",
+   "sha256": "9616cd3538b103db2127dc82ad0b2f60eb04047c75de0650549027aac806891b",
+   "type": "String (nullable)"
+  },
+  "grade": {
+   "file": "grade.39a6bd43.col",
+   "sha256": "007c7c11c30c920f3763808d7ed6011d36bd40db069bcc36622c7bd826dc8eea",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "grade_level": {
+   "file": "grade_level.76a6e784.col",
+   "sha256": "9a13a33ff1f05d3ad9cae5a4c18621036c08e3822d6b69e65bc52618300906ba",
+   "type": "Int64 (nullable)"
+  },
+  "position_id": {
+   "file": "position_id.b7f48358.col",
+   "sha256": "59be745fd0cb13a57e9c97a1eec55c356c1cd113eed5df5f94ce70b8ffa42250",
+   "type": "UInt32 (nullable)"
+  },
+  "position_name": {
+   "file": "position_name.94b556b2.col",
+   "sha256": "9cab1630ebf8c13ec4764ee8203222236bdcc547172d711c4c31f17d31c25ceb",
+   "type": "String (nullable)"
+  },
+  "type_position_id": {
+   "file": "type_position_id.96c68727.col",
+   "sha256": "a47e62c67ef1c292703f42507632bb435b5faf64d612b1f1941e27168c17b747",
+   "type": "UInt32 (nullable)"
+  }
+ },
+ "rows": 26460
+}

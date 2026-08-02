@@ -1,0 +1,50 @@
+{
+ "columns": {
+  "agenda_items": {
+   "file": "agenda_items.0e8bc0eb.col",
+   "sha256": "df6d04259065586902c55bc05b9e3244de85db53bdb20992c9bb038c598767b8",
+   "type": "String"
+  },
+  "created_at": {
+   "file": "created_at.fbc01867.col",
+   "sha256": "f630bb2841aeeb6be41483a2c00043c901f2634a02f0ecfcb2a66b393451f2d9",
+   "type": "DateTime64(3)"
+  },
+  "event_type": {
+   "file": "event_type.b8c3aeea.col",
+   "sha256": "7c96ec654916b65453e5c35404f8529ecdfe4b49de54f987ce0d19209d78852d",
+   "type": "String"
+  },
+  "id": {
+   "file": "id.87ea5dfc.col",
+   "sha256": "638f5d21202995d4b68e76a5d917f05ee5481d59849d71d522b182d486767361",
+   "type": "UUID"
+  },
+  "manual_agreements": {
+   "file": "manual_agreements.69a6c154.col",
+   "sha256": "305eb56d1cd9b68e7c99933549ed2bedbcfdbd828eb83e9049c9ac3c2bae2c18",
+   "type": "String"
+  },
+  "meeting_id": {
+   "file": "meeting_id.dccaf9e4.col",
+   "sha256": "12b3edc5abea614101eaa7bfd77d8654eafa6ec31059547c73aacf4e891c40fa",
+   "type": "String"
+  },
+  "preprocessed_text": {
+   "file": "preprocessed_text.2c8997f2.col",
+   "sha256": "7e5ea810100264ea2c784752a583f254c90656c613d912e6742c452a03d353f5",
+   "type": "String (nullable)"
+  },
+  "status": {
+   "file": "status.48a3661d.col",
+   "sha256": "a07fc2cae57af348c4b998dcc97c9570821c815c0c44b6bf3899b994b5ea1bda",
+   "type": "String"
+  },
+  "structure_text": {
+   "file": "structure_text.e32956bb.col",
+   "sha256": "4707cb886ef684b36c198f8138be104df13270b68cefe2e48bd0bfa2a9e23eb8",
+   "type": "String"
+  }
+ },
+ "rows": 52920
+}

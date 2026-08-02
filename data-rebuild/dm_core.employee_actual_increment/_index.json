@@ -1,0 +1,415 @@
+{
+ "columns": {
+  "absence.absence_code": {
+   "file": "absence_absence_code.a7869d13.col",
+   "sha256": "7d77f4769de6838303337342955b3caebbf49aa2c76c1ca5f20d46c1203a49d4",
+   "type": "Array (nullable)"
+  },
+  "absence.absence_end": {
+   "file": "absence_absence_end.58a0c0de.col",
+   "sha256": "30ebe6fb8165c80bb078cea453f404b75cc2ded866972cb9e78cbf3a4c4b2c7e",
+   "type": "Array (nullable)"
+  },
+  "absence.absence_group": {
+   "file": "absence_absence_group.db3d4cce.col",
+   "sha256": "f750820bf3cb3227afe858425bd5a866a5fc76eaf67589d60ed677cd0e34f6bd",
+   "type": "Array (nullable)"
+  },
+  "absence.absence_group_name": {
+   "file": "absence_absence_group_name.5f8a9096.col",
+   "sha256": "a23ed255fd5d6aeda5c00a532aa11660bae7c883c42f767dc8dd243f989bb874",
+   "type": "Array (nullable)"
+  },
+  "absence.absence_name": {
+   "file": "absence_absence_name.fceb1b6e.col",
+   "sha256": "2618bf5d4578f1834006dc2222203f39ee743fd858a2ba84bc002d556cfa9113",
+   "type": "Array (nullable)"
+  },
+  "absence.absence_start": {
+   "file": "absence_absence_start.41d04a7c.col",
+   "sha256": "5ab63c28a359a13adc3156eb04cd48439df23de6c73269c2f7dbb18f05ba2381",
+   "type": "Array (nullable)"
+  },
+  "absence.employee_id": {
+   "file": "absence_employee_id.aabdb898.col",
+   "sha256": "d1f60c465e5e3429e3a68ec7e6364386c4bbe11d513434abdcd9c371536276b3",
+   "type": "Array (nullable)"
+  },
+  "absence.flag_blocked": {
+   "file": "absence_flag_blocked.ea1be5b7.col",
+   "sha256": "3d7f51cac465c7800dd1b34f368e13b700c86dc3939f0860534ebb85ae9f37d3",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_employee_id": {
+   "file": "agile_curator_employee_id.ed0522eb.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_full_name": {
+   "file": "agile_curator_full_name.33b7094e.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_full_name_main": {
+   "file": "agile_curator_full_name_main.3ad8f1d7.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "String (nullable)"
+  },
+  "agile_curator_hierarchy_employee_id": {
+   "file": "agile_curator_hierarchy_employee_id.c75bcb5a.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_hierarchy_employee_id_main": {
+   "file": "agile_curator_hierarchy_employee_id_main.3fd0c30c.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_hierarchy_person_id": {
+   "file": "agile_curator_hierarchy_person_id.fe10edb2.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_hierarchy_person_id_main": {
+   "file": "agile_curator_hierarchy_person_id_main.f9e6abd4.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_person_id": {
+   "file": "agile_curator_person_id.1c7ccc76.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "Array (nullable)"
+  },
+  "agile_curator_person_id_main": {
+   "file": "agile_curator_person_id_main.a1ed6cbe.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "UUID (nullable)"
+  },
+  "agile_director_employee_id": {
+   "file": "agile_director_employee_id.2a88c0f6.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "Array (nullable)"
+  },
+  "agile_director_full_name": {
+   "file": "agile_director_full_name.c1e1431a.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "Array (nullable)"
+  },
+  "agile_director_full_name_main": {
+   "file": "agile_director_full_name_main.807ecb1f.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "String (nullable)"
+  },
+  "agile_director_hierarchy_employee_id": {
+   "file": "agile_director_hierarchy_employee_id.bc05b1ab.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "agile_director_hierarchy_person_id": {
+   "file": "agile_director_hierarchy_person_id.8275e023.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "agile_director_hierarchy_person_id_main": {
+   "file": "agile_director_hierarchy_person_id_main.736a5dd3.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "agile_director_person_id": {
+   "file": "agile_director_person_id.c282f59b.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "Array (nullable)"
+  },
+  "agile_director_person_id_main": {
+   "file": "agile_director_person_id_main.03ec9beb.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "UUID (nullable)"
+  },
+  "company_name": {
+   "file": "company_name.a76c5cd4.col",
+   "sha256": "6258805f8edfe05b0efa64ac5b9f42d623ef5b89a47423610ad3c5e70980af74",
+   "type": "String"
+  },
+  "educ.assignment_id": {
+   "file": "educ_assignment_id.7f63a788.col",
+   "sha256": "e219f7c8a6301941b5aa5fffc0894deb6ff1ec6147f58d0cd9dd8a4124790467",
+   "type": "Array (nullable)"
+  },
+  "educ.assignment_status": {
+   "file": "educ_assignment_status.1699eb0a.col",
+   "sha256": "37440e3ea66033ce4d25d256b3c28547d659f7cdd559c5fd3240c1ad41ce6dec",
+   "type": "Array (LowCardinality) (nullable)"
+  },
+  "educ.assignment_type": {
+   "file": "educ_assignment_type.efd6a90e.col",
+   "sha256": "cfb710c7553c8f7dcba30ca1f91006a6bc7d59c146aa4bed65317e1eb35d9b60",
+   "type": "Array (nullable)"
+  },
+  "educ.item_assigned_dt": {
+   "file": "educ_item_assigned_dt.b072f7bd.col",
+   "sha256": "0a042f9444208a1ba548bd696359644b8016245bb11132e23f89a044426be3ed",
+   "type": "Array (nullable)"
+  },
+  "educ.item_completed_dt": {
+   "file": "educ_item_completed_dt.1ad23151.col",
+   "sha256": "0c98c5380b5d8b71f15177456fd16c067f281b54468cc68baa7d81677af5c93f",
+   "type": "Array (nullable)"
+  },
+  "educ.item_duration": {
+   "file": "educ_item_duration.5618869a.col",
+   "sha256": "8f717cf3fe75e9738249298f1d27875096e6a049bc0917dd7026403ada3a68ad",
+   "type": "Array (nullable)"
+  },
+  "educ.item_format_name": {
+   "file": "educ_item_format_name.788d06a2.col",
+   "sha256": "180e2a44d69755b5be4a77a4c2d8d9cbf33c4ebec80826f04430efa876978cf8",
+   "type": "Array (nullable)"
+  },
+  "educ.item_name": {
+   "file": "educ_item_name.716a3fbb.col",
+   "sha256": "89d8c46e1135186d28f33310950c9881622270c39fe61104128a7d8969f17c4c",
+   "type": "Array (nullable)"
+  },
+  "educ.item_type": {
+   "file": "educ_item_type.80d0d8c5.col",
+   "sha256": "e738c596ab392c148ae077706421ee628fa67bd5a6594695dd0a861bdeb6bcb9",
+   "type": "Array (LowCardinality) (nullable)"
+  },
+  "educ.playlist_assigned_dt": {
+   "file": "educ_playlist_assigned_dt.15688bf2.col",
+   "sha256": "0a042f9444208a1ba548bd696359644b8016245bb11132e23f89a044426be3ed",
+   "type": "Array (nullable)"
+  },
+  "educ.playlist_completed_dt": {
+   "file": "educ_playlist_completed_dt.1f3f093d.col",
+   "sha256": "0c98c5380b5d8b71f15177456fd16c067f281b54468cc68baa7d81677af5c93f",
+   "type": "Array (nullable)"
+  },
+  "educ.playlist_deadline_dt": {
+   "file": "educ_playlist_deadline_dt.1ecac3b7.col",
+   "sha256": "62f4c6c038028b3b838f12fee343743f9ff41fd3034a22011f49047444446524",
+   "type": "Array (nullable)"
+  },
+  "educ.playlist_name": {
+   "file": "educ_playlist_name.b4547142.col",
+   "sha256": "89d8c46e1135186d28f33310950c9881622270c39fe61104128a7d8969f17c4c",
+   "type": "Array (nullable)"
+  },
+  "emp_key": {
+   "file": "emp_key.faf81aee.col",
+   "sha256": "4b595b24568d6a728223d77bbc4e6ab281d06ed53b5798bf347cbd4436eadb4a",
+   "type": "Tuple(String, String)"
+  },
+  "fg_director_employee_id": {
+   "file": "fg_director_employee_id.98858fe2.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "Array (nullable)"
+  },
+  "fg_director_employee_id_main": {
+   "file": "fg_director_employee_id_main.4e9c03af.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "String (nullable)"
+  },
+  "fg_director_full_name": {
+   "file": "fg_director_full_name.d904ddc1.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "Array (nullable)"
+  },
+  "fg_director_full_name_main": {
+   "file": "fg_director_full_name_main.5a860643.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "String (nullable)"
+  },
+  "fg_director_hierarchy_employee_id": {
+   "file": "fg_director_hierarchy_employee_id.87682ea1.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "fg_director_hierarchy_employee_id_main": {
+   "file": "fg_director_hierarchy_employee_id_main.6628cf78.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "fg_director_hierarchy_person_id": {
+   "file": "fg_director_hierarchy_person_id.c331f951.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "fg_director_hierarchy_person_id_main": {
+   "file": "fg_director_hierarchy_person_id_main.ab24b7cd.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "fg_director_person_id": {
+   "file": "fg_director_person_id.89847d66.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "Array (nullable)"
+  },
+  "fg_director_person_id_main": {
+   "file": "fg_director_person_id_main.e76d9fd0.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "UUID (nullable)"
+  },
+  "fos_director_employee_id": {
+   "file": "fos_director_employee_id.6d084994.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "Array (nullable)"
+  },
+  "fos_director_employee_id_main": {
+   "file": "fos_director_employee_id_main.490a7ead.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "String (nullable)"
+  },
+  "fos_director_full_name": {
+   "file": "fos_director_full_name.d493f5de.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "Array (nullable)"
+  },
+  "fos_director_full_name_main": {
+   "file": "fos_director_full_name_main.e1682dda.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "String (nullable)"
+  },
+  "fos_director_hierarchy_employee_id": {
+   "file": "fos_director_hierarchy_employee_id.37ea9472.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "fos_director_hierarchy_employee_id_main": {
+   "file": "fos_director_hierarchy_employee_id_main.460f3bfc.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "fos_director_hierarchy_person_id": {
+   "file": "fos_director_hierarchy_person_id.e496f31f.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "fos_director_hierarchy_person_id_main": {
+   "file": "fos_director_hierarchy_person_id_main.6f868208.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "fos_director_person_id": {
+   "file": "fos_director_person_id.b1306019.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "Array (nullable)"
+  },
+  "fos_director_person_id_main": {
+   "file": "fos_director_person_id_main.4bbb0274.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "UUID (nullable)"
+  },
+  "generation": {
+   "file": "generation.cd738ebd.col",
+   "sha256": "92e0c16c3ed145af699c279463065e5084e443f6c9892b61e2339a89f4bdd970",
+   "type": "String (nullable)"
+  },
+  "last_fired_date": {
+   "file": "last_fired_date.c312854f.col",
+   "sha256": "deb3f1d78d566810148d32218c0c6795718dc44f9b3bc3b2897bd3f3c1d59674",
+   "type": "Date32 (nullable)"
+  },
+  "last_hire_date": {
+   "file": "last_hire_date.9ae9f543.col",
+   "sha256": "5b2df2d1566cb00792189131aea86eebc50858698d559857b98b2a5714e263ec",
+   "type": "Date32 (nullable)"
+  },
+  "oshs_curator_employee_id": {
+   "file": "oshs_curator_employee_id.f8419fa7.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "Array (nullable)"
+  },
+  "oshs_curator_employee_id_main": {
+   "file": "oshs_curator_employee_id_main.b67c7b26.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "String (nullable)"
+  },
+  "oshs_curator_full_name": {
+   "file": "oshs_curator_full_name.fbc32c6b.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "Array (nullable)"
+  },
+  "oshs_curator_full_name_main": {
+   "file": "oshs_curator_full_name_main.0bfc7722.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "String (nullable)"
+  },
+  "oshs_curator_hierarchy_employee_id": {
+   "file": "oshs_curator_hierarchy_employee_id.cf3e50c9.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "oshs_curator_hierarchy_employee_id_main": {
+   "file": "oshs_curator_hierarchy_employee_id_main.ae309691.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "oshs_curator_hierarchy_person_id": {
+   "file": "oshs_curator_hierarchy_person_id.625d45e3.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "oshs_curator_hierarchy_person_id_main": {
+   "file": "oshs_curator_hierarchy_person_id_main.667367bb.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "oshs_curator_person_id": {
+   "file": "oshs_curator_person_id.6b6eb363.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "Array (nullable)"
+  },
+  "oshs_curator_person_id_main": {
+   "file": "oshs_curator_person_id_main.49c92310.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "UUID (nullable)"
+  },
+  "oshs_director_employee_id": {
+   "file": "oshs_director_employee_id.23a2e68e.col",
+   "sha256": "4e2d144519c424b9350618eea1863d3fbcaabc8cc63f3f7063d4652762e5714b",
+   "type": "Array (nullable)"
+  },
+  "oshs_director_full_name": {
+   "file": "oshs_director_full_name.b26b67bc.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "Array (nullable)"
+  },
+  "oshs_director_full_name_main": {
+   "file": "oshs_director_full_name_main.759588ab.col",
+   "sha256": "b248ba40eba9bb8c4b53ff2dd5d2879719074eadbc040989513926faaa86904e",
+   "type": "String (nullable)"
+  },
+  "oshs_director_hierarchy_employee_id": {
+   "file": "oshs_director_hierarchy_employee_id.74703141.col",
+   "sha256": "25a119556a2947ae616d84fbedadd6db32a5cbf741fa83bf95eda1047a0c387e",
+   "type": "Array (nullable)"
+  },
+  "oshs_director_hierarchy_person_id": {
+   "file": "oshs_director_hierarchy_person_id.9d005c4c.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "oshs_director_hierarchy_person_id_main": {
+   "file": "oshs_director_hierarchy_person_id_main.b9a48871.col",
+   "sha256": "8f71dce198b97b29727362a576122d957a0025c7580737cb3112e0e62d9f721b",
+   "type": "Array (nullable)"
+  },
+  "oshs_director_person_id": {
+   "file": "oshs_director_person_id.1a70974c.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "Array (nullable)"
+  },
+  "oshs_director_person_id_main": {
+   "file": "oshs_director_person_id_main.eb734c4d.col",
+   "sha256": "3ca02b0984fdc9ef4a2fe65dda5022ebe798a282e38dad04977aa8346bcc9ed0",
+   "type": "UUID (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "b0b3cc027dd50aaf53aa0bbbcd74c8a88e93c5b4d688667e5b3c0d035f5c99fe",
+   "type": "UUID"
+  }
+ },
+ "rows": 2917
+}

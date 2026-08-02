@@ -1,0 +1,75 @@
+{
+ "columns": {
+  "cognitive_features_group_score": {
+   "file": "cognitive_features_group_score.e235f5ee.col",
+   "sha256": "d50e6ea61d267d3af5556cb7b558fd24102efcf16750fbd906b675e9b6e01b6c",
+   "type": "UInt8 (nullable)"
+  },
+  "company": {
+   "file": "company.71b21161.col",
+   "sha256": "50546d8a06dedc9ceda5e9575e9e5f6d71f0647bb927222e38befed9a34fc111",
+   "type": "String (LowCardinality)"
+  },
+  "employee_full_name": {
+   "file": "employee_full_name.726b8b02.col",
+   "sha256": "2a4954ba9cf4fa7e3c635c04e1d451fcff9a9a052ffd5435701c4dd8f6239cd8",
+   "type": "String (nullable)"
+  },
+  "employee_id": {
+   "file": "employee_id.3c2bc72f.col",
+   "sha256": "c1389e0e4f2e8a1fa1d5f62ccb4e3b67ad3e0970ac0e9615f4c168fb643fb90d",
+   "type": "String (nullable)"
+  },
+  "extrinsic_motivation": {
+   "file": "extrinsic_motivation.f06e3a71.col",
+   "sha256": "3d03f2c81e5fa3393cfd0d29e4b482cfd874c2df0ac38d11c4c3335f0db0799d",
+   "type": "Decimal(15, 10) (nullable)"
+  },
+  "influence_scale": {
+   "file": "influence_scale.afa23891.col",
+   "sha256": "0770f3afdf40808c4f305f22406b7cc4fab9bb6c11e54894d6ee7ad609e90b5a",
+   "type": "Decimal(15, 10) (nullable)"
+  },
+  "life_intelligenc": {
+   "file": "life_intelligenc.6ecf6be6.col",
+   "sha256": "6106176d9941f9087833eddb887e9ca719bf403840f9ecd84cd1f22e211db1fb",
+   "type": "Decimal(15, 10) (nullable)"
+  },
+  "management_competency_score": {
+   "file": "management_competency_score.ff6a9aa3.col",
+   "sha256": "e4ad8f3c8430229965e3e97b9835358fe8068cf2d749ee898c46f0f89db97ea3",
+   "type": "UInt8 (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "573751d33d23f7d4cfb7f78957325da08d4118d92b817b20f674bedc59265c4f",
+   "type": "UUID"
+  },
+  "personality_traits_group_score": {
+   "file": "personality_traits_group_score.47c3e2f3.col",
+   "sha256": "4be3d384f3f430dcdb1f8d0bae18333b3f737546b3256666c95f11dcc3e340f0",
+   "type": "UInt8 (nullable)"
+  },
+  "position_id": {
+   "file": "position_id.b7f48358.col",
+   "sha256": "f23388433579eca9b04a540c6e2ad971fba959684216de35fc5d057e79ecb05e",
+   "type": "UInt32 (nullable)"
+  },
+  "reflection": {
+   "file": "reflection.50c0788f.col",
+   "sha256": "6bd9331542dca98d3b91613073bdc4af7ff11f1c2e7a393151cb076820511f99",
+   "type": "Decimal(15, 10) (nullable)"
+  },
+  "soft_skills_competency_score": {
+   "file": "soft_skills_competency_score.f6eabd44.col",
+   "sha256": "03977cd46dc26561fac169388202194ac7742b33d90140edfac04b4db5e18a5e",
+   "type": "UInt8 (nullable)"
+  },
+  "wide_context": {
+   "file": "wide_context.38661fb2.col",
+   "sha256": "8f49828a372dedbe01f05d3ced79cbe1a51d0e88180ddb3b60328b7730c3db99",
+   "type": "Decimal(15, 10) (nullable)"
+  }
+ },
+ "rows": 294000
+}

@@ -1,0 +1,65 @@
+{
+ "columns": {
+  "calc_date": {
+   "file": "calc_date.dff63f25.col",
+   "sha256": "6a0f51ba3668674bd81cf97687c8a920721f29052f326380aa12bbafa8fee82c",
+   "type": "Date"
+  },
+  "expertise_area": {
+   "file": "expertise_area.0179f9eb.col",
+   "sha256": "3397af58ada4bbe63119a895d46533a077c8b0614ce7e73fbd1fdfb1ca5991a2",
+   "type": "String"
+  },
+  "n1_prompting": {
+   "file": "n1_prompting.258f2f9b.col",
+   "sha256": "999bb6733b3578ac1765482ff92af85e3fe94eb64b1a629d30e5a00da49eb9a4",
+   "type": "Int32"
+  },
+  "n2_prompt_engineering": {
+   "file": "n2_prompt_engineering.ddc57838.col",
+   "sha256": "d022e3e1903e35392d3769dd5461d7b8ce1e219b1a09edc6da5c4961f035dc43",
+   "type": "Int32"
+  },
+  "n3_context_managment": {
+   "file": "n3_context_managment.f260fd17.col",
+   "sha256": "94fb3bac1434d8027aea49b365c0e4d007c5a088bc9d9f5530557fea4520dd12",
+   "type": "Int32"
+  },
+  "n4_creating_tools": {
+   "file": "n4_creating_tools.ba7b874e.col",
+   "sha256": "96eb1830b49965a0dd78052b28a4309f845d17009a96becc3cd4f723abe26d9e",
+   "type": "Int32"
+  },
+  "n5_creating_skills": {
+   "file": "n5_creating_skills.d8d02fa1.col",
+   "sha256": "9b522f6e432aa249d6756adaee953b666e2a97d0a64028e00b423276aecd3fe9",
+   "type": "Int32"
+  },
+  "n6_agent_team": {
+   "file": "n6_agent_team.f380a56e.col",
+   "sha256": "564e570072d14a52d4497e4571083cc2ef1943c14e294e43aadca9d21ffddc09",
+   "type": "Int32"
+  },
+  "role_main": {
+   "file": "role_main.8216d5ac.col",
+   "sha256": "40e2bd358d5d6307e375e92fa50e438aa6bd9e6538617bd3e635de89d2ebd18b",
+   "type": "String"
+  },
+  "tn": {
+   "file": "tn.b295c12c.col",
+   "sha256": "a138f6f6bdc46fbc72bdde24776570f5520bb71b022e3a15262eb78ca3178e22",
+   "type": "String"
+  },
+  "use_frequency": {
+   "file": "use_frequency.217b6b74.col",
+   "sha256": "6738e682dcc4b9f5b631fb6f552b13a0acbc4db7f5073844ab35a3fc06f12b75",
+   "type": "String"
+  },
+  "use_mode": {
+   "file": "use_mode.ade8beb6.col",
+   "sha256": "29411369eb2df2bfc60d51213f1702365d99cf00d42aa00cfbc750ed5bf67002",
+   "type": "Int32"
+  }
+ },
+ "rows": 176400
+}

@@ -1,0 +1,65 @@
+{
+ "columns": {
+  "category": {
+   "file": "category.5ccbf9c9.col",
+   "sha256": "763f445c9bd63c7d6066acfd86a271ea26f0b9e53200b8b5d023605c10f55359",
+   "type": "String (nullable)"
+  },
+  "company": {
+   "file": "company.71b21161.col",
+   "sha256": "a9e1bb8870f2e4cd516e8149a40e1de6c3b59502fda52954d042270ab90ac0c7",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "description": {
+   "file": "description.cb329146.col",
+   "sha256": "77bb9fc3a1d61c7dcfc67a0f7d304307a5d7a11afd846f5506b3f4e16325688c",
+   "type": "String (nullable)"
+  },
+  "duration": {
+   "file": "duration.5d3f344b.col",
+   "sha256": "19e8bb513488b2aaa00803486e7b3471d402e9ac1162675db84054d1891e85c0",
+   "type": "Int32 (nullable)"
+  },
+  "item_id": {
+   "file": "item_id.d3c0c71f.col",
+   "sha256": "a822cff2bcd7666191d5ee473cc2ca191a4c963264a76e65257316d9c8bfb1d5",
+   "type": "UUID"
+  },
+  "name": {
+   "file": "name.6ae99955.col",
+   "sha256": "d790803d8ab38558b5278e0125340e2ed6b72d55365bcd33564f6c86cf072fbd",
+   "type": "String (nullable)"
+  },
+  "reaction.person_id": {
+   "file": "reaction_person_id.0630101f.col",
+   "sha256": "42cc1b9a3a01a914c4cf628c5f36f3420921a847fd99b0e9eda9107370318c77",
+   "type": "Array"
+  },
+  "score": {
+   "file": "score.75ebcb36.col",
+   "sha256": "6fb281b4ca0266e49345e20843c07a366bef634e88f8bff4eb1e57dc8800b050",
+   "type": "Float32 (nullable)"
+  },
+  "short_description": {
+   "file": "short_description.b0c93c43.col",
+   "sha256": "cac03cf6af6d2730dabdbc0a6ae209e1e415c4a5a494c73d5bb8a870fefce0e5",
+   "type": "String (nullable)"
+  },
+  "source_system": {
+   "file": "source_system.a8797c4f.col",
+   "sha256": "84ecdcfefa527aab159563848bb05818a6251b5448d0f2966c9e125aec907823",
+   "type": "String (nullable)"
+  },
+  "status": {
+   "file": "status.48a3661d.col",
+   "sha256": "d83542703d151fe4dc94dec23aff54d5930ef78f7b25c12f98d0a020cf74f1aa",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "type": {
+   "file": "type.d0a3e7f8.col",
+   "sha256": "269b4c05c36924bc9085aebff314f4c2c8f02656e8c9fc0f1f034954ae4442ca",
+   "type": "String (LowCardinality) (nullable)"
+  }
+ },
+ "rows": 62
+}

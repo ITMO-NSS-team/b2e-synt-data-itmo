@@ -1,0 +1,25 @@
+{
+ "columns": {
+  "content": {
+   "file": "content.040f06fd.col",
+   "sha256": "70ffc96428627b81c3f4dd06f1da8119ce9827942e1b804c01c048a02439e125",
+   "type": "String"
+  },
+  "extracted_attributes": {
+   "file": "extracted_attributes.e9765891.col",
+   "sha256": "c8dc139eb63c8549ac3900fe2b5e8173553bf04a25063539601c620ecae937a3",
+   "type": "String"
+  },
+  "publication_id": {
+   "file": "publication_id.8aea8363.col",
+   "sha256": "b4cedcd46f3d6683f9066d0b10ca13fba7b867f25e4a0ff98778e8a45b5ab062",
+   "type": "UUID"
+  },
+  "requisition_id": {
+   "file": "requisition_id.53f9ab96.col",
+   "sha256": "02fe2aff7ec181bebdd9ce6aadb217c7d3f60be1fbf1673ea2359308f88d468b",
+   "type": "String"
+  }
+ },
+ "rows": 17640
+}

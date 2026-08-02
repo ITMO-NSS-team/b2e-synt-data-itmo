@@ -193,6 +193,18 @@ def run(root: str | Path, catalog_path: str | Path = "catalog/snapshot.json") ->
               f"{100 * prob.mean():.2f}%")
 
     # --- W7: ссылочная целостность ---------------------------------------
+    # --- W7a: табельный номер адресует ровно одного человека ---------------
+    # Стоит перед всеми проверками, которые ищут человека по номеру, потому что
+    # при совпадении номеров они падают не там, где сломано. Совпадения
+    # появляются только на масштабе: 294000² / (2 · 8999999) ≈ 4800 ожидаемых
+    # против нуля на выборке в 3000, поэтому дефект пережил и гейт, и тесты, и
+    # был найден пересбором полного корпуса.
+    for key, column in (("employee_id", "employee_id"), ("person_id", "person_id")):
+        values = [str(v) for v in t.column(column)]
+        unique = len(set(values))
+        rep.check(f"W7 {key} уникален", values and unique == len(values),
+                  f"{unique}/{len(values)}")
+
     org = snap.table("dm_core.org_structure")
     if "oshs_hrbp_employee_id" in org.available():
         emp_ids = set(str(v) for v in t.column("employee_id"))

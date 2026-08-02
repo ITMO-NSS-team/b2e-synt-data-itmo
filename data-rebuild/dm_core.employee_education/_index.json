@@ -1,0 +1,60 @@
+{
+ "columns": {
+  "assignment_id": {
+   "file": "assignment_id.43c2f5a3.col",
+   "sha256": "483c478bf8270866d2998b06d27f528b26731610a25310b304369af71f546f98",
+   "type": "String (nullable)"
+  },
+  "assignment_status": {
+   "file": "assignment_status.ff0d41f3.col",
+   "sha256": "32c5ab4c0442e0e1ae81489a4b4ee34326133e92af2a1f19ad93903663ad30ed",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "employee_full_name": {
+   "file": "employee_full_name.726b8b02.col",
+   "sha256": "2b4d4c7fd450c9b3adb5607c2d2a2b7f915d4b76f3ebd89d5099c9a30564eb42",
+   "type": "String (nullable)"
+  },
+  "item_assigned_dt": {
+   "file": "item_assigned_dt.40e530a6.col",
+   "sha256": "a04cac98785d4019ee72d0bc3cca3b46c7fbf76e657d75e21f2855e7a9a298eb",
+   "type": "Date32 (nullable)"
+  },
+  "item_completed_dt": {
+   "file": "item_completed_dt.97c69aea.col",
+   "sha256": "d3a504e7e0ce89aa50e0e72772f7ffc238cdf8ba1caab4e585ae4445218d787d",
+   "type": "Date32 (nullable)"
+  },
+  "item_deadline_dt": {
+   "file": "item_deadline_dt.e7de9b2b.col",
+   "sha256": "ca05525bd1a49fa1e1414be9302ff429402546902a3991a241a3bcd804e590a2",
+   "type": "Date32 (nullable)"
+  },
+  "item_format_name": {
+   "file": "item_format_name.21929136.col",
+   "sha256": "f10c5c74a66e30de4456de1c7340a05332b02800292e186abcc28a6502079882",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "item_name": {
+   "file": "item_name.c6ae1260.col",
+   "sha256": "0336b4f71cbd70e7ac96f921a8fff37aed87584c13d4d1e898deb629cc92dbe6",
+   "type": "String (nullable)"
+  },
+  "item_type": {
+   "file": "item_type.a6c7fa28.col",
+   "sha256": "abff8cfe4fda8a59c29093b899cba6b6b3b0732c018e119babeb36e54e0ea9f4",
+   "type": "String (LowCardinality) (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "c84d8e4cf4787e5352998e60ad9c8f84630db0be6c989bbd5ec3cc3cfad0ead7",
+   "type": "UUID"
+  },
+  "playlist_name": {
+   "file": "playlist_name.296eec80.col",
+   "sha256": "66fe644873ee509b97ac14fc3bcc96e1d4d8c061567732d95301638ce6d2780b",
+   "type": "String (nullable)"
+  }
+ },
+ "rows": 1534201
+}

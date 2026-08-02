@@ -1,0 +1,85 @@
+{
+ "columns": {
+  "cognitive_score": {
+   "file": "cognitive_score.c13c8cc3.col",
+   "sha256": "8c08792bf660f31e22b97444fa2c983357e9ea89fa1b192b0e89b068232c2033",
+   "type": "Float64 (nullable)"
+  },
+  "employee_full_name": {
+   "file": "employee_full_name.726b8b02.col",
+   "sha256": "dce01efefef01cd77ff15b5ea8e74fcf881e3270d58b4dc3cc510b7d4a7f857c",
+   "type": "String"
+  },
+  "employee_id": {
+   "file": "employee_id.3c2bc72f.col",
+   "sha256": "fa831c475d522a31f54a307d0cda62204dd989b2442877fe7850a059a5ff42f0",
+   "type": "String"
+  },
+  "grade_level": {
+   "file": "grade_level.76a6e784.col",
+   "sha256": "3d64f4313b05528594268a29ae8689f51410dae1c35f2fb2f53cf55b0ed67fc5",
+   "type": "Float64 (nullable)"
+  },
+  "has_skills": {
+   "file": "has_skills.f9dea6a0.col",
+   "sha256": "7d11437d8dfb564898af53e99ec7988c9b4b965f68fbff96515daca94a7feb96",
+   "type": "Bool"
+  },
+  "influence_scale_score": {
+   "file": "influence_scale_score.e8cf3f85.col",
+   "sha256": "ebfbca39dc0634712db918fb938bc4a122e4a6d71edefae2d8aa8f5c95433ece",
+   "type": "Float64 (nullable)"
+  },
+  "labor_book_company_name": {
+   "file": "labor_book_company_name.f3f46e0c.col",
+   "sha256": "398fb6c56e1c4a7892510501d3638279a9480659655d225be70325e955535f25",
+   "type": "Array"
+  },
+  "life_intelligence_score": {
+   "file": "life_intelligence_score.f681bbb0.col",
+   "sha256": "ada3a7c961375a1216fa8e5cec0fab481f43b80a4800134eccfe7672e2248a43",
+   "type": "Float64 (nullable)"
+  },
+  "management_score": {
+   "file": "management_score.f85fa0c4.col",
+   "sha256": "70e68d01985e817639a517f32a2a10888cf8ea3f6c4e58778ed6e498edd6a193",
+   "type": "Float64 (nullable)"
+  },
+  "motivation_score": {
+   "file": "motivation_score.6f2bd62c.col",
+   "sha256": "2c96b17be1cec566345b66606e3148434b3f351b1078e440d13b4cc4885f33cc",
+   "type": "Float64 (nullable)"
+  },
+  "person_id": {
+   "file": "person_id.5fdaf670.col",
+   "sha256": "8dcc94f993314c8ee2755fb72de963cf4099070a15d8fec34c98f84c96432ced",
+   "type": "UUID"
+  },
+  "personality_score": {
+   "file": "personality_score.0adb1afe.col",
+   "sha256": "f89f63b7f7327cb913946867872e8c96fdd15f4bf43907c7b493287ccb84b71e",
+   "type": "Float64 (nullable)"
+  },
+  "professionlevel_name": {
+   "file": "professionlevel_name.d26a8de7.col",
+   "sha256": "877ca6baf9e6d1c0a71541bd8747ffbe49ffd457ae8db2d9718c496cbd4789e6",
+   "type": "String"
+  },
+  "reflection_score": {
+   "file": "reflection_score.7d15f6a9.col",
+   "sha256": "d8669e668da60d84b488ea9775b1e11997b3ca0de078c650d8f3fbde35f2e560",
+   "type": "Float64 (nullable)"
+  },
+  "soft_skills_score": {
+   "file": "soft_skills_score.f15ab05d.col",
+   "sha256": "ec9a3cced404a7a88817bd204cbf3ff41222d72c6ac24104c9eac32f38c4eea5",
+   "type": "Float64 (nullable)"
+  },
+  "wide_context_score": {
+   "file": "wide_context_score.7fd39307.col",
+   "sha256": "31961958309390d2b270acab6b2fb0aa3ce85717db19122710ff775faf67b7b0",
+   "type": "Float64 (nullable)"
+  }
+ },
+ "rows": 600
+}

@@ -1,0 +1,15 @@
+{
+ "columns": {
+  "requisition_id": {
+   "file": "requisition_id.53f9ab96.col",
+   "sha256": "02fe2aff7ec181bebdd9ce6aadb217c7d3f60be1fbf1673ea2359308f88d468b",
+   "type": "String"
+  },
+  "title": {
+   "file": "title.3c6de1b7.col",
+   "sha256": "4b426499c1a1684ad58cec4003bfc6e78b707b7712488196593363ac964f6617",
+   "type": "String"
+  }
+ },
+ "rows": 17640
+}

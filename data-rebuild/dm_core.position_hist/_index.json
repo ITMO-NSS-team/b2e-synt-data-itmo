@@ -1,0 +1,80 @@
+{
+ "columns": {
+  "city_name": {
+   "file": "city_name.f8c08586.col",
+   "sha256": "b2690e3d1bbcb4c197b82ec04fb2c4f323cad4dc937d9f60673bb215b32943eb",
+   "type": "String (nullable)"
+  },
+  "company": {
+   "file": "company.71b21161.col",
+   "sha256": "f304b03fded113a590984631fddc1beccb1244a8b41b583ae41190e99d7cb7fd",
+   "type": "String (LowCardinality)"
+  },
+  "expertise_area": {
+   "file": "expertise_area.0179f9eb.col",
+   "sha256": "be9e4f9bee3ba3de38f9b9862addd824724697527b0b9ba61daa6303742cee20",
+   "type": "String (nullable)"
+  },
+  "gosb_name": {
+   "file": "gosb_name.fe794ec7.col",
+   "sha256": "b2690e3d1bbcb4c197b82ec04fb2c4f323cad4dc937d9f60673bb215b32943eb",
+   "type": "String (nullable)"
+  },
+  "intern_flag": {
+   "file": "intern_flag.35de4be6.col",
+   "sha256": "ab3f5d6b202e66895face9e8536f17942fd511147cbcb04f2d83ffc8e5d43aa6",
+   "type": "UInt8 (nullable)"
+  },
+  "oshs_unit_id": {
+   "file": "oshs_unit_id.6b4a6ec9.col",
+   "sha256": "58f57a40d6341469d8e4366fa0caac5cba50b3e1d20ed22e2e0296db0981efde",
+   "type": "UInt32 (nullable)"
+  },
+  "oshs_unit_name": {
+   "file": "oshs_unit_name.f67d86cd.col",
+   "sha256": "258e7731653459a30bcd5548600344cfa4eafb1624c0751c923c84cc9adc1000",
+   "type": "String (nullable)"
+  },
+  "pos_grade_num": {
+   "file": "pos_grade_num.e4bb51d6.col",
+   "sha256": "3b3653ad6627e11ebe3058ef8552222171fae24b7c4ebde46ad97042685fe945",
+   "type": "UInt32 (nullable)"
+  },
+  "position_free": {
+   "file": "position_free.59bd9f0f.col",
+   "sha256": "cd9dba418b5df0b33f3592cc9e4c070d84844d59fde5a0e8779c00b6b9e53953",
+   "type": "Float32"
+  },
+  "position_id": {
+   "file": "position_id.b7f48358.col",
+   "sha256": "0d1d8390e3f027bb8597c45ccc964ab9271f050b4a4142b4d67672d31246f15f",
+   "type": "UInt32"
+  },
+  "position_name": {
+   "file": "position_name.94b556b2.col",
+   "sha256": "8c93aa32bc94732f28adebc004d3261c96042d230d0ea98db2c73a2c960ef3e1",
+   "type": "String (nullable)"
+  },
+  "type_position_id": {
+   "file": "type_position_id.96c68727.col",
+   "sha256": "4a4e08ea78fb2223fd4d6d64d08db5217ec83b8223c9a764876ac8402f7ee881",
+   "type": "UInt32 (nullable)"
+  },
+  "unit_b2c_name": {
+   "file": "unit_b2c_name.ba9925db.col",
+   "sha256": "258e7731653459a30bcd5548600344cfa4eafb1624c0751c923c84cc9adc1000",
+   "type": "String (nullable)"
+  },
+  "vacancy": {
+   "file": "vacancy.e75cb533.col",
+   "sha256": "3f0707942ca266fcd5aa973a3364c2cbee00abbb2d6c40432eeec8066b0b3555",
+   "type": "Float32"
+  },
+  "vacancy_clear_flag": {
+   "file": "vacancy_clear_flag.1fa6f696.col",
+   "sha256": "776cd9693073e1fe168ca39e758bc46d1a9e272bbd46e7c9c014d77d13e835b9",
+   "type": "UInt8"
+  }
+ },
+ "rows": 316050
+}
