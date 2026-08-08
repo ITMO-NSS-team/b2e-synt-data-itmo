@@ -42,7 +42,17 @@ TOKEN = os.environ.get("HEIMDALL_TOKEN", "")
 CHANNEL = os.environ.get("HEIMDALL_CHANNEL", "v2")
 EMPLOYEE_ID = os.environ.get("HEIMDALL_EMPLOYEE_ID", "")
 TRACE_LOG = os.environ.get("HR_TRACE_LOG", "")
+#: Контекст корневого спана хода в формате W3C, если агент его передал. Мост
+#: ничего с ним не делает — только кладёт в журнал, чтобы записи можно было
+#: пришить к тому ходу, который их вызвал.
+TRACEPARENT = os.environ.get("TRACEPARENT", "")
 TIMEOUT = float(os.environ.get("HEIMDALL_TIMEOUT", "60"))
+
+#: Что именно ушло в сеть при последнем вызове. Отдельно от возврата ``_http``,
+#: потому что путь собирается внутри ``_dispatch`` и до журнала иначе не
+#: доезжает. Одна запись на процесс безопасна: мост читает stdin построчно и
+#: обрабатывает ровно один запрос за раз.
+_LAST_REQUEST = {"method": "", "path": ""}
 
 _STR = {"type": "string"}
 
@@ -249,6 +259,8 @@ def _headers() -> dict[str, str]:
 def _http(method: str, path: str, *, params: dict | None = None,
           body: dict | None = None) -> tuple[int, dict]:
     """Один HTTP-вызов. Доменная ошибка — не исключение, а такой же ответ."""
+    _LAST_REQUEST["method"] = method
+    _LAST_REQUEST["path"] = path
     url = BASE_URL + path
     if params:
         clean = {k: v for k, v in params.items() if v not in (None, "")}
@@ -292,8 +304,18 @@ def _dispatch(tool: str, args: dict) -> tuple[int, dict]:
     raise KeyError(tool)
 
 
-def _log(tool: str, args: dict, status: int, payload: dict, elapsed_ms: float) -> None:
-    """Журнал вызовов: источник трейса, не зависящий от того, что скажет агент."""
+def _log(tool: str, args: dict, status: int, payload: dict, elapsed_ms: float,
+         ts_start: float) -> None:
+    """Журнал вызовов: источник трейса, не зависящий от того, что скажет агент.
+
+    Из этих записей на стороне агента собираются спаны ``heimdall.*``: сам вызов
+    происходит здесь, в подпроцессе, и измерить его больше негде. Поэтому в
+    записи есть и длительность, и ``ts_start`` — длительность без точки отсчёта
+    некуда положить на шкалу времени, а именно шкала и нужна.
+
+    ``traceparent`` берётся из окружения: агент кладёт туда контекст корневого
+    спана хода, и это единственная связь между вызовом здесь и ходом там.
+    """
     if not TRACE_LOG:
         return
     record = {
@@ -304,6 +326,10 @@ def _log(tool: str, args: dict, status: int, payload: dict, elapsed_ms: float) -
         "code": payload.get("code") if isinstance(payload, dict) else None,
         "rows": len(payload.get("data", [])) if isinstance(payload, dict) else None,
         "bytes": len(json.dumps(payload, ensure_ascii=False)),
+        "ts_start": round(ts_start, 6),
+        "method": _LAST_REQUEST["method"],
+        "path": _LAST_REQUEST["path"],
+        "traceparent": TRACEPARENT,
     }
     try:
         with open(TRACE_LOG, "a", encoding="utf-8") as handle:
@@ -347,8 +373,10 @@ def handle(request: dict) -> dict | None:
                           f"неизвестный инструмент {tool}; доступны "
                           f"{', '.join(sorted(TOOL_INDEX))}")
         started = time.monotonic()
+        wall_started = time.time()
         status, payload = _dispatch(tool, args)
-        _log(tool, args, status, payload, (time.monotonic() - started) * 1000)
+        _log(tool, args, status, payload, (time.monotonic() - started) * 1000,
+             wall_started)
         return _result(request_id, {
             "content": [{"type": "text",
                          "text": json.dumps(payload, ensure_ascii=False)}],
