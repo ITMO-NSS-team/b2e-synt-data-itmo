@@ -232,6 +232,18 @@ def record_llm_result(
     set_io(span, output_value=output_messages)
 
 
+def _describe_tool(span: Span, name: str, description: str,
+                   parameters: dict[str, Any] | None,
+                   tool_call_id: str | None) -> None:
+    span.set_attribute(SPAN_KIND, OpenInferenceSpanKindValues.TOOL.value)
+    span.set_attribute(SpanAttributes.TOOL_NAME, name)
+    set_attr(span, SpanAttributes.TOOL_DESCRIPTION, description)
+    set_attr(span, SpanAttributes.TOOL_PARAMETERS, parameters)
+    if tool_call_id:
+        span.set_attribute(ToolCallAttributes.TOOL_CALL_ID, tool_call_id)
+    set_io(span, input_value=parameters)
+
+
 @contextmanager
 def start_tool(
     name: str,
@@ -241,14 +253,51 @@ def start_tool(
     tool_call_id: str | None = None,
 ) -> Iterator[Span]:
     with get_tracer().start_as_current_span(f"tool.{name}") as span:
-        span.set_attribute(SPAN_KIND, OpenInferenceSpanKindValues.TOOL.value)
-        span.set_attribute(SpanAttributes.TOOL_NAME, name)
-        set_attr(span, SpanAttributes.TOOL_DESCRIPTION, description)
-        set_attr(span, SpanAttributes.TOOL_PARAMETERS, parameters)
-        if tool_call_id:
-            span.set_attribute(ToolCallAttributes.TOOL_CALL_ID, tool_call_id)
-        set_io(span, input_value=parameters)
+        _describe_tool(span, name, description, parameters, tool_call_id)
         yield span
+
+
+def open_tool_span(
+    name: str,
+    *,
+    parent: Span,
+    description: str = "",
+    parameters: dict[str, Any] | None = None,
+    tool_call_id: str | None = None,
+) -> Span:
+    """A TOOL span opened now and closed later, explicitly parented.
+
+    The context-manager form cannot be used where a tool starts and ends in
+    different callbacks — which is every tool run by an out-of-process harness,
+    where the only evidence of the call is two events arriving on a stream.
+
+    ``parent`` is passed as a context rather than taken from the ambient one on
+    purpose: the events are read on the thread draining the CLI's stdout, and
+    OTel's current-span context is thread-local. Relying on the ambient context
+    there produces spans in a brand-new trace, which looks like a working
+    instrumentation right up until you try to read a turn.
+    """
+    ctx = trace.set_span_in_context(parent)
+    span = get_tracer().start_span(f"tool.{name}", context=ctx)
+    _describe_tool(span, name, description, parameters, tool_call_id)
+    return span
+
+
+def close_tool_span(span: Span, *, output: Any = None,
+                    unfinished: bool = False) -> None:
+    """End a span opened by :func:`open_tool_span`.
+
+    ``unfinished`` marks a tool whose result never arrived — the turn timed out
+    or the CLI died mid-call. The span is still closed rather than dropped: a
+    hanging call is the one you most need to see, and a missing span is
+    indistinguishable from a call that never happened.
+    """
+    if output is not None:
+        set_io(span, output_value=output)
+    if unfinished:
+        span.set_attribute("b2e.tool.unfinished", True)
+        span.set_status(Status(StatusCode.ERROR, "no tool_result before the turn ended"))
+    span.end()
 
 
 @contextmanager
@@ -319,6 +368,19 @@ def record_skill_execution(
         span.set_attribute("b2e.sandbox.peak_rss_kb", int(peak_rss_kb))
     if rejected_imports:
         set_attr(span, "b2e.sandbox.rejected_imports", rejected_imports)
+
+
+def current_traceparent() -> str | None:
+    """The current span as a W3C ``traceparent``, for handing to a subprocess.
+
+    Version 00, sampled flag always 01: this environment does not sample — a
+    sampled trace is not a comparable one — so a subprocess is never told to
+    drop what it records.
+    """
+    ctx = trace.get_current_span().get_span_context()
+    if not ctx or not ctx.trace_id or not ctx.span_id:
+        return None
+    return f"00-{format(ctx.trace_id, '032x')}-{format(ctx.span_id, '016x')}-01"
 
 
 def current_trace_id() -> str | None:

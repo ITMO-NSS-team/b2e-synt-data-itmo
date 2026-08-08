@@ -73,18 +73,26 @@ channel that actually exists.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+from opentelemetry import trace
+from opentelemetry.trace import Span, Status, StatusCode
+
 from sim import telemetry
 from sim.agent.config import AgentConfig
+
+logger = logging.getLogger("b2e.claude_code")
 
 #: Never available to the agent, regardless of anything else.
 #:
@@ -280,6 +288,10 @@ class ClaudeCodeResult:
     is_error: bool = False
     error: str = ""
     stream_path: str | None = None
+    #: What the MCP bridge journalled about its own HTTP calls, one dict per
+    #: call. The only measurement of the Heimdall layer that exists: the request
+    #: is made in the bridge's process, so nothing here is inside it.
+    bridge_calls: list[dict[str, Any]] = field(default_factory=list)
     #: A resume was attempted and did not take, so this turn ran without the
     #: history it was supposed to have. Surfaced on the span because an answer
     #: that silently lost its context looks, from the outside, like an agent
@@ -287,8 +299,22 @@ class ClaudeCodeResult:
     resumed_failed: bool = False
 
     @property
+    def prompt_tokens(self) -> int:
+        """Everything the model read, cached prefix included.
+
+        ``usage.input_tokens`` is only the part that was *not* served from the
+        prompt cache. On this stack the system prompt, the tool schemas and the
+        transcript are all cached, so a real turn reports something like
+        ``input_tokens=30`` beside ``cache_read_input_tokens=24807`` — and
+        reporting the 30 as the prompt size understates it by three orders of
+        magnitude. Cost differs between the two (a cache read is cheaper), which
+        is why they are also recorded separately on the span.
+        """
+        return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
+
+    @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
+        return self.prompt_tokens + self.output_tokens
 
     @property
     def heimdall_calls(self) -> int:
@@ -347,7 +373,8 @@ class ClaudeCodeHarness:
     # ------------------------------------------------------------- assembly
 
     def mcp_config(self, employee_id: str,
-                   config: AgentConfig | None = None) -> dict[str, Any]:
+                   config: AgentConfig | None = None,
+                   trace_log: str | None = None) -> dict[str, Any]:
         """One stdio MCP server, carrying the acting identity and the subset.
 
         The identity is per-session and travels in the server's environment, so
@@ -370,6 +397,16 @@ class ClaudeCodeHarness:
             prefix = f"mcp__{MCP_SERVER_NAME}__"
             env["HEIMDALL_TOOL_SUBSET"] = ",".join(
                 t.removeprefix(prefix) for t in self.granted_heimdall_tools(config))
+        if trace_log:
+            # The bridge makes the HTTP call in its own process, where nothing
+            # of ours is watching. It has always been able to journal what it
+            # did; until 2026-08-08 nobody switched it on, so the Heimdall layer
+            # of every trace was simply absent. The traceparent is the only
+            # thread tying those records back to the turn that caused them.
+            env["HR_TRACE_LOG"] = trace_log
+            traceparent = telemetry.current_traceparent()
+            if traceparent:
+                env["TRACEPARENT"] = traceparent
         return {
             "mcpServers": {
                 MCP_SERVER_NAME: {
@@ -538,7 +575,12 @@ class ClaudeCodeHarness:
                        or tempfile.mkdtemp(prefix="b2e-session-"))
         workdir.mkdir(parents=True, exist_ok=True)
         mcp_path = workdir / "mcp.json"
-        mcp_path.write_text(json.dumps(self.mcp_config(employee_id, config)), "utf-8")
+        # Per turn, not per workdir: a resumable session comes back to the same
+        # directory, and a shared log would make turn two re-emit turn one's
+        # calls as if they had just happened.
+        bridge_log = workdir / f"heimdall-{uuid.uuid4().hex[:16]}.jsonl"
+        mcp_path.write_text(
+            json.dumps(self.mcp_config(employee_id, config, str(bridge_log))), "utf-8")
 
         if config.conversation_mode != "resume":
             resume_session_id = None
@@ -564,10 +606,17 @@ class ClaudeCodeHarness:
                 result.error = (f"resume of {resume_session_id} failed; "
                                 f"continued in a new session without history")
 
+        result.bridge_calls = _read_bridge_log(bridge_log)
+
         # The MCP config carries the Heimdall bearer token; it does not outlive
         # the turn. The workdir itself does, when the session is resumable —
         # that is where the transcript lives.
         mcp_path.unlink(missing_ok=True)
+        # The bridge log is kept on exactly the same terms as the raw stream:
+        # for experiment turns, where re-deriving a measurement later is the
+        # point, and for nothing else.
+        if not keep_stream:
+            bridge_log.unlink(missing_ok=True)
         if self.workdir is None and persistent is None:
             shutil.rmtree(workdir, ignore_errors=True)
         return result
@@ -656,6 +705,31 @@ class ClaudeCodeHarness:
             result.is_error = True
             result.error = result.error or stderr_text[:2000]
         return result
+
+
+def _read_bridge_log(path: Path) -> list[dict[str, Any]]:
+    """Whatever the bridge managed to journal. Never raises.
+
+    A turn that produced an answer must not be lost because its telemetry file
+    was truncated, unreadable, or never written — the bridge only writes when it
+    is asked to, and a stack running an older bridge simply has none.
+    """
+    try:
+        text = path.read_text("utf-8")
+    except OSError:
+        return []
+    records = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
 
 
 def parse_stream(stdout: str) -> ClaudeCodeResult:
@@ -752,9 +826,293 @@ def _tool_result_text(content: Any) -> str:
     return json.dumps(content, ensure_ascii=False, default=str)
 
 
+@dataclass
+class _OpenCall:
+    """A tool call the CLI has announced but not yet reported a result for."""
+
+    span: Span
+    name: str
+    started: float                      # perf_counter, for durations
+    started_ns: int                     # wall clock, for matching bridge records
+    command: str                        # the Bash command line, when it is one
+
+
+@dataclass
+class _FinishedCall:
+    span: Span
+    name: str
+    started_ns: int
+    ended_ns: int
+    claimed: bool = False
+
+
+def _short_tool(name: str) -> str:
+    """`mcp__heimdall__mcp_query` as the bridge knows it: `mcp_query`."""
+    return str(name or "").removeprefix(f"mcp__{MCP_SERVER_NAME}__")
+
+
+def _bash_command(payload: Any) -> str:
+    if isinstance(payload, dict):
+        return str(payload.get("command") or "")
+    return ""
+
+
+def _emit_sandbox_span(call: "_OpenCall", output: str, *, ended_ns: int) -> None:
+    """A `sandbox.execute` span under a Bash call that ran an approved skill.
+
+    The runner already reports everything the schema asks for — digest, state,
+    wall time, peak RSS, rejected imports — as the JSON it prints on stdout,
+    which is exactly what comes back as the tool result. So there is nothing to
+    plumb: the measurements are already crossing this boundary, and until now
+    they were being dropped on the floor while `telemetry.record_skill_execution`
+    sat unused.
+
+    The span covers the whole Bash call rather than a window derived from
+    ``wall_ms``. The sandbox measured how long the code ran; when it ran inside
+    the call is not something anyone measured, and inventing it would put a
+    fabricated timestamp next to a real one.
+    """
+    payload = _runner_payload(call.command, output)
+    if payload is None:
+        return
+    skill = payload.get("skill") or {}
+    error = payload.get("error") or {}
+    span = telemetry.get_tracer().start_span(
+        "sandbox.execute",
+        context=trace.set_span_in_context(call.span),
+        start_time=call.started_ns)
+    try:
+        telemetry.record_skill_execution(
+            span,
+            skill_name=str(skill.get("name") or ""),
+            skill_hash=str(skill.get("hash") or ""),
+            state=str(skill.get("state") or ""),
+            exit_status=str(error.get("kind") or ("ok" if payload.get("ok") else "error")),
+            wall_ms=float(payload.get("wall_ms") or 0.0),
+            peak_rss_kb=payload.get("peak_rss_kb"),
+            rejected_imports=payload.get("rejected_imports") or None,
+        )
+        telemetry.set_io(span, output_value=payload.get("result"))
+        if not payload.get("ok"):
+            span.set_status(Status(StatusCode.ERROR,
+                                   str(error.get("detail") or "skill run failed")))
+    finally:
+        span.end(end_time=ended_ns)
+
+
+def _runner_payload(command: str, output: str) -> dict[str, Any] | None:
+    """The runner's JSON, or None if this Bash call was not a skill run.
+
+    Both conditions have to hold. `echo` and `pwd` are permitted regardless of
+    the allowlist and their output is not JSON; a JSON-shaped answer from some
+    other command must not be allowed to manufacture a sandbox execution that
+    never happened.
+    """
+    if "/run" not in command and "skills/run" not in command:
+        return None
+    try:
+        payload = json.loads(output)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict) or "ok" not in payload:
+        return None
+    return payload
+
+
+class ToolSpanRecorder:
+    """Opens a TOOL span when the CLI announces a call, closes it on the result.
+
+    The model runs in a subprocess, so nothing in this process is inside the
+    call being measured. What this process does have is the event stream, which
+    announces a ``tool_use`` when the call starts and delivers the matching
+    ``tool_result`` when it ends. Opening the span on the first and closing it
+    on the second is therefore the only timing available without instrumenting
+    the CLI itself — and it is real timing, not a reconstruction.
+
+    Replaying the calls after the subprocess exits, which is what the closing
+    envelope allows and what this code used to do, yields spans that all start
+    and end at the same instant. They look like data and measure nothing.
+
+    Written from the stdout-draining thread and read from the request thread at
+    the end of the turn, so the bookkeeping is under a lock.
+    """
+
+    def __init__(self, root: Span) -> None:
+        self._root = root
+        self._lock = threading.Lock()
+        self._open: dict[str, _OpenCall] = {}
+        self._seen: set[str] = set()
+        #: Closed tool spans, in the order they closed, kept so the bridge's own
+        #: records can be filed under the call that caused them.
+        self._finished: list[_FinishedCall] = []
+        self._tool_time_s = 0.0
+
+    # ------------------------------------------------------------- writing
+
+    def observe(self, event: dict[str, Any]) -> None:
+        """Fold one stream-json event into the open spans. Never raises.
+
+        This runs on the thread reading the CLI's stdout: an exception here
+        would abort the drain loop and lose the turn, so a telemetry defect
+        must never be able to take the answer down with it.
+        """
+        try:
+            kind = event.get("type")
+            if kind == "assistant":
+                for block in (event.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        self._open_call(block)
+            elif kind == "user":
+                for block in (event.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        self._close_call(block)
+        except Exception:                                    # pragma: no cover
+            logger.debug("tool span recorder skipped an event", exc_info=True)
+
+    def _open_call(self, block: dict[str, Any]) -> None:
+        call_id = str(block.get("id") or "")
+        name = str(block.get("name") or "unknown")
+        span = telemetry.open_tool_span(
+            name, parent=self._root, parameters=block.get("input"),
+            tool_call_id=call_id or None)
+        with self._lock:
+            self._open[call_id] = _OpenCall(
+                span=span, name=name, started=time.perf_counter(),
+                started_ns=time.time_ns(), command=_bash_command(block.get("input")))
+            if call_id:
+                self._seen.add(call_id)
+
+    def _close_call(self, block: dict[str, Any]) -> None:
+        call_id = str(block.get("tool_use_id") or "")
+        with self._lock:
+            call = self._open.pop(call_id, None)
+        if call is None:
+            return
+        output = _tool_result_text(block.get("content"))
+        ended_ns = time.time_ns()
+        with self._lock:
+            self._tool_time_s += time.perf_counter() - call.started
+            self._finished.append(_FinishedCall(
+                span=call.span, name=call.name,
+                started_ns=call.started_ns, ended_ns=ended_ns))
+        # Nested before the parent closes, so the sandbox span is filed under
+        # the tool call rather than beside it.
+        _emit_sandbox_span(call, output, ended_ns=ended_ns)
+        telemetry.close_tool_span(call.span, output=output)
+
+    def finish(self) -> None:
+        """Close whatever the turn left open. Safe to call more than once."""
+        with self._lock:
+            stragglers = list(self._open.values())
+            self._open.clear()
+        for call in stragglers:
+            ended_ns = time.time_ns()
+            with self._lock:
+                self._tool_time_s += time.perf_counter() - call.started
+                self._finished.append(_FinishedCall(
+                    span=call.span, name=call.name,
+                    started_ns=call.started_ns, ended_ns=ended_ns))
+            telemetry.close_tool_span(call.span, unfinished=True)
+
+    # ------------------------------------------------- bridge correlation
+
+    def claim_for(self, tool: str, ts_start: float) -> Span | None:
+        """The tool span a bridge record belongs to, or None.
+
+        Matched by name and by the record's start falling inside the span's
+        window. Each span is claimed at most once, so paging a mart — the same
+        tool several times in a row — files each HTTP call under its own call
+        rather than collapsing them, which is the number RQ2 is made of.
+
+        Returns None rather than guessing when nothing fits. An HTTP call filed
+        under the wrong tool would be worse than one filed under the turn: the
+        first is invisible, the second is visibly unattributed.
+        """
+        target_ns = int(ts_start * 1e9)
+        with self._lock:
+            for call in self._finished:
+                if call.claimed or _short_tool(call.name) != tool:
+                    continue
+                if call.started_ns <= target_ns <= call.ended_ns:
+                    call.claimed = True
+                    return call.span
+        return None
+
+    # ------------------------------------------------------------- reading
+
+    @property
+    def recorded_ids(self) -> set[str]:
+        with self._lock:
+            return set(self._seen)
+
+    @property
+    def tool_time_ms(self) -> float:
+        """Wall time inside tool calls. Turn duration minus this is the model's
+        share — the split that makes an 81-second average actionable."""
+        with self._lock:
+            return round(self._tool_time_s * 1000, 3)
+
+
+def _emit_heimdall_span(record: dict[str, Any], *, root: Span,
+                        recorder: "ToolSpanRecorder | None") -> None:
+    """One `heimdall.*` CHAIN span from one line the bridge journalled.
+
+    This is a replay, which stage 1 removed for tool spans — and the difference
+    is the whole point. A replayed tool span had no measurement behind it. These
+    timings were taken inside the bridge, around the request itself; the file
+    only transports them. Start and end are set explicitly from the record, so
+    the span sits where the call actually happened.
+    """
+    try:
+        tool = str(record.get("tool") or "")
+        ts_start = float(record.get("ts_start") or 0.0)
+        duration_ms = float(record.get("duration_ms") or 0.0)
+        if not tool or not ts_start:
+            return
+
+        parent = recorder.claim_for(tool, ts_start) if recorder is not None else None
+        start_ns = int(ts_start * 1e9)
+        span = telemetry.get_tracer().start_span(
+            f"heimdall.{tool}",
+            context=trace.set_span_in_context(parent or root),
+            start_time=start_ns)
+        try:
+            span.set_attribute(telemetry.SPAN_KIND,
+                               OpenInferenceSpanKindValues.CHAIN.value)
+            span.set_attribute("b2e.http.method", str(record.get("method") or ""))
+            span.set_attribute("b2e.http.path", str(record.get("path") or ""))
+            span.set_attribute("b2e.heimdall.endpoint", tool)
+            span.set_attribute("b2e.http.status", int(record.get("status") or 0))
+            span.set_attribute("b2e.heimdall.rows", int(record.get("rows") or 0))
+            span.set_attribute("b2e.heimdall.response_bytes",
+                               int(record.get("bytes") or 0))
+            telemetry.set_attr(span, "b2e.heimdall.argument_keys",
+                               record.get("args_keys"))
+            if record.get("code"):
+                span.set_attribute("b2e.heimdall.error_code", str(record["code"]))
+            if parent is None:
+                # Said out loud rather than quietly filed under the turn: an
+                # unattributed call still counts, but it must not be mistaken
+                # for one whose owning tool call was identified.
+                span.set_attribute("b2e.trace.correlation", "unmatched")
+            if int(record.get("status") or 0) >= 400:
+                span.set_status(Status(StatusCode.ERROR,
+                                       f"HTTP {record.get('status')}"))
+        finally:
+            span.end(end_time=start_ns + int(duration_ms * 1e6))
+    except Exception:                                        # pragma: no cover
+        logger.debug("skipped a bridge record", exc_info=True)
+
+
 def emit_spans(result: ClaudeCodeResult, *, root,
-               config: AgentConfig | None = None) -> None:
-    """Attach what the session reported to the current trace."""
+               config: AgentConfig | None = None,
+               recorder: "ToolSpanRecorder | None" = None) -> None:
+    """Attach what the session reported to the current trace.
+
+    ``recorder`` is the live one, when there was one. Tool calls it already
+    timed are skipped here — replaying them would double every count anyone
+    reads off the trace.
+    """
     telemetry.set_io(root, output_value=result.answer)
     if config is not None:
         # Not a ninth fingerprint field: it already travels inside
@@ -768,6 +1126,31 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute("b2e.turn.skill_runs", result.skill_runs)
     root.set_attribute("b2e.turn.cost_usd", round(result.cost_usd, 6))
     root.set_attribute("b2e.harness", "claude_code")
+
+    # Token counts under the standard OpenInference keys — the names every other
+    # tool already understands — rather than bespoke b2e.* ones. Note that these
+    # do NOT reach Phoenix's `llm_token_count_*` columns: it extracts those for
+    # LLM-kind spans only, and this is an AGENT span (verified on a live turn,
+    # see docs/span-schema.md). They are read from `attributes`. Emitting a fake
+    # child LLM span to satisfy the column would invent a model call.
+    #
+    # The session reports these; nothing here estimates. `prompt` counts the
+    # cached prefix — see ClaudeCodeResult.prompt_tokens — with the cache split
+    # kept beside it, because a cache read and a fresh prompt token cost
+    # different money.
+    root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT, result.prompt_tokens)
+    root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, result.output_tokens)
+    root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, result.total_tokens)
+    root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_READ,
+                       result.cache_read_tokens)
+    root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_WRITE,
+                       result.cache_creation_tokens)
+    root.set_attribute("b2e.turn.uncached_prompt_tokens", result.input_tokens)
+    if result.duration_ms:
+        root.set_attribute("b2e.turn.duration_ms", int(result.duration_ms))
+    if recorder is not None:
+        # Wall time inside tools, so model time is turn duration minus this.
+        root.set_attribute("b2e.turn.tool_time_ms", recorder.tool_time_ms)
     if config is not None:
         root.set_attribute("b2e.conversation_mode", config.conversation_mode)
     if result.resumed_failed:
@@ -787,7 +1170,13 @@ def emit_spans(result: ClaudeCodeResult, *, root,
         telemetry.set_attr(root, "b2e.attempted_forbidden_tools",
                            result.attempted_forbidden_tools)
 
+    for record in result.bridge_calls:
+        _emit_heimdall_span(record, root=root, recorder=recorder)
+
+    already = recorder.recorded_ids if recorder is not None else set()
     for call in result.tool_calls:
+        if str(call.get("id") or "") in already:
+            continue
         with telemetry.start_tool(str(call.get("name")),
                                   parameters=call.get("input"),
                                   tool_call_id=call.get("id")) as span:

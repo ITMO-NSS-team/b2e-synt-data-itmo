@@ -442,6 +442,19 @@ def create_app(state: AgentState | None = None) -> FastAPI:
 
         guard = register(CostGuard(budget, experiment_id=job_id))
         _version, base_config = state.load_config("agent_config")
+        # NOTE: needs recalibration, and cannot be recalibrated from the corpus
+        # recorded before 2026-08-08. Until then `guard.record` was fed
+        # `input_tokens`, which excludes the cached prefix, so the stored
+        # per-turn token counts understate what the model read by roughly 25x
+        # and no cache figure was kept anywhere. It now records the true total
+        # (see ClaudeCodeResult.prompt_tokens), which means a batch can pass
+        # this projection and still be stopped mid-run by its own ceiling.
+        #
+        # The one captured turn that does carry cache figures
+        # (tests/test_sim_claude_code.py RESULT_EVENT: 30 fresh + 24 807 cache
+        # read + 12 cache write over 3 iterations) suggests ~8 300 prompt
+        # tokens per call rather than 6 000 — one sample, not a calibration.
+        # Take the number from the first batch run under the new accounting.
         projection = Projection(
             questions=runs,
             expected_calls_per_question=payload.expected_calls_per_question,
@@ -493,7 +506,7 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
     harnesses produce the same span shape — otherwise a study comparing them
     would be comparing trace formats as much as agents.
     """
-    from sim.agent.claude_code import emit_spans
+    from sim.agent.claude_code import ToolSpanRecorder, emit_spans
     from sim.agent.loop import TurnResult
 
     if state.harness is None:
@@ -520,20 +533,39 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         employee_id=session["employee_id"], metadata=metadata, question=question,
     ) as root:
         trace_id = telemetry.current_trace_id()
+        # Opens a TOOL span when the CLI announces a call and closes it when the
+        # result arrives, so the span carries the time the call actually took.
+        # Reconstructing them after the subprocess exits — which is what this
+        # did until 2026-08-08 — gives every tool span a duration of zero.
+        recorder = ToolSpanRecorder(root)
+
+        def observe(event: dict[str, Any]) -> None:
+            """Both consumers of the stream, in the order that matters.
+
+            Progress first: somebody is watching it, and a span export must not
+            sit between the CLI saying what it is doing and the human seeing it.
+            """
+            turn.observe(event)
+            recorder.observe(event)
+
         try:
             outcome = state.harness.run(
                 question=question, config=config, system_prompt=system_prompt,
-                employee_id=session["employee_id"], keep_stream=False,
+                employee_id=session["employee_id"],
+                keep_stream=_keeps_raw_stream(metadata),
                 b2e_session_id=session_id,
                 resume_session_id=session.get("claude_session_id"),
-                on_event=turn.observe)
+                on_event=observe)
         except Exception:
             # A turn that dies without closing its progress leaves every poller
-            # waiting on a "думаю…" that will never advance.
+            # waiting on a "думаю…" that will never advance — and an open tool
+            # span never exported at all.
             turn.finish(failed=True)
+            recorder.finish()
             raise
         turn.finish(failed=outcome.is_error)
-        emit_spans(outcome, root=root, config=config)
+        recorder.finish()
+        emit_spans(outcome, root=root, config=config, recorder=recorder)
 
     # Bound after the turn, not before: the id is what the CLI actually used,
     # which is not always the one we asked it to resume.
@@ -551,7 +583,10 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         iterations=outcome.num_turns,
         tool_calls=len(outcome.tool_calls),
         heimdall_calls=outcome.heimdall_calls,
-        prompt_tokens=outcome.input_tokens,
+        # The cached prefix included: `usage.input_tokens` alone is the uncached
+        # remainder, which on this stack is ~30 tokens beside a ~25 000-token
+        # cached prompt. See ClaudeCodeResult.prompt_tokens.
+        prompt_tokens=outcome.prompt_tokens,
         completion_tokens=outcome.output_tokens,
         cost_usd=outcome.cost_usd,
         stop_reason="error" if outcome.is_error else "end_turn",
@@ -559,6 +594,19 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         errors=([outcome.error] if outcome.error else [])
         + [f"denied:{t}" for t in outcome.attempted_forbidden_tools],
     )
+
+
+def _keeps_raw_stream(metadata: dict[str, Any] | None) -> bool:
+    """Whether this turn's raw event stream is written to the session workdir.
+
+    Kept for experiment turns only. The stream is the sole record from which a
+    turn's timing can be re-derived if the instrumentation is later found to be
+    wrong — and it was found to be wrong once already, which is why this exists.
+    Ordinary conversation turns are not measurements and their streams carry the
+    full transcript, so keeping every one of them would be an unbounded pile of
+    personal data on disk for no research value.
+    """
+    return bool((metadata or {}).get("experiment_id"))
 
 
 def _guard_for(experiment_id: str):
