@@ -35,6 +35,7 @@ from sim.agent.shipped import INTERACTIVE_CONFIG_REF, audit, bootstrap_if_writab
 from sim.agent.store import Store
 from sim.agent.tools import HeimdallTools
 from sim.costguard import (
+    MEASURED_COMPLETION_TOKENS_PER_CALL, MEASURED_PROMPT_TOKENS_PER_CALL,
     Budget, CostCeilingExceeded, CostGuard, KillSwitchEngaged, Projection, register,
 )
 from sim.fingerprint import IncompleteFingerprint, RunFingerprint
@@ -442,24 +443,20 @@ def create_app(state: AgentState | None = None) -> FastAPI:
 
         guard = register(CostGuard(budget, experiment_id=job_id))
         _version, base_config = state.load_config("agent_config")
-        # NOTE: needs recalibration, and cannot be recalibrated from the corpus
-        # recorded before 2026-08-08. Until then `guard.record` was fed
-        # `input_tokens`, which excludes the cached prefix, so the stored
-        # per-turn token counts understate what the model read by roughly 25x
-        # and no cache figure was kept anywhere. It now records the true total
-        # (see ClaudeCodeResult.prompt_tokens), which means a batch can pass
-        # this projection and still be stopped mid-run by its own ceiling.
+        # Measured, not assumed — see the MEASURED_* constants for the sample
+        # they came from. The previous 6 000 / 700 pair was a guess that could
+        # not be checked until per-call token counts existed.
         #
-        # The one captured turn that does carry cache figures
-        # (tests/test_sim_claude_code.py RESULT_EVENT: 30 fresh + 24 807 cache
-        # read + 12 cache write over 3 iterations) suggests ~8 300 prompt
-        # tokens per call rather than 6 000 — one sample, not a calibration.
-        # Take the number from the first batch run under the new accounting.
+        # `expected_calls_per_question` means calls to the model. It is not
+        # `b2e.turn.iterations`, which the CLI counts differently and reports
+        # higher — a 43-iteration turn in the calibration sample made 26 API
+        # calls. A caller who reads the trace and passes the iteration count
+        # will over-project by about half.
         projection = Projection(
             questions=runs,
             expected_calls_per_question=payload.expected_calls_per_question,
-            expected_prompt_tokens_per_call=6000,
-            expected_completion_tokens_per_call=700,
+            expected_prompt_tokens_per_call=MEASURED_PROMPT_TOKENS_PER_CALL,
+            expected_completion_tokens_per_call=MEASURED_COMPLETION_TOKENS_PER_CALL,
             model_id=base_config.model_id)
 
         try:

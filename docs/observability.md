@@ -150,3 +150,49 @@ Two things are **not** verified here and are called out rather than assumed:
    config, not from the API. Anthropic pricing is not exposed per response, so
    any cost number here is a *projection* from configured rates — the cost guard
    documents its own assumption.
+
+---
+
+## 6. Cost calibration, 2026-08-08
+
+The pre-dispatch projection assumed **6 000 prompt tokens per model call**. That
+figure was never checkable: per-call token counts did not exist anywhere, and
+the turn-level number that did exist excluded the cached prefix. With `LLM`
+spans in place it was measured.
+
+**Sample.** 92 model calls over 7 turns, questions from a two-line catalogue
+lookup to an open-ended analytics request, 5 to 26 calls per turn.
+
+| Per call | Measured |
+|---|---|
+| prompt tokens (total) | **25 791** mean, 23 412 median, 40 630 p90, range 12 100 – 51 479 |
+| — of which cache read | 24 178 (**93.7 %** of the prompt) |
+| — of which cache write | 1 605 |
+| — fresh input | 8 |
+| completion tokens | 323 mean, 484 p90 |
+
+The old number was low by 4.3×, and almost the entire prompt is a cache read.
+
+**Why the price model had to change too.** Correcting the token count alone
+would have made the dollar projection wrong in the other direction: a cache read
+bills at a tenth of a fresh input token, so pricing all 25 791 at the base rate
+projects $2.52 for this batch against the $0.6717 it actually cost — 3.75× too
+high, and a gate that refuses affordable work. With cache multipliers
+(read ×0.10, write ×2.00 — the one-hour TTL these sessions report) the same
+projection gives **$0.6672 against a real $0.6717, 0.7 % apart.**
+
+**Operational consequence.** For any batch shape, the dollar projection falls to
+**0.76×** its old value and the token projection rises to **3.90×**. An
+experiment carrying a `max_tokens` ceiling tuned against the old accounting will
+now be refused before dispatch. That is the ceiling finally meaning what it says,
+but it will look like a regression to whoever hits it first.
+
+**One thing to watch.** `expected_calls_per_question` counts calls to the model.
+It is not `b2e.turn.iterations`, which the CLI counts differently and reports
+higher — a 43-iteration turn in this sample made 26 API calls. Reading the
+iteration count off a trace and passing it here over-projects by about half.
+
+Recalibrate from a fresh sample whenever the system prompt, the tool surface or
+the model changes; all three move the cached prefix, which is where the tokens
+are. The constants live in `sim/costguard.py` and
+`tests/test_sim_cost_calibration.py` pins them to this measurement.
