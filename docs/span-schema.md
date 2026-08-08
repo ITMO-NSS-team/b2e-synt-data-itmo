@@ -32,18 +32,70 @@ would make "API calls per answer" unmeasurable.
 
 ### Tree shape per turn
 
+**The shape depends on the harness, and the difference is not cosmetic.** Read
+this before writing any query against the span store.
+
+#### `harness=messages_api` — the in-process loop (`sim/agent/loop.py`)
+
+Anthropic is called from this process, so every layer is visible:
+
 ```
-AGENT  turn                                    ← fingerprint lives here
-├── CHAIN  iteration 1
-│   ├── LLM    messages.create                 ← tokens, model, params
-│   └── TOOL   mcp_query
-│       └── CHAIN  POST /api/v1/mcp/query/     ← status, latency, payloads
-├── CHAIN  iteration 2
-│   ├── LLM    messages.create
-│   └── TOOL   run_skill
+AGENT  b2e.turn                                ← fingerprint lives here
+├── CHAIN  iteration.1
+│   ├── LLM    llm.messages.create             ← tokens, model, params
+│   └── TOOL   tool.mcp_query
+│       └── CHAIN  heimdall.mcp_query          ← status, latency, payloads
+├── CHAIN  iteration.2
+│   ├── LLM    llm.messages.create
+│   └── TOOL   tool.run_skill
 │       └── CHAIN  sandbox execute             ← skill hash, exit, limits
-└── LLM    final answer
+└── LLM    llm.messages.create                 ← final answer
 ```
+
+#### `harness=claude_code` — the default (`sim/agent/claude_code.py`)
+
+The model call happens **inside the Claude Code subprocess**, so there is no
+`LLM` layer and no per-iteration `CHAIN`. Everything else is present, gathered
+from the two subprocesses this stack owns:
+
+```
+AGENT  b2e.turn                                ← fingerprint + turn-level tokens
+├── TOOL   tool.mcp__heimdall__mcp_query       ← real start/end, input, output
+│   └── CHAIN  heimdall.mcp_query              ← status, path, rows, bridge-measured
+├── TOOL   tool.Bash
+│   └── CHAIN  sandbox.execute                 ← skill hash, exit, limits
+└── TOOL   tool.mcp__heimdall__describe_model
+    └── CHAIN  heimdall.describe_model
+```
+
+What is available at each level, and what is not:
+
+| Want | `messages_api` | `claude_code` |
+|---|---|---|
+| per-model-call tokens | `LLM` span | **no** — turn totals only, on the root |
+| prompt / completion text per call | `LLM` span | **no** — only the turn's question and answer |
+| tool latency | `TOOL` span | `TOOL` span, timed live off the event stream |
+| tool input / output | `TOOL` span | `TOOL` span |
+| HTTP status, path, row counts | Heimdall `CHAIN` | Heimdall `CHAIN`, from the bridge's own journal |
+| skill digest, sandbox limits | sandbox `CHAIN` | sandbox `CHAIN`, from the runner's own output |
+| iteration boundaries | `CHAIN iteration.N` | **no** — `b2e.turn.iterations` is the count only |
+
+Where each timing comes from, because they are not the same kind of number:
+
+- **`TOOL`** — opened when the CLI announces `tool_use`, closed on the matching
+  `tool_result` (`ToolSpanRecorder`). Measured live, in this process.
+- **`heimdall.*`** — start and duration both measured *inside the bridge*,
+  around the request, and carried out through its journal. This process only
+  transports them.
+- **`sandbox.execute`** — spans the whole Bash call, with the sandbox's own
+  `b2e.sandbox.wall_ms` as an attribute. The window is the tool call's, because
+  when within that call the code ran is not something anyone measured, and a
+  fabricated timestamp beside a real one is worse than none.
+
+Until 2026-08-08 the `TOOL` spans were replayed after the subprocess exited and
+every one had a duration of zero, and the two `CHAIN` layers did not exist at
+all. **A trace recorded before that date has no tool timing — not imprecise
+timing, none.** Background and remaining work: `docs/subprocess-tracing-plan.md`.
 
 ---
 
@@ -102,6 +154,52 @@ stored: two runs are comparable exactly when their `condition_id` matches.
 = `"session.id"`, `SpanAttributes.USER_ID` = `"user.id"`), which is what makes
 Phoenix group traces into sessions natively instead of needing a bespoke table.
 
+On `harness=claude_code` the root additionally carries the turn's totals, because
+there is no `LLM` span to carry them:
+
+| Attribute | Meaning |
+|---|---|
+| `llm.token_count.prompt` | everything the model read, **cached prefix included** |
+| `llm.token_count.completion` | tokens generated |
+| `llm.token_count.total` | the two above |
+| `llm.token_count.prompt_details.cache_read` | of the prompt, served from cache |
+| `llm.token_count.prompt_details.cache_write` | of the prompt, written to cache |
+| `b2e.turn.uncached_prompt_tokens` | the raw `usage.input_tokens` |
+| `b2e.turn.tool_time_ms` | wall time inside tool calls |
+| `b2e.turn.duration_ms` | turn duration as the CLI measured it |
+| `b2e.turn.iterations` / `.tool_calls` / `.heimdall_calls` / `.skill_runs` / `.cost_usd` | turn counters |
+
+The standard `llm.token_count.*` keys are used rather than bespoke `b2e.*` ones
+because they are the names every other tool already understands.
+
+**They do not populate Phoenix's `llm_token_count_prompt` / `_completion`
+columns, and there is no `span_costs` row.** Verified on a live turn
+(2026-08-08, trace `dfabe77d…`): the attributes are all present and correct,
+those columns are NULL, and `cumulative_llm_token_count_prompt` is 0. Phoenix
+extracts them into columns for `LLM`-kind spans only, and this is an `AGENT`
+span. Read them from `attributes`:
+
+```sql
+select attributes#>>'{llm,token_count,prompt}',
+       attributes#>>'{llm,token_count,prompt_details,cache_read}'
+from spans where span_kind = 'AGENT';
+```
+
+Emitting a synthetic child `LLM` span to satisfy the column would mean inventing
+a model call that never happened, in a schema whose whole argument is that a
+plausible number is worse than a missing one. The columns stay empty.
+
+**`prompt` counts the cached prefix on purpose.** `usage.input_tokens` from the
+CLI is only the part *not* served from cache — a real turn here reports
+`input_tokens=30` beside `cache_read_input_tokens=24807`. Reporting the 30 as
+the prompt size, which is what this stack did until 2026-08-08, understates it
+by three orders of magnitude. The split is kept beside it because a cache read
+and a fresh prompt token do not cost the same.
+
+Model time is `b2e.turn.duration_ms - b2e.turn.tool_time_ms`. It is derived
+rather than stored: storing it would imply this process measured it, and it
+did not.
+
 ### `LLM`
 `llm.model_name`, `llm.provider`, `llm.system`, `llm.invocation_parameters`,
 `llm.input_messages`, `llm.output_messages`, `llm.token_count.prompt`,
@@ -113,12 +211,42 @@ live remaining-budget signal after each tool call. Whether the agent *uses* that
 signal is a switchable strategy, so the trace records the value and
 `b2e.budget_strategy` records whether it was consulted.
 
+**Emitted only on `harness=messages_api`.** On the default harness there are no
+`LLM` spans at all, so neither `b2e.remaining_token_budget` nor per-call prompts
+exist — do not write a query that assumes them.
+
 ### `TOOL`
 `tool.name`, `tool.description`, `tool.parameters`, and on the parent's message
 `message.tool_calls` with `tool_call.function.name` /
 `tool_call.function.arguments`.
 
+On `harness=claude_code`, `tool.name` is the harness-side name the CLI reports
+(`mcp__heimdall__mcp_query`, `Bash`, `ToolSearch`), the span is parented directly
+to the root, and one further attribute may appear: `b2e.tool.unfinished=true`,
+set when the turn ended before the tool returned. Such a span is closed and kept
+rather than dropped — a hanging call is the one most worth seeing, and a missing
+span is indistinguishable from a call that never happened.
+
 ### `CHAIN` (Heimdall HTTP)
+
+Emitted on both harnesses, by different routes. On `messages_api` the call is
+made here and the span wraps it. On `claude_code` the call is made by the MCP
+bridge in its own process, which journals what it did to `HR_TRACE_LOG`; the
+harness reads that back and materialises the span with the bridge's own start
+time and duration.
+
+Each record is filed under the `TOOL` span whose window contains it, matched by
+tool name and claimed at most once — so paging a mart, which is the same tool
+several times over, keeps one HTTP span per call rather than collapsing them.
+A record that matches no tool call is still kept, parented to the turn and
+marked `b2e.trace.correlation="unmatched"`: an unattributed call must still be
+counted, and must not be mistaken for an attributed one.
+
+This is what makes the tool-call-to-HTTP ratio readable from the trace. For the
+2026-08-02..05 corpus, recorded before any of this existed, it was 1:1 —
+established by cross-referencing the emulator's access log (Aug 4: 51 / 51;
+Aug 5: 17 / 17), not by reading a trace.
+
 `b2e.http.method`, `b2e.http.path`, `b2e.http.status`, `b2e.heimdall.endpoint`
 (the logical operation, e.g. `mcp_query`), `b2e.heimdall.error_code` when the
 envelope carries one, `b2e.heimdall.rows`, `b2e.heimdall.columns_requested`,
@@ -135,6 +263,13 @@ number nobody could interpret.
 `b2e.skill.hash` is the SHA-256 actually executed, recorded after the runner
 re-verifies the digest — so a trace proves *which bytes ran*, not which name was
 requested.
+
+On `claude_code` the span is named `sandbox.execute` and is emitted from the
+runner's own stdout JSON, which is the Bash tool result. It appears only when
+the Bash call was a skill run: `echo` and `pwd` are permitted regardless of the
+allowlist, and manufacturing a sandbox span for them would invent executions
+that never happened. `b2e.sandbox.exit_status` carries the runner's refusal kind
+(`not-executable`, `timeout`, `bad-args`) or `ok`.
 
 ---
 
