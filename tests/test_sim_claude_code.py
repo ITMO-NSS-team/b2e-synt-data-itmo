@@ -90,8 +90,13 @@ def test_argv_pins_reproducibility_flags(harness):
     assert "--setting-sources" in argv
     assert argv[argv.index("--setting-sources") + 1] == ""
     assert "--strict-mcp-config" in argv
-    assert "--no-session-persistence" in argv
     assert "--output-format" in joined and "stream-json" in joined
+    # `--no-session-persistence` used to be pinned here. It is deliberately gone:
+    # the transcript it suppressed is the only per-model-call record this stack
+    # can obtain, and what makes a turn independent is the absence of --resume,
+    # not the absence of a file on disk. Verified on the live stack — see
+    # test_a_stateless_turn_starts_cold_without_the_persistence_flag.
+    assert "--resume" not in argv
 
 
 def test_argv_pins_a_non_interactive_permission_mode(harness):
@@ -393,12 +398,15 @@ def test_later_turns_resume_the_bound_session(harness):
 
 def test_a_stateless_config_never_resumes(harness):
     """Defence in depth against a caller passing a stale id: the mode decides,
-    not the presence of an id."""
+    not the presence of an id.
+
+    This is now the *whole* mechanism keeping stateless turns independent, so it
+    matters more than it did when `--no-session-persistence` stood behind it.
+    """
     argv = harness.build_argv("q", config=AgentConfig(), system_suffix="s",
                               mcp_config_path="/tmp/mcp.json",
                               resume_session_id="abc-123")
     assert "--resume" not in argv
-    assert "--no-session-persistence" in argv
 
 
 def test_resumable_sessions_get_a_stable_workdir(harness):

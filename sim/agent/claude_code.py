@@ -41,10 +41,17 @@ Stateless turns and resumable sessions
 --------------------------------------
 Both exist, chosen by ``AgentConfig.conversation_mode``.
 
-``stateless`` keeps ``--no-session-persistence``: every turn starts cold. Batch
-arms must stay here. Turns that share context are not independent samples, and
-per-turn token counts stop being comparable the moment turn *n* pays to re-read
-turns 1..n-1.
+``stateless`` starts every turn cold. Batch arms must stay here. Turns that
+share context are not independent samples, and per-turn token counts stop being
+comparable the moment turn *n* pays to re-read turns 1..n-1.
+
+What enforces that is the absence of ``--resume``, not the absence of a file on
+disk. ``--no-session-persistence`` used to be passed as well and no longer is,
+because the transcript it suppressed is the only per-model-call record this
+stack can get — the model runs in a subprocess and nothing here is on the call
+path. Checked on the live stack before the flag was dropped: two turns in the
+same working directory, persistence on, no ``--resume``, and the second had no
+memory of the first; tool calls and answer matched the flag-on run.
 
 ``resume`` reopens the same headless session with ``--resume <id>``. The model
 sees its own prior tool calls and their results, not a transcript someone
@@ -82,6 +89,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -292,6 +300,12 @@ class ClaudeCodeResult:
     #: call. The only measurement of the Heimdall layer that exists: the request
     #: is made in the bridge's process, so nothing here is inside it.
     bridge_calls: list[dict[str, Any]] = field(default_factory=list)
+    #: One entry per request to Anthropic, read back from the CLI's own session
+    #: transcript. Empty when there was no transcript to read.
+    llm_calls: list["LlmCall"] = field(default_factory=list)
+    #: Why ``llm_calls`` is empty, when it is empty for a reason worth recording:
+    #: ``"missing"`` (no transcript) or ``"format"`` (one this code cannot read).
+    transcript_status: str = ""
     #: A resume was attempted and did not take, so this turn ran without the
     #: history it was supposed to have. Surfaced on the span because an answer
     #: that silently lost its context looks, from the outside, like an agent
@@ -470,15 +484,26 @@ class ClaudeCodeHarness:
             "--verbose",
         ]
 
-        if config.conversation_mode == "resume":
+        if config.conversation_mode == "resume" and resume_session_id:
             # Persistence has to be on for a later turn to have anything to
             # resume. Note the asymmetry: the *first* turn of a conversation
             # looks exactly like a stateless turn except that it leaves a
             # transcript behind, and that transcript is the whole mechanism.
-            if resume_session_id:
-                argv += ["--resume", resume_session_id]
-        else:
-            argv.append("--no-session-persistence")
+            argv += ["--resume", resume_session_id]
+
+        # `--no-session-persistence` used to be passed for stateless turns, and
+        # is not any more. What shares context between turns is `--resume`,
+        # which a stateless turn still never gets; persistence only decides
+        # whether the CLI files a transcript. That transcript is the only record
+        # of the individual model calls — their tokens, their stop reasons —
+        # since the model runs in a subprocess nothing here can instrument.
+        #
+        # Checked on the live stack before the flag was dropped, because the
+        # comparability of every experiment arm rests on it: two turns in the
+        # SAME working directory with persistence on and no --resume, and the
+        # second had no memory of the first ("у меня нет доступа к предыдущим
+        # разговорам"). Tool calls and answers matched the flag-on run.
+        # See docs/subprocess-tracing-plan.md.
 
         argv += [
             # The host user's own settings, hooks and plugins stay out: a run
@@ -569,6 +594,11 @@ class ClaudeCodeHarness:
             on_event: "Callable[[dict[str, Any]], None] | None" = None
             ) -> ClaudeCodeResult:
         suffix = system_prompt + "\n" + self.harness_note(config)
+        # Noted before the CLI starts: a resumed session's transcript holds every
+        # earlier turn too, and only the rows after this instant belong to this
+        # one. A tenth of a second of slack for clock granularity between this
+        # process and the CLI's own stamps.
+        started_at = time.time() - 0.1
 
         persistent = self.session_workdir(config, b2e_session_id)
         workdir = Path(self.workdir or persistent
@@ -607,6 +637,9 @@ class ClaudeCodeHarness:
                                 f"continued in a new session without history")
 
         result.bridge_calls = _read_bridge_log(bridge_log)
+        self._read_transcript(result, since=started_at,
+                              resumable=persistent is not None,
+                              keep=keep_stream)
 
         # The MCP config carries the Heimdall bearer token; it does not outlive
         # the turn. The workdir itself does, when the session is resumable —
@@ -620,6 +653,49 @@ class ClaudeCodeHarness:
         if self.workdir is None and persistent is None:
             shutil.rmtree(workdir, ignore_errors=True)
         return result
+
+    def _read_transcript(self, result: ClaudeCodeResult, *, since: float,
+                         resumable: bool, keep: bool) -> None:
+        """Read this turn's model calls out of the CLI's session transcript.
+
+        A telemetry failure may never cost an answer, so nothing here raises —
+        but nor may it fail silently: a turn with no LLM spans and no reason
+        given is indistinguishable from a turn that called no model at all.
+        ``transcript_status`` carries the reason to the span.
+
+        The file is removed afterwards unless the session is resumable, where it
+        *is* the resume mechanism, or the turn is an experiment, where keeping it
+        is the point.
+        """
+        if not self.claude_home or not result.session_id:
+            return
+        path = find_transcript(self.claude_home, result.session_id)
+        if path is None:
+            result.transcript_status = "missing"
+            return
+        try:
+            result.llm_calls = parse_transcript(path, since=since)
+        except TranscriptFormatError as exc:
+            # Loud, because this is the failure mode that would otherwise look
+            # like data: the CLI's transcript format is undocumented and tied to
+            # the installed version, and when it moves the spans must stop being
+            # produced *visibly*.
+            logger.warning("%s", exc)
+            result.transcript_status = "format"
+        except Exception:                                    # pragma: no cover
+            logger.warning("could not read the session transcript", exc_info=True)
+            result.transcript_status = "unreadable"
+
+        if not resumable and not keep:
+            try:
+                path.unlink(missing_ok=True)
+                # The CLI creates a directory per working directory, and a
+                # stateless turn's working directory is a fresh temp dir that is
+                # about to be removed. Left alone these accumulate one empty
+                # tree per turn, forever.
+                shutil.rmtree(path.parent, ignore_errors=True)
+            except OSError:                                  # pragma: no cover
+                pass
 
     def _invoke(self, question: str, *, config: AgentConfig, system_suffix: str,
                 mcp_path: Path, workdir: Path, resume_session_id: str | None,
@@ -705,6 +781,195 @@ class ClaudeCodeHarness:
             result.is_error = True
             result.error = result.error or stderr_text[:2000]
         return result
+
+
+class TranscriptFormatError(RuntimeError):
+    """The session transcript exists but is not in a shape this code knows.
+
+    Raised rather than returning an empty list, because the two mean opposite
+    things: no calls is a fact about the turn, an unreadable file is a fact
+    about this parser. The format is undocumented and tied to the installed CLI
+    (verified against 2.1.220), so it will eventually change — and when it does
+    it must break something visible rather than quietly produce a turn with no
+    model calls in it.
+    """
+
+
+@dataclass
+class LlmCall:
+    """One request to Anthropic, as the transcript records it."""
+
+    message_id: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    stop_reason: str
+    #: When the response was written down, and when the preceding row was. The
+    #: transcript carries no duration of any kind — see parse_transcript.
+    ended_ns: int
+    started_ns: int
+
+    @property
+    def prompt_tokens(self) -> int:
+        return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
+
+
+def find_transcript(claude_home: str, session_id: str) -> Path | None:
+    """The transcript for one CLI session, or None.
+
+    Searched for by filename rather than by rebuilding the path. The CLI derives
+    its project directory from the working directory by rules this code does not
+    own — slashes and underscores both become dashes, and whatever else it does
+    to other characters is undocumented. The session id *is* the filename, so
+    looking for it survives those rules changing; reimplementing them does not.
+    """
+    root = Path(claude_home) / ".claude" / "projects"
+    if not session_id or not root.is_dir():
+        return None
+    for candidate in root.rglob(f"{session_id}.jsonl"):
+        return candidate
+    return None
+
+
+def _row_epoch(row: dict[str, Any]) -> float:
+    stamp = str(row.get("timestamp") or "")
+    if not stamp:
+        return 0.0
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def parse_transcript(path: Path, *, since: float) -> list[LlmCall]:
+    """The model calls this turn made, in order.
+
+    Rows are grouped by ``message.id``: one API response arrives as several rows
+    — a text block, then a tool_use block — and counting rows would report a
+    turn of 15 calls as 43.
+
+    ``since`` drops everything older. A resumed session appends to one file, so
+    without the cutoff turn two would re-emit turn one's calls and double every
+    token count in the trace.
+
+    On timing: the transcript has **no duration, anywhere**. Checked against a
+    real one for ``ttft``, ``duration``, ``latency``, ``elapsed``, ``_ms`` — zero
+    hits, and ``diagnostics`` is null. So a call's window is taken between two
+    real timestamps, the previous row's and its own, and every span built from
+    it says so. Deriving is honest; presenting the result as a measurement would
+    not be.
+    """
+    try:
+        text = path.read_text("utf-8")
+    except OSError:
+        return []
+
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+
+    calls: dict[str, LlmCall] = {}
+    malformed = 0
+    previous_ns = 0
+    for row in rows:
+        ended = int(_row_epoch(row) * 1e9)
+        if row.get("type") != "assistant":
+            if ended:
+                previous_ns = ended
+            continue
+
+        message = row.get("message")
+        usage = (message or {}).get("usage") if isinstance(message, dict) else None
+        if not isinstance(message, dict) or not isinstance(usage, dict):
+            malformed += 1
+            continue
+        if _row_epoch(row) < since:
+            previous_ns = ended or previous_ns
+            continue
+
+        message_id = str(message.get("id") or "")
+        if not message_id or message_id in calls:
+            continue
+        calls[message_id] = LlmCall(
+            message_id=message_id,
+            model=str(message.get("model") or ""),
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
+            cache_creation_tokens=int(usage.get("cache_creation_input_tokens") or 0),
+            stop_reason=str(message.get("stop_reason") or ""),
+            ended_ns=ended,
+            started_ns=previous_ns or ended,
+        )
+        previous_ns = ended or previous_ns
+
+    # Assistant rows that carried nothing recognisable, and not one that did:
+    # that is a format change, not a quiet turn.
+    if malformed and not calls:
+        raise TranscriptFormatError(
+            f"{path.name}: {malformed} assistant rows, none with message.usage — "
+            f"the transcript format has changed; LLM spans cannot be built")
+    return list(calls.values())
+
+
+def emit_llm_spans(calls: list[LlmCall], *, root: Span) -> None:
+    """One LLM span per API call, under the turn.
+
+    Unlike the AGENT root, these do populate Phoenix's own token columns — that
+    is what an LLM span is for. What they cannot carry is the request itself:
+    the transcript holds the conversation, not the system prompt or the tool
+    schemas, so there is no prompt text to record and none is invented.
+    """
+    for call in calls:
+        span = telemetry.get_tracer().start_span(
+            "llm.messages.create",
+            context=trace.set_span_in_context(root),
+            start_time=call.started_ns)
+        try:
+            span.set_attribute(telemetry.SPAN_KIND,
+                               OpenInferenceSpanKindValues.LLM.value)
+            span.set_attribute(SpanAttributes.LLM_MODEL_NAME, call.model)
+            span.set_attribute(SpanAttributes.LLM_PROVIDER, "anthropic")
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT,
+                               call.prompt_tokens)
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION,
+                               call.output_tokens)
+            span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL,
+                               call.prompt_tokens + call.output_tokens)
+            span.set_attribute(
+                SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_READ,
+                call.cache_read_tokens)
+            span.set_attribute(
+                SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_WRITE,
+                call.cache_creation_tokens)
+            telemetry.set_attr(span, SpanAttributes.LLM_FINISH_REASON,
+                               call.stop_reason)
+            span.set_attribute("b2e.llm.message_id", call.message_id)
+            # Said on every span rather than in a doc somebody may not read:
+            # this window is the gap between two recorded timestamps, not a
+            # timed request.
+            span.set_attribute("b2e.llm.timing", "derived")
+        finally:
+            span.end(end_time=max(call.ended_ns, call.started_ns))
+
+
+def mark_transcript_gap(root: Span, reason: str) -> None:
+    """Record on the turn that its LLM spans are missing, and why.
+
+    A turn with no LLM spans and no explanation is indistinguishable from a turn
+    that made no model calls. This is the attribute that tells them apart.
+    """
+    root.set_attribute("b2e.trace.llm_spans", reason)
 
 
 def _read_bridge_log(path: Path) -> list[dict[str, Any]]:
@@ -1169,6 +1434,10 @@ def emit_spans(result: ClaudeCodeResult, *, root,
                            result.permission_denials)
         telemetry.set_attr(root, "b2e.attempted_forbidden_tools",
                            result.attempted_forbidden_tools)
+
+    emit_llm_spans(result.llm_calls, root=root)
+    if result.transcript_status:
+        mark_transcript_gap(root, result.transcript_status)
 
     for record in result.bridge_calls:
         _emit_heimdall_span(record, root=root, recorder=recorder)

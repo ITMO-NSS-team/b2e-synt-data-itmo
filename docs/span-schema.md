@@ -54,26 +54,30 @@ AGENT  b2e.turn                                ← fingerprint lives here
 
 #### `harness=claude_code` — the default (`sim/agent/claude_code.py`)
 
-The model call happens **inside the Claude Code subprocess**, so there is no
-`LLM` layer and no per-iteration `CHAIN`. Everything else is present, gathered
-from the two subprocesses this stack owns:
+The model call happens **inside the Claude Code subprocess**. Nothing here is on
+that call path — but the CLI writes a session transcript, and every assistant
+entry in it carries `message.usage`. Grouped by `message.id`, those are the API
+calls, one `LLM` span each. Per-iteration `CHAIN` spans remain absent:
 
 ```
-AGENT  b2e.turn                                ← fingerprint + turn-level tokens
+AGENT  b2e.turn                                ← fingerprint + turn-level totals
+├── LLM    llm.messages.create                 ← per-call tokens, model, stop reason
 ├── TOOL   tool.mcp__heimdall__mcp_query       ← real start/end, input, output
 │   └── CHAIN  heimdall.mcp_query              ← status, path, rows, bridge-measured
+├── LLM    llm.messages.create
 ├── TOOL   tool.Bash
 │   └── CHAIN  sandbox.execute                 ← skill hash, exit, limits
-└── TOOL   tool.mcp__heimdall__describe_model
-    └── CHAIN  heimdall.describe_model
+└── LLM    llm.messages.create                 ← stop_reason=end_turn
 ```
 
 What is available at each level, and what is not:
 
 | Want | `messages_api` | `claude_code` |
 |---|---|---|
-| per-model-call tokens | `LLM` span | **no** — turn totals only, on the root |
-| prompt / completion text per call | `LLM` span | **no** — only the turn's question and answer |
+| per-model-call tokens | `LLM` span | `LLM` span, from the CLI's session transcript |
+| per-call model, stop reason | `LLM` span | `LLM` span |
+| per-call latency | measured | **derived** — see below |
+| prompt / completion text per call | `LLM` span | **no** — the transcript has no system prompt |
 | tool latency | `TOOL` span | `TOOL` span, timed live off the event stream |
 | tool input / output | `TOOL` span | `TOOL` span |
 | HTTP status, path, row counts | Heimdall `CHAIN` | Heimdall `CHAIN`, from the bridge's own journal |
@@ -91,6 +95,12 @@ Where each timing comes from, because they are not the same kind of number:
   `b2e.sandbox.wall_ms` as an attribute. The window is the tool call's, because
   when within that call the code ran is not something anyone measured, and a
   fabricated timestamp beside a real one is worse than none.
+- **`LLM`** — **derived, and says so.** The transcript carries no duration of any
+  kind (checked: no `ttft`, `duration`, `latency`, `elapsed`, `_ms`; and
+  `diagnostics` is null). The window is the gap between the previous recorded
+  row and the response's own timestamp — two real stamps, but nothing timed the
+  request. Every such span carries `b2e.llm.timing="derived"`. Do not compare it
+  with a `messages_api` `LLM` duration without saying which is which.
 
 Until 2026-08-08 the `TOOL` spans were replayed after the subprocess exited and
 every one had a duration of zero, and the two `CHAIN` layers did not exist at
@@ -154,8 +164,10 @@ stored: two runs are comparable exactly when their `condition_id` matches.
 = `"session.id"`, `SpanAttributes.USER_ID` = `"user.id"`), which is what makes
 Phoenix group traces into sessions natively instead of needing a bespoke table.
 
-On `harness=claude_code` the root additionally carries the turn's totals, because
-there is no `LLM` span to carry them:
+On `harness=claude_code` the root additionally carries the turn's totals. These
+are the CLI's own closing figures, independent of the per-call `LLM` spans
+reconstructed from the transcript — which is what makes them a cross-check
+rather than a duplicate:
 
 | Attribute | Meaning |
 |---|---|
@@ -211,9 +223,22 @@ live remaining-budget signal after each tool call. Whether the agent *uses* that
 signal is a switchable strategy, so the trace records the value and
 `b2e.budget_strategy` records whether it was consulted.
 
-**Emitted only on `harness=messages_api`.** On the default harness there are no
-`LLM` spans at all, so neither `b2e.remaining_token_budget` nor per-call prompts
-exist — do not write a query that assumes them.
+On `harness=claude_code` these spans are reconstructed from the CLI's session
+transcript, so a narrower set is present: model, provider, all five
+`llm.token_count.*` keys, `llm.finish_reason`, plus `b2e.llm.message_id` (the
+Anthropic `msg_…` id) and `b2e.llm.timing="derived"`.
+
+Absent there: `llm.input_messages` / `llm.output_messages`,
+`llm.invocation_parameters`, `llm.system`, and `b2e.remaining_token_budget`. The
+transcript holds the conversation, not the request — no system prompt, no tool
+schemas. Nothing is invented to fill the gap; do not write a query that assumes
+those keys on the default harness.
+
+Unlike the `AGENT` root, these **do** populate Phoenix's own `llm_token_count_*`
+columns and produce `span_costs` rows — verified on a live turn (2026-08-08,
+trace `34b09ef9…`: 11 `LLM` spans, 11 cost rows). The per-call prompt tokens sum
+exactly to the turn total on the root, which is the check that the transcript is
+being read once and not twice.
 
 ### `TOOL`
 `tool.name`, `tool.description`, `tool.parameters`, and on the parent's message

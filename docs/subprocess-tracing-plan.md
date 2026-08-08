@@ -244,17 +244,61 @@ the CLI's own view of a call. This duplicates what stage 1 already gets from the
 stream, does not reach the model call at all, and conflicts with
 `--setting-sources ""`. Listed for completeness; not recommended.
 
+### 4c. The CLI's session transcript — **built 2026-08-08, and this is the answer**
+
+Neither 4a nor 4b, and better than both. Claude Code writes a JSONL transcript
+of each session under `<claude_home>/.claude/projects/<project>/<session>.jsonl`,
+and every assistant row in it carries `message.usage`. Grouped by `message.id`,
+those rows *are* the API calls.
+
+Measured on a real transcript before anything was written: 77 rows, 43 of them
+assistant, **15 distinct `message.id`** — 15 model calls, each with
+`input_tokens`, `output_tokens`, `cache_read_input_tokens`,
+`cache_creation_input_tokens`, `model` and `stop_reason`.
+
+What made it usable was one flag. `--no-session-persistence` suppressed the
+file, and it was passed on every stateless turn — which is every experiment
+turn. Two checks settled whether it could be dropped:
+
+- **Parity.** Same question, with and without the flag: identical tool sequence
+  (`ToolSearch` → `list_models`), identical `turns=3, tools=2, heimdall=1`, same
+  answer.
+- **Context leak.** Persistence on, *same working directory*, no `--resume`, two
+  turns: the second had no memory of the first and said so. **What isolates a
+  turn is the absence of `--resume`, not the absence of a file.**
+
+Both passed, so the flag is gone. What isolates experiment arms is now a single
+mechanism, which makes `test_a_stateless_config_never_resumes` load-bearing.
+
+Verified live afterwards (trace `34b09ef9…`): 11 `LLM` spans on an 11-iteration
+turn, per-call prompt tokens summing exactly to the turn total, Phoenix's own
+token columns populated and 11 `span_costs` rows produced.
+
+Two limits, both stated on the spans themselves:
+
+- **No latency.** The transcript has no duration field of any kind — checked for
+  `ttft`, `duration`, `latency`, `elapsed`, `_ms`; all zero, `diagnostics` null.
+  Durations are derived from the gap between recorded timestamps and every span
+  carries `b2e.llm.timing="derived"`.
+- **No request.** The conversation is there, the system prompt and tool schemas
+  are not. So no per-call prompt text — which is also why this route needs no
+  retention decision.
+
+The format is undocumented and tied to CLI 2.1.220, so `parse_transcript` raises
+`TranscriptFormatError` when a transcript has assistant rows but none it can
+read, and the turn is marked `b2e.trace.llm_spans="format"`. A parser that
+silently returned nothing would recreate the original defect exactly: an absent
+measurement that reads as a measured zero.
+
 ### Recommendation
 
-4a is done and came back negative, so 4b is now the only route to per-call `LLM`
-spans. **It is still not recommended yet.** Stages 2 and 3 are in; the questions
-the corpus exists to answer are mostly calls-per-answer and time-per-answer,
-both of which are now measurable, and turn-level token totals cover the cost
-question. 4b buys per-call resolution at the price of a CA in the agent image, a
-heuristic correlation that must be labelled as one, and a retention decision
-about full prompts.
+**4b is dropped.** 4c gets everything the proxy would have given except true
+per-call latency and the request body, at no infrastructure cost, with exact
+correlation instead of a time heuristic, and without a CA in the agent image or
+full prompts on disk.
 
-Revisit it when a specific question is blocked on per-call data — not before.
+Build 4b only if a question turns up that specifically needs real per-call
+latency or the exact bytes sent. None currently does.
 
 ---
 
@@ -283,7 +327,11 @@ zero.
 | 2 | Heimdall `CHAIN` spans from the bridge log | **done** |
 | 3 | sandbox / skill spans | **done** |
 | 4a | verify what CLI 2.1.220 exports | **done — metrics only, no spans** |
-| 4b | recording egress proxy for `LLM` spans | not started; needs a TLS-interception decision |
+| 4b | recording egress proxy for `LLM` spans | **dropped** — superseded by 4c |
+| 4c | `LLM` spans from the CLI session transcript | **done** |
+
+Every layer the schema describes now exists on the default harness except
+per-iteration `CHAIN` spans, which nothing outside the CLI can observe.
 
 Stage 3 landed cheaper than planned, and the reason is worth recording. The plan
 above proposed a sidecar file from the runner. Reading `deploy/skills-run` showed
