@@ -135,6 +135,40 @@ def _unit_name(gold: GoldLabels, unit_id: int) -> str:
     return str(gold.tree.name[unit_id])
 
 
+def _unambiguous_units(gold: GoldLabels) -> list[int]:
+    """Eligible units whose rendered name names exactly one unit anywhere.
+
+    A question is text, not an id: "«Управление операционных рисков»" is what
+    reaches the agent, and ``reference.evaluate`` scores against exactly one
+    ``unit_id``. If the org tree contains a second unit with that same
+    rendered name, the question has more than one correct answer depending
+    on which unit the agent (reasonably) assumes, and ``evaluate`` computes
+    only one of them — a forced wrong answer regardless of how well the
+    agent queried. On the 800-person test corpus 20 of 163 unit names are
+    shared by 2-3 different unit ids (e.g. "Управление операционных рисков"
+    is units 32, 54 *and* 82), and this is not a rare edge case: cross-
+    evaluating every unit-scoped question this generator produced against
+    every unit sharing its name found ~15-19% of a basket disagreeing across
+    candidates.
+
+    The name-collision count is taken over ``range(len(gold.tree))`` — every
+    unit in the whole tree — deliberately, not over ``_eligible_units()``'s
+    already-filtered list and not over ``set(gold.unit_of)``. This is the
+    third time this module has been bitten by scoping a tree-wide property
+    to a subset: an 8-person unit far too small to ever be drawn still makes
+    an eligible 24-person unit's name ambiguous to the agent reading the
+    question, because the agent has no way to know the small sibling was
+    excluded from the generator's pool. Ambiguity is a property of the name
+    across the *whole* org chart, not of the subset this generator happens
+    to sample from.
+    """
+    name_counts: dict[str, int] = {}
+    for u in range(len(gold.tree)):
+        name = _unit_name(gold, u)
+        name_counts[name] = name_counts.get(name, 0) + 1
+    return [u for u in _eligible_units(gold) if name_counts[_unit_name(gold, u)] == 1]
+
+
 @dataclass(frozen=True, slots=True)
 class GeneratedQuestion:
     id: str
@@ -169,11 +203,16 @@ def _make(seed: int, question_class: str, index: int, text: str, spec: Reference
 
 def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
     """The 180 deterministic questions for one snapshot and one seed."""
-    units = _eligible_units(gold)
+    # Unit-scoped questions draw from the unambiguous pool, not the merely
+    # eligible one: a unit big enough to give a non-degenerate count/median is
+    # still unusable if its rendered name also belongs to another unit
+    # somewhere in the tree, per `_unambiguous_units`'s docstring.
+    units = _unambiguous_units(gold)
     if len(units) < 8:
         raise ValueError(
             f"snapshot has only {len(units)} units with >={_MIN_UNIT_SIZE} "
-            "people; generation needs a larger corpus")
+            "people and an unambiguous name; generation needs a larger "
+            "or more diversely-named corpus")
     people = list(gold.person_id)
     out: list[GeneratedQuestion] = []
 

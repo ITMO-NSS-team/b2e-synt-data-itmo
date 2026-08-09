@@ -96,3 +96,26 @@ def test_all_questions_in_a_basket_have_distinct_text(gold):
         texts = [q.text for q in qgen.generate(gold, seed=seed)]
         duplicates = [t for t in set(texts) if texts.count(t) > 1]
         assert not duplicates, (seed, duplicates[:3])
+
+
+def test_no_question_names_a_unit_whose_name_is_shared(gold):
+    # A question names a unit in prose, not by id — "«Управление операционных
+    # рисков»" is what reaches the agent. If a second unit anywhere in the org
+    # tree renders the same name, the question has more than one correct
+    # answer and `reference.evaluate` computes exactly one of them: a forced
+    # wrong answer no matter how well the agent queried. The name-collision
+    # count below is taken over the whole tree deliberately, not over the
+    # generator's own eligible/unambiguous pools, so this test does not just
+    # re-assert the generator's internal bookkeeping.
+    name_counts: dict[str, int] = {}
+    for u in range(len(gold.tree)):
+        name = str(gold.tree.name[u])
+        name_counts[name] = name_counts.get(name, 0) + 1
+
+    for seed in (1, 2, 7):
+        for q in qgen.generate(gold, seed=seed):
+            for entity in q.entities:
+                if entity.startswith("unit:"):
+                    unit_id = int(entity.split(":", 1)[1])
+                    name = str(gold.tree.name[unit_id])
+                    assert name_counts[name] == 1, (seed, q.id, name)
