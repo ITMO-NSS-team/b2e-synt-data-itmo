@@ -714,6 +714,31 @@ def test_a_perfect_correct_answer_scores_the_full_weight_sum():
     right = CorrectnessResult(correct=True, scored=True, reason="")
 
     got = quality(right, _facts(), median_tokens=20_000, median_seconds=60.0,
-                  presentation=1.0)
+                  presentation=1.0, judge_weight=1.0)
 
     assert got == W_API + W_EFF + W_PRES == 100.0
+
+
+def test_the_judge_contributes_nothing_until_something_validates_it():
+    """The safe default has to be structural, not a convention in a driver.
+
+    ``judge_weight`` existed in ``sim/research/judge.py`` and was never
+    multiplied into anything: ``quality`` took ``presentation`` raw, so a judge
+    that had cleared no gate at all still carried its full 15 points. The
+    default here is zero, so the judge earns its weight by being passed one.
+    """
+    right = CorrectnessResult(correct=True, scored=True, reason="")
+
+    ungated = quality(right, _facts(), median_tokens=20_000, median_seconds=60.0,
+                      presentation=1.0)
+
+    assert ungated == W_API + W_EFF
+    assert ungated < 100.0
+
+
+def test_the_judge_weight_scales_the_presentation_term_it_gates():
+    right = CorrectnessResult(correct=True, scored=True, reason="")
+    kw = dict(median_tokens=20_000, median_seconds=60.0, presentation=1.0)
+
+    assert quality(right, _facts(), judge_weight=1.0, **kw) == 100.0
+    assert quality(right, _facts(), judge_weight=0.0, **kw) == W_API + W_EFF

@@ -403,19 +403,30 @@ def efficiency(facts: TraceFacts, *, median_tokens: float,
 
 def quality(correctness: CorrectnessResult, facts: TraceFacts, *,
             median_tokens: float, median_seconds: float,
-            presentation: float = 0.0) -> float | None:
+            presentation: float = 0.0,
+            judge_weight: float = 0.0) -> float | None:
     """The 0-100 composite, gated on correctness.
 
-    ``presentation`` arrives on 0-1; it is the judge's 0-4 rubric divided by 4,
-    and it is zero whenever the judge has not cleared its kappa gate. Passing it
-    in rather than computing it here keeps this function a pure function of
-    numbers, which is what makes the weights arguable without a rerun.
+    ``presentation`` arrives on 0-1; it is the judge's 0-4 rubric divided by 4.
+    Passing it in rather than computing it here keeps this function a pure
+    function of numbers, which is what makes the weights arguable without a
+    rerun.
+
+    ``judge_weight`` multiplies it, and defaults to **zero**. That default is
+    the whole point: ``sim/research/judge.py`` computes a weight from Cohen's
+    kappa but nothing multiplied it into anything, so a judge that had cleared
+    no gate whatsoever still carried its full 15 points. Making the safe state
+    structural rather than a convention in a driver means the judge contributes
+    nothing until a caller can produce a kappa and pass the resulting weight —
+    and if no such validation exists, the composite is simply free of model
+    judgement, which is what spec §3 claims for it.
     """
     if not correctness.scored:
         return None
     if not correctness.correct:
         return 0.0
+    graded = max(0.0, min(1.0, presentation)) * max(0.0, min(1.0, judge_weight))
     return (W_API * api_validity(facts)
             + W_EFF * efficiency(facts, median_tokens=median_tokens,
                                  median_seconds=median_seconds)
-            + W_PRES * max(0.0, min(1.0, presentation)))
+            + W_PRES * graded)
