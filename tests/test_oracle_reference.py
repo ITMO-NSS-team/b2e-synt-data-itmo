@@ -99,6 +99,36 @@ def test_top_n_returns_ids_in_rank_order(gold):
     assert result.ids == expected
 
 
+def test_top_n_with_n_equal_one_returns_exactly_one_id(gold):
+    unit = _some_unit(gold)
+    spec = ref.ReferenceSpec(
+        op="top_n", field="potential_pct",
+        scope={"unit_id": unit, "recursive": True},
+        predicate=None, n=1, refs=(),
+    )
+    rows = gold.members(unit)
+    order = rows[np.argsort(-gold.potential_pct[rows], kind="stable")][:1]
+    expected = tuple(gold.person_id[int(r)] for r in order)
+
+    result = ref.evaluate(spec, gold)
+
+    assert result.kind == "ids"
+    assert result.ids == expected
+    assert len(result.ids) == 1
+
+
+def test_reference_spec_rejects_n_zero_instead_of_defaulting_to_one():
+    with pytest.raises(ValueError, match="n"):
+        ref.ReferenceSpec(op="top_n", field="potential_pct", scope={},
+                          predicate=None, n=0, refs=())
+
+
+def test_reference_spec_rejects_negative_n_instead_of_slicing_from_the_end():
+    with pytest.raises(ValueError, match="n"):
+        ref.ReferenceSpec(op="top_n", field="potential_pct", scope={},
+                          predicate=None, n=-2, refs=())
+
+
 def test_matches_is_order_sensitive_for_rankings(gold):
     r = ref.Reference(kind="ids", value=None, ids=("a", "b", "c"), verdict=None)
 

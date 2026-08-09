@@ -57,6 +57,20 @@ class ReferenceSpec:
     n: int | None = None
     refs: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        # Validated at construction, not inside evaluate()'s top_n branch,
+        # because a ReferenceSpec is round-tripped through the run record: a
+        # generated question is serialised to JSON and later deserialised
+        # back into a ReferenceSpec to be re-evaluated against a rebuilt
+        # snapshot. Construction is the one point both paths — a fresh spec
+        # from the generator and one rehydrated from JSON — are guaranteed to
+        # pass through, so it is the earliest point that reliably catches a
+        # corrupt n before it can reach a slice expression and misbehave
+        # silently (n=0 truncating to "top 1" via `or 1`; a negative n
+        # reinterpreted as "drop the last k" via Python slice semantics).
+        if self.n is not None and self.n < 1:
+            raise ValueError(f"n must be a positive integer, got {self.n!r}")
+
 
 @dataclass(frozen=True, slots=True)
 class Reference:
@@ -127,7 +141,12 @@ def evaluate(spec: ReferenceSpec, gold: GoldLabels) -> Reference:
         # Stable sort so ties break by row order, which is snapshot order, which
         # is deterministic. An unstable sort would make the reference depend on
         # numpy's build.
-        order = rows[np.argsort(-vals, kind="stable")][: int(spec.n or 1)]
+        # `spec.n` is validated in `ReferenceSpec.__post_init__` to be either
+        # `None` or a positive integer, so the only defaulting left to do here
+        # is None -> 1. `spec.n or 1` would look equivalent but is not: it
+        # relies on Python truthiness, which treats 0 the same as None.
+        limit = spec.n if spec.n is not None else 1
+        order = rows[np.argsort(-vals, kind="stable")][:limit]
         return Reference(kind="ids",
                          ids=tuple(gold.person_id[int(r)] for r in order))
 
