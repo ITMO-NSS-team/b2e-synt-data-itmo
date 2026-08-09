@@ -46,6 +46,30 @@ def test_kappa_is_one_on_perfect_agreement_and_zero_on_chance():
     assert cohen_kappa(chance, truth) == pytest.approx(0.0, abs=1e-9)
 
 
+def test_kappa_raises_when_the_calibration_set_has_no_label_variation():
+    """A homogeneous truth column makes chance-agreement uncomputable.
+
+    Both raters saying "correct" on every item looks like perfect agreement,
+    but with no incorrect examples in the calibration set there is no chance
+    model to correct against — a rubber-stamp judge that always says the same
+    thing would score kappa=1.0 here by construction, not by having
+    demonstrated anything. That must be an error, not a value.
+    """
+    truth = [True] * 20
+    rubber_stamp_judge = [True] * 20
+
+    with pytest.raises(ValueError, match="variation"):
+        cohen_kappa(rubber_stamp_judge, truth)
+
+
+def test_kappa_still_computes_with_only_one_differing_item():
+    """One dissenting label is enough for kappa to be well defined."""
+    truth = [True] * 19 + [False]
+    judge = list(truth)
+
+    assert cohen_kappa(judge, truth) == pytest.approx(1.0)
+
+
 def test_judge_weight_is_zero_below_the_floor():
     assert judge_weight(KAPPA_FLOOR) == 1.0
     assert judge_weight(KAPPA_FLOOR + 0.1) == 1.0

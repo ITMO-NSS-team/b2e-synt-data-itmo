@@ -84,15 +84,39 @@ def score_presentation(client, *, question: str, answer: str,
 
 
 def cohen_kappa(judge: list[bool], truth: list[bool]) -> float:
-    """Agreement beyond chance between the judge and the deterministic label."""
+    """Agreement beyond chance between the judge and the deterministic label.
+
+    Raises rather than returning a number when ``truth`` is a single constant
+    label: kappa corrects observed agreement for the agreement expected by
+    chance, and with no incorrect (or no correct) example in the calibration
+    set there is no variation to build a chance model from. The old code
+    checked this algebraically as ``expected == 1.0`` — true only when both
+    ``truth`` and ``judge`` are the same constant label throughout — but that
+    condition is satisfiable, and when it's satisfied the observed agreement
+    is *always* 1.0 too, so the branch always returned 1.0: a judge that
+    rubber-stamps the majority label on a homogeneous calibration set would
+    clear the kappa gate by construction, never having demonstrated anything.
+    Checking ``truth`` directly for label variation is the same guard stated
+    in terms of the actual defect — a homogeneous calibration set — rather
+    than the algebraic symptom, and it fires even when ``judge`` doesn't
+    happen to match, where the old formula silently computed 0.0 for an
+    equally uninterpretable comparison.
+    """
     n = len(truth)
     if n == 0 or len(judge) != n:
         raise ValueError("judge and truth must be non-empty and the same length")
+    if len(set(truth)) < 2:
+        raise ValueError(
+            "cohen_kappa: the calibration set's truth labels have no "
+            f"variation (every one is {truth[0]!r}) — chance-corrected "
+            "agreement is undefined without both correct and incorrect "
+            "examples to define a chance baseline against. This is a defect "
+            "in the calibration set, not something to catch and paper over: "
+            "rebuild it so both label values are represented."
+        )
     observed = sum(1 for a, b in zip(judge, truth) if a == b) / n
     pj, pt = sum(judge) / n, sum(truth) / n
     expected = pj * pt + (1 - pj) * (1 - pt)
-    if expected == 1.0:
-        return 1.0 if observed == 1.0 else 0.0
     return (observed - expected) / (1 - expected)
 
 
@@ -101,5 +125,15 @@ def judge_weight(kappa: float) -> float:
 
     Binary rather than a smooth taper, so the decision is a pre-registered
     threshold rather than a dial that can be nudged once the arms are in.
+
+    Takes an already-computed kappa, not the raw judge/truth lists, so it is
+    never the thing that decides whether kappa was computable. ``cohen_kappa``
+    raising on a homogeneous calibration set means the caller never obtains a
+    kappa to pass in here at all — the ``ValueError`` propagates before this
+    function is reached, rather than arriving as a value this function would
+    have to recognise as invalid. Nothing here needed to change; the fix
+    belongs entirely to ``cohen_kappa``, and this function staying dumb is
+    what keeps that fix from being bypassable by a caller that calls
+    ``judge_weight`` directly with a smuggled-in 1.0.
     """
     return 1.0 if kappa >= KAPPA_FLOOR else 0.0
