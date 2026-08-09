@@ -549,6 +549,16 @@ class RunConfig:
     #: real cost is worse than no timeout, because the agent finishes the work
     #: anyway and the driver silently re-asks the same question.
     turn_timeout_seconds: float = 1800.0
+    #: Skip the per-turn Phoenix span fetch and score from the agent's own
+    #: summary stats instead. Measured on this deployment: `spans_for_session`
+    #: takes ~20s even for a session that does not exist, because the query
+    #: surface returns a page of spans and filters client-side — and it slows
+    #: further as the run adds spans. Across 810 turns that is hours spent on
+    #: the SECONDARY metrics while the primary one (correctness) needs no spans
+    #: at all. What is lost is per-call detail: HTTP status histogram, error
+    #: codes and over-fetch, so `api_validity` degrades to its neutral value.
+    #: Tokens, Heimdall call count and duration still come from `stats`.
+    skip_spans: bool = False
     curator_model_id: str | None = None
     curator_proxy: dict[str, str] = field(default_factory=dict)
     actor: str = "run_rq4"
@@ -600,7 +610,8 @@ def run(cfg: RunConfig, *, gold: GoldLabels | None = None) -> None:
                                    timeout=cfg.turn_timeout_seconds,
                                    trust_env=False, transport=cfg.transport)
         agent_client = AgentClient(client=http_client, sleep=cfg.retry_sleep)
-        phoenix = cfg.phoenix_override or PhoenixClient(cfg.phoenix_url)
+        phoenix = (None if cfg.skip_spans
+                   else (cfg.phoenix_override or PhoenixClient(cfg.phoenix_url)))
 
     curator_client = build_curator_client(cfg)
 
@@ -727,6 +738,9 @@ def parse_args(argv: list[str] | None = None) -> RunConfig:
     p.add_argument("--registry-db", type=str,
                    default=os.environ.get("B2E_REGISTRY_DB", "registry/registry.db"))
     p.add_argument("--curator-model-id", type=str, default=None)
+    p.add_argument("--skip-spans", action="store_true",
+                   help="score from the agent's summary stats instead of "
+                        "Phoenix spans; much faster, loses per-call detail")
     p.add_argument("--turn-timeout-seconds", type=float, default=1800.0,
                    help="per-turn HTTP ceiling; must exceed the real cost of a "
                         "turn under --concurrency, or the driver re-asks work "
@@ -745,7 +759,8 @@ def parse_args(argv: list[str] | None = None) -> RunConfig:
                      agent_base_url=a.agent_url, phoenix_url=a.phoenix_url,
                      registry_db=a.registry_db, curator_model_id=a.curator_model_id,
                      curator_proxy=proxy,
-                     turn_timeout_seconds=a.turn_timeout_seconds)
+                     turn_timeout_seconds=a.turn_timeout_seconds,
+                     skip_spans=a.skip_spans)
 
 
 def main(argv: list[str] | None = None) -> None:
