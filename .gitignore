@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .pytest-data/
 .pytest-reference/
+.pytest-qgen/
 
 # Корпус данных в репозиторий не кладётся: он детерминирован по seed и
 # пересобирается командой `make data`. Гнать в git гигабайт, который
