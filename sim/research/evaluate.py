@@ -66,7 +66,15 @@ _VALUE_KINDS = frozenset({"number", "boolean"})
 
 @dataclass(frozen=True, slots=True)
 class TraceFacts:
-    """What the spans of one turn say, reduced to the fields scoring needs."""
+    """What the spans of one turn say, reduced to the fields scoring needs.
+
+    The two defaulted fields are additions, and their defaults are chosen so a
+    caller that does not yet populate them is *correct* rather than merely
+    tolerated. ``memory_tokens=0`` describes an arm with no memory block, which
+    subtracts nothing; ``successful_columns=()`` means "no successful call was
+    distinguished", and over-fetch then falls back to comparing every call
+    against the leanest of all of them.
+    """
     http_statuses: tuple[int, ...]
     heimdall_calls: int
     rows_returned: tuple[int, ...]
@@ -76,6 +84,14 @@ class TraceFacts:
     columns_requested: tuple[int, ...]
     tokens: int
     seconds: float
+    #: Prompt tokens contributed by the rendered memory artefact, summed over
+    #: the turn's model calls. Subtracted before the token ratio is formed —
+    #: see ``efficiency``.
+    memory_tokens: int = 0
+    #: Column counts of the calls that both succeeded and returned rows. The
+    #: over-fetch baseline, per spec §3: "the trace's own leanest successful
+    #: query on the same mart".
+    successful_columns: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,18 +322,45 @@ _P_REPEAT = 0.25
 _P_WALK = 0.25
 _P_OVERFETCH = 0.20
 
-#: A query asking for more than this many columns is over-fetching for the
-#: purposes of the metric. The catalogue's widest mart has 642 columns and the
-#: storage is columnar, so a wide select is honestly more expensive — this is a
-#: real cost, not a style rule.
-_WIDE_COLUMNS = 40
+#: How many times wider than the turn's own leanest successful query a call may
+#: be before it counts as over-fetching. Relative rather than absolute, per spec
+#: §3, because the honest baseline is what this trace itself demonstrated the
+#: task needs — a fixed threshold says the same thing about a two-column lookup
+#: and a wide profile page, and the reflection subsystem is specified against
+#: the relative definition, so a fixed one would have the two subsystems
+#: disagreeing about the same trace.
+_OVERFETCH_FACTOR = 3.0
+
+#: Floor under the leanest-query baseline. Without it a turn whose leanest
+#: successful query asked for two columns would flag an ordinary ten-column
+#: query as three-times-greedy, which measures the narrowness of the probe
+#: rather than the width of the fetch. The catalogue's widest mart has 642
+#: columns and the storage is columnar, so the resulting minimum threshold of
+#: 24 columns still describes a genuinely expensive select.
+_LEAN_COLUMNS_FLOOR = 8
+
+
+def _overfetch_threshold(facts: TraceFacts) -> float:
+    """Columns above which a call in this turn is over-fetching.
+
+    Derived from the turn's own leanest *successful* query, so a mistyped
+    two-column probe that 400'd cannot set the baseline: a query that never ran
+    proves nothing about how few columns the job needs. When no successful call
+    is distinguished — the value type's default — every call is used, which is
+    the most conservative reading available from the same data.
+    """
+    lean = facts.successful_columns or facts.columns_requested
+    if not lean:
+        return float("inf")
+    return max(min(lean), _LEAN_COLUMNS_FLOOR) * _OVERFETCH_FACTOR
 
 
 def api_validity(facts: TraceFacts) -> float:
     """1 minus the weighted defect rate of the turn's Heimdall calls."""
     calls = max(int(facts.heimdall_calls), 1)
     errors = sum(1 for s in facts.http_statuses if s >= 400)
-    overfetch = sum(1 for c in facts.columns_requested if c > _WIDE_COLUMNS)
+    threshold = _overfetch_threshold(facts)
+    overfetch = sum(1 for c in facts.columns_requested if c > threshold)
     penalty = (_P_ERROR * errors
                + _P_REPEAT * facts.repeated_calls
                + _P_WALK * facts.pagination_walks
@@ -336,8 +379,23 @@ def efficiency(facts: TraceFacts, *, median_tokens: float,
     experiment needs to see both. Capped at 1.0 rather than rewarded below the
     median, because the cheapest possible turn is one that answers nothing, and
     correctness has already gated this term.
+
+    The token axis is measured on ``tokens - memory_tokens``, not on raw
+    tokens. Memory adds prompt text to every model call by construction — about
+    1200 tokens at a measured 13.1 calls per question — so raw tokens per
+    request charges A2 and A3 for existing, and the 1.0 cap makes the charge
+    one-sided: A1 sits below the pooled class median and forfeits nothing while
+    the memory arms sit above it and are graded down. Measured against a 20 000
+    token median that was 30.0 of 30 points for A1 against 21.4 for A3, an
+    order of magnitude larger than the effect under study and pointing the
+    wrong way.
+
+    The subtraction removes the constant tax and nothing else. The median stays
+    pooled across arms rather than computed per arm, because a per-arm median
+    would also hide a genuine efficiency difference — which is a thing the
+    experiment wants to see.
     """
-    tok = facts.tokens / max(median_tokens, 1.0)
+    tok = max(facts.tokens - facts.memory_tokens, 0) / max(median_tokens, 1.0)
     sec = facts.seconds / max(median_seconds, 1e-6)
     ratio = max(tok, sec)
     return max(0.0, min(1.0, 1.0 / ratio if ratio > 1.0 else 1.0))

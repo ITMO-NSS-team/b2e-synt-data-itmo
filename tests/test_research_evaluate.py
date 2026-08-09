@@ -555,6 +555,56 @@ def test_each_defect_class_lowers_api_validity():
     assert api_validity(_facts(columns_requested=(4, 400))) < clean
 
 
+def test_a_turn_whose_queries_are_all_equally_wide_is_not_over_fetching():
+    """Over-fetch is relative to the trace's own leanest successful query.
+
+    A fixed 40-column threshold is a different definition from the one the
+    spec's reflection subsystem is written against, so the two subsystems would
+    disagree about the same trace. Under the spec's definition a turn that
+    asked for the same columns every time never over-fetched, however wide the
+    mart is — it never demonstrated it could do the job with less.
+    """
+    uniform = _facts(columns_requested=(60, 60, 60), successful_columns=(60, 60, 60),
+                     heimdall_calls=3, http_statuses=(200, 200, 200),
+                     rows_returned=(10, 10, 10))
+
+    assert api_validity(uniform) == 1.0
+
+
+def test_a_single_query_turn_is_not_scored_against_itself():
+    lone = _facts(columns_requested=(200,), successful_columns=(200,),
+                  heimdall_calls=1, http_statuses=(200,), rows_returned=(10,))
+
+    assert api_validity(lone) == 1.0
+
+
+def test_a_query_far_wider_than_the_turns_leanest_one_is_over_fetching():
+    # 30 columns sits under the old fixed threshold of 40 and was therefore
+    # free; it is over-fetch here because the same turn proved five columns
+    # were enough.
+    thrifty_then_greedy = _facts(columns_requested=(5, 30),
+                                 successful_columns=(5, 30))
+
+    assert api_validity(thrifty_then_greedy) < 1.0
+
+
+def test_the_lean_baseline_comes_from_successful_calls_not_from_a_failed_probe():
+    """A query that errored proves nothing about how few columns the job needs.
+
+    Taking the minimum over every call would let a mistyped two-column probe
+    that 400'd set the baseline, and then mark the turn's one honest query as
+    over-fetching for being ten times wider than a query that never ran.
+    """
+    # Identical calls, identical 400 — only the baseline differs, so the 4xx
+    # penalty cancels and what is left is the over-fetch term alone.
+    probe_failed = _facts(columns_requested=(2, 30), successful_columns=(30,),
+                          http_statuses=(400, 200), rows_returned=(0, 10))
+    probe_counted = _facts(columns_requested=(2, 30), successful_columns=(2, 30),
+                           http_statuses=(400, 200), rows_returned=(0, 10))
+
+    assert api_validity(probe_failed) > api_validity(probe_counted)
+
+
 def test_api_validity_is_clamped_to_zero_not_negative():
     awful = _facts(http_statuses=(400, 400, 400), heimdall_calls=3,
                    error_codes=("a", "b", "c"), repeated_calls=9,
@@ -606,6 +656,43 @@ def test_api_validity_with_zero_heimdall_calls():
 
     result = api_validity(zero_calls)
     assert 0.0 <= result <= 1.0
+
+
+def test_efficiency_ignores_the_constant_cost_of_carrying_a_memory_block():
+    """The memory block is a fixed tax the arms under study pay for existing.
+
+    Memory adds ~1200 prompt tokens to every model call by construction, and at
+    13.1 calls per question that is a large, arm-correlated shift. With the
+    1.0 cap the penalty is one-sided: the no-memory arm sits below the pooled
+    class median and forfeits nothing, the memory arms sit above it and are
+    graded down. Measured against a 20 000-token median, A1 at 18k scored 30.0
+    of 30 while A3 at 28k scored 21.4 — a gap an order of magnitude larger than
+    the effect under study, pointing the wrong way.
+    """
+    no_memory = efficiency(_facts(tokens=20_000, memory_tokens=0),
+                           median_tokens=20_000, median_seconds=60.0)
+    with_memory = efficiency(_facts(tokens=36_000, memory_tokens=16_000),
+                             median_tokens=20_000, median_seconds=60.0)
+
+    assert with_memory == no_memory
+
+
+def test_efficiency_still_sees_a_real_token_difference_between_arms():
+    # The adjustment removes the constant tax, not the signal: an arm that
+    # genuinely reasons more, memory block aside, still scores lower.
+    lean = efficiency(_facts(tokens=21_200, memory_tokens=1_200),
+                      median_tokens=20_000, median_seconds=60.0)
+    verbose = efficiency(_facts(tokens=41_200, memory_tokens=1_200),
+                         median_tokens=20_000, median_seconds=60.0)
+
+    assert verbose < lean
+
+
+def test_memory_tokens_larger_than_the_total_cannot_make_the_count_negative():
+    absurd = efficiency(_facts(tokens=1_000, memory_tokens=9_000, seconds=0.1),
+                        median_tokens=20_000, median_seconds=60.0)
+
+    assert absurd == 1.0
 
 
 def test_an_incorrect_answer_scores_zero_however_cheap_it_was():
