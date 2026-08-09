@@ -1439,6 +1439,14 @@ def efficiency(facts: TraceFacts, *, median_tokens: float,
                median_seconds: float) -> float:
     """How this turn's cost compares with the median for its question class.
 
+    The WORSE of the two axes governs, not their average. Averaging them lets
+    one hide a regression in the other: measured on the first implementation,
+    a turn at 0.1x the median token count and 2x the median duration scored
+    0.952 — near-full marks for taking twice as long as its peers. The three
+    configurations under study differ by text added to the prompt, which
+    plausibly moves tokens and latency in opposite directions, so that is
+    precisely the case the experiment most needs to see.
+
     Capped at 1.0 rather than rewarded below the median, because the cheapest
     possible turn is one that answers nothing, and correctness has already
     gated this term — but an arm that learns to answer in one call should not
@@ -1446,8 +1454,8 @@ def efficiency(facts: TraceFacts, *, median_tokens: float,
     """
     tok = facts.tokens / max(median_tokens, 1.0)
     sec = facts.seconds / max(median_seconds, 1e-6)
-    ratio = 0.5 * tok + 0.5 * sec
-    return max(0.0, min(1.0, 1.0 / max(ratio, 1e-6) if ratio > 1.0 else 1.0))
+    ratio = max(tok, sec)
+    return 1.0 if ratio <= 1.0 else max(0.0, min(1.0, 1.0 / ratio))
 
 
 def quality(correctness: CorrectnessResult, facts: TraceFacts, *,
@@ -1714,7 +1722,16 @@ def cohen_kappa(judge: list[bool], truth: list[bool]) -> float:
     pj, pt = sum(judge) / n, sum(truth) / n
     expected = pj * pt + (1 - pj) * (1 - pt)
     if expected == 1.0:
-        return 1.0 if observed == 1.0 else 0.0
+        # Both raters gave one constant label to everything, so there is no
+        # chance model to correct against and kappa is undefined. Returning 1.0
+        # here would defeat the gate this statistic exists to feed: a degenerate
+        # judge that ignores its input and always answers the same would clear
+        # kappa >= 0.60 outright, whenever the calibration labels happen to be
+        # homogeneous. That is the rubber-stamp judge the gate is built to catch.
+        raise ValueError(
+            "kappa is undefined when neither rater varies: the calibration set "
+            "must contain both correct and incorrect answers. Rebuild the set "
+            "rather than catching this.")
     return (observed - expected) / (1 - expected)
 
 
