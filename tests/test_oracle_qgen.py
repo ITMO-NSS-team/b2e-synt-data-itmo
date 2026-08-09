@@ -81,3 +81,18 @@ def test_entities_are_recorded_so_epochs_can_be_kept_disjoint(gold):
         # these to keep entity pools disjoint across epochs, which is what stops
         # a memorised fact about one person from helping a later question.
         assert q.entities, q.id
+
+
+def test_all_questions_in_a_basket_have_distinct_text(gold):
+    # Checked across several seeds, not one: a single seed that happens not to
+    # collide would pass for the wrong reason. `_pick()` draws independently
+    # per index, which is sampling *with* replacement from a finite pool — two
+    # different indices in the same class can land on the same unit (or the
+    # same person, or the same unit+grade pair) and emit the exact same
+    # Russian sentence twice. A duplicated question does not add information
+    # to the basket; it double-weights one draw and shrinks the effective
+    # sample the experiment is trying to resolve small differences with.
+    for seed in (1, 2, 7, 8, 42):
+        texts = [q.text for q in qgen.generate(gold, seed=seed)]
+        duplicates = [t for t in set(texts) if texts.count(t) > 1]
+        assert not duplicates, (seed, duplicates[:3])
