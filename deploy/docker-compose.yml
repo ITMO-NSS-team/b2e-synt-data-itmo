@@ -225,7 +225,14 @@ services:
       - ../cassettes:/app/cassettes
       - spool:/spool
     networks: [edge, internal]
-    mem_limit: 384m
+    # 384m was enough while a turn was an HTTP call to the Messages API. It is
+    # not enough for the default harness, which spawns the Node-based `claude`
+    # CLI per turn: the container idles near 256m, the CLI needs several hundred
+    # more, and the kernel kills it. The failure surfaced as `502 claude session
+    # failed:` with an empty message, which named neither the cause nor the
+    # remedy. Sized for the RQ4 driver's concurrency, which runs several turns
+    # at once; the host has 16 GiB.
+    mem_limit: 6g
     depends_on:
       heimdall-emulator: {condition: service_healthy}
 
