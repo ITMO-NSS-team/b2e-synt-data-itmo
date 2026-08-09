@@ -666,8 +666,21 @@ def run(cfg: RunConfig, *, gold: GoldLabels | None = None) -> None:
                 # the epoch was still running. turns.jsonl is also the
                 # checkpoint, so that is not just delayed reporting: a crash
                 # would have discarded every completed turn in the epoch.
+                print(f"epoch {epoch}: dispatching {len(pending)} turns "
+                      f"at concurrency {cfg.concurrency}", flush=True)
+                done_n = 0
                 for fut in as_completed(futures):
                     row, calls = fut.result()
+                    done_n += 1
+                    # Unattended runs need a heartbeat. Without one, "no rows
+                    # yet" is indistinguishable from "wedged", and the only way
+                    # to tell them apart is to attach a debugger to a container
+                    # that is already hours into the work.
+                    print(f"  [{done_n}/{len(pending)}] {row['arm']} "
+                          f"e{row['epoch']} i{row['instance']} "
+                          f"{row['question_id'][:40]} scored={row['scored']} "
+                          f"correct={row['correct']} {row.get('wall_seconds')}s",
+                          flush=True)
                     with write_lock:
                         with turns_path.open("a", encoding="utf-8") as fh:
                             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
