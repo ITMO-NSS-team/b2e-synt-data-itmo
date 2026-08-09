@@ -545,6 +545,10 @@ class RunConfig:
     agent_base_url: str = "http://b2e-agent:8082"
     phoenix_url: str = "http://phoenix:6006"
     registry_db: str = "registry/registry.db"
+    #: Seconds to wait for one turn. Deliberately generous: a timeout below the
+    #: real cost is worse than no timeout, because the agent finishes the work
+    #: anyway and the driver silently re-asks the same question.
+    turn_timeout_seconds: float = 1800.0
     curator_model_id: str | None = None
     curator_proxy: dict[str, str] = field(default_factory=dict)
     actor: str = "run_rq4"
@@ -586,7 +590,14 @@ def run(cfg: RunConfig, *, gold: GoldLabels | None = None) -> None:
     agent_client: AgentClient | None = None
     phoenix: PhoenixClient | None = None
     if not cfg.dry_run:
-        http_client = httpx.Client(base_url=cfg.agent_base_url, timeout=180.0,
+        # 180s was below the real cost of a turn and the failure was invisible:
+        # the agent kept finishing turns (200 OK in its log) while this client
+        # had already given up and retried, so no row was ever written and the
+        # same question was answered several times. A turn is ~90s alone and
+        # several times that when `--concurrency` turns share one agent, so the
+        # ceiling has to be far above the mean rather than near it.
+        http_client = httpx.Client(base_url=cfg.agent_base_url,
+                                   timeout=cfg.turn_timeout_seconds,
                                    trust_env=False, transport=cfg.transport)
         agent_client = AgentClient(client=http_client, sleep=cfg.retry_sleep)
         phoenix = cfg.phoenix_override or PhoenixClient(cfg.phoenix_url)
@@ -709,6 +720,10 @@ def parse_args(argv: list[str] | None = None) -> RunConfig:
     p.add_argument("--registry-db", type=str,
                    default=os.environ.get("B2E_REGISTRY_DB", "registry/registry.db"))
     p.add_argument("--curator-model-id", type=str, default=None)
+    p.add_argument("--turn-timeout-seconds", type=float, default=1800.0,
+                   help="per-turn HTTP ceiling; must exceed the real cost of a "
+                        "turn under --concurrency, or the driver re-asks work "
+                        "the agent has already done")
     a = p.parse_args(argv)
 
     run_id = a.run_id or f"{a.seed}-{int(time.time())}"
@@ -722,7 +737,8 @@ def parse_args(argv: list[str] | None = None) -> RunConfig:
                      run_id=run_id, out_dir=out_dir, dry_run=a.dry_run,
                      agent_base_url=a.agent_url, phoenix_url=a.phoenix_url,
                      registry_db=a.registry_db, curator_model_id=a.curator_model_id,
-                     curator_proxy=proxy)
+                     curator_proxy=proxy,
+                     turn_timeout_seconds=a.turn_timeout_seconds)
 
 
 def main(argv: list[str] | None = None) -> None:
