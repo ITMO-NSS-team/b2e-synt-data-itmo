@@ -41,12 +41,56 @@ CONTENT_SECURITY_POLICY = (
     "frame-ancestors 'none'"
 )
 
+#: The one page that needs script, and what still holds it in.
+#:
+#: The trace explorer is a client-side renderer: filtering, the timeline and the
+#: span tree are all JavaScript, and it is embedded inline because the page is
+#: also produced as a single standalone file by ``build_viewer.py``. Under the
+#: policy above it renders nothing at all.
+#:
+#: So this policy relaxes exactly one directive and nothing else. There is still
+#: no ``connect-src``, no ``img-src``, no remote origin of any kind: the page
+#: cannot fetch, cannot beacon, and cannot load a script it did not ship with.
+#:
+#: The risk that matters is that the payload is **agent-authored text** —
+#: reasoning, tool results, whatever came back from Heimdall — and under
+#: ``'unsafe-inline'`` a payload that escapes its container is executable. Two
+#: things prevent that, and both are tested:
+#:
+#: * the data rides in ``<script type="application/json">``, which is not
+#:   executed and is read with ``JSON.parse``;
+#: * ``sim.traceview.render`` escapes ``</`` to ``<\/`` before embedding, so the
+#:   literal ``</script`` that would close the element cannot occur. It is a
+#:   legal JSON escape, so nothing about the data changes.
+#:
+#: Everything the renderer writes into the DOM goes through its own ``esc()``.
+EXPLORER_CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; "
+    "style-src 'unsafe-inline'; "
+    "script-src 'unsafe-inline'; "
+    "form-action 'self'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'"
+)
+
+#: Paths served with the relaxed policy. Matched exactly rather than by prefix:
+#: a prefix rule is how one exception becomes a general one.
+EXPLORER_PATHS = frozenset({"/explorer", "/admin/explorer"})
+
 SECURITY_HEADERS = {
     "Content-Security-Policy": CONTENT_SECURITY_POLICY,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
 }
+
+
+def headers_for(path: str) -> dict[str, str]:
+    """Security headers for one request path."""
+    headers = dict(SECURITY_HEADERS)
+    if path.rstrip("/") in EXPLORER_PATHS:
+        headers["Content-Security-Policy"] = EXPLORER_CONTENT_SECURITY_POLICY
+    return headers
 
 _basic = HTTPBasic(auto_error=False)
 

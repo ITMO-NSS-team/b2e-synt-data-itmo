@@ -5,9 +5,16 @@ as a size one: with no script of our own, the CSP can forbid script entirely, an
 an injected ``<script>`` in an agent-authored skill description is inert rather
 than merely escaped.
 
+One page is an exception and is treated as one. The *Trace explorer* renders
+client-side, so it is served under a policy that permits inline script and
+nothing else — see ``EXPLORER_CONTENT_SECURITY_POLICY`` for what still holds it
+in, and why a payload of agent-authored text cannot escape its container.
+
 Panels: system prompt editor with diff and version history; skill registry with
-the approval queue; model parameters; traps and latency toggles; a trace viewer
-that deep-links into Phoenix; and the audit log.
+the approval queue; model parameters; traps and latency toggles; a session list
+that deep-links into Phoenix; the trace explorer, which shows the last hundred
+turns in full — fingerprint, iterations, reasoning, tool calls and the Heimdall
+layer — read live from Phoenix; and the audit log.
 
 Every mutation is versioned and appended. Nothing is edited in place.
 """
@@ -21,10 +28,13 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, RedirectResponse, Response,
+)
 
+from sim import traceview
 from sim.admin.security import (
-    CSRF_COOKIE, CSRF_FIELD, SECURITY_HEADERS, issue_csrf, require_admin,
+    CSRF_COOKIE, CSRF_FIELD, headers_for, issue_csrf, require_admin,
     verify_csrf,
 )
 from sim.agent.config import AgentConfig
@@ -77,7 +87,13 @@ button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 #: make the tab a no-op on every page but the root.
 NAV = [(".", "Overview"), ("prompt", "System prompt"), ("skills", "Skills"),
        ("config", "Model"), ("emulator", "Traps &amp; latency"),
-       ("traces", "Traces"), ("audit", "Audit")]
+       ("traces", "Traces"), ("explorer", "Trace explorer"), ("audit", "Audit")]
+
+#: How many traces the explorer tab loads. A hundred turns of this agent is on
+#: the order of five thousand spans; the page holds them because the
+#: reconstructed prompts — which are quadratic in a turn's length — are left out
+#: of the live view and named as left out.
+EXPLORER_TRACES = 100
 
 
 def esc(value: Any) -> str:
@@ -134,10 +150,35 @@ class AdminState:
         self.seeded = bootstrap(self.registry)
         self.skills = SkillStore(self.registry)
         self.emulator_url = env.get("HEIMDALL_URL", "http://heimdall-emulator:8081")
+        #: Where to send the browser. Public, and usually not resolvable here.
         self.phoenix_url = env.get("PHOENIX_PUBLIC_URL",
                                    env.get("PHOENIX_URL", "http://localhost:6006"))
+        #: Where *this process* talks to Phoenix. Kept apart from the public URL
+        #: because they are different addresses for different callers, and using
+        #: the public one for a server-side call fails in exactly the deployment
+        #: where it matters — behind the proxy, where it is an https host this
+        #: container has no route to.
+        self.phoenix_api_url = env.get("PHOENIX_URL", "http://phoenix:6006")
+        self.phoenix_project = env.get("PHOENIX_PROJECT", "b2e-sim")
         self.agent_url = env.get("B2E_AGENT_URL", "http://b2e-agent:8082")
         self._http = httpx.Client(timeout=20.0, trust_env=False)
+        self._phoenix: Any = None
+
+    @property
+    def phoenix(self) -> Any:
+        """Built on first use, not at boot.
+
+        The admin UI has to come up whether or not Phoenix is running — it is
+        where an operator goes to find out why something is broken, and a
+        constructor that reached the network would make the diagnostic page the
+        second casualty of the outage it exists to explain.
+        """
+        if self._phoenix is None:
+            from sim.research.phoenix_client import PhoenixClient
+            self._phoenix = PhoenixClient(self.phoenix_api_url,
+                                          project=self.phoenix_project,
+                                          timeout=60.0)
+        return self._phoenix
 
     def emulator_config(self) -> dict[str, Any]:
         try:
@@ -169,7 +210,7 @@ def create_app(state: AdminState | None = None) -> FastAPI:
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
-        for key, value in SECURITY_HEADERS.items():
+        for key, value in headers_for(request.url.path).items():
             response.headers[key] = value
         return response
 
@@ -567,6 +608,79 @@ traps-off label.</p>
 """
         return HTMLResponse(page("Traces", body, token),
                             headers=dict(response.headers))
+
+    # ------------------------------------------------------- trace explorer
+
+    @app.get("/explorer", response_class=HTMLResponse)
+    def explorer_page(request: Request, response: Response,
+                      limit: int = EXPLORER_TRACES,
+                      input_messages: bool = False,
+                      actor: str = Depends(require_admin)) -> HTMLResponse:
+        """The standalone trace viewer, served live off Phoenix.
+
+        The same page `build_viewer.py` produces from an export file, and the
+        same assembly code behind it — see `sim/traceview.py` for why that is
+        not two implementations. What differs is only the source and the
+        freshness.
+        """
+        import datetime as dt
+
+        token = _csrf(request, response)
+        limit = max(1, min(int(limit), 500))
+        try:
+            document = traceview.from_phoenix(
+                state.phoenix, limit=limit, project=state.phoenix_project,
+                source=f"Arize Phoenix REST at {state.phoenix_api_url}, "
+                       f"project '{state.phoenix_project}'",
+                include_input_messages=bool(input_messages),
+                exported_at=dt.datetime.now(dt.timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%SZ"))
+        except Exception as exc:
+            # Never a stack trace on an operator's screen: this page failing
+            # says something about Phoenix, and that is the sentence to print.
+            body = f"""
+<h2>Trace explorer</h2>
+<div class=warn><b>Phoenix is not answering.</b> {esc(type(exc).__name__)}:
+{esc(str(exc)[:400])}</div>
+<p class=mut>The explorer reads {esc(state.phoenix_api_url)} directly. Spans
+live there; this page is a view, not a second copy.</p>
+"""
+            return HTMLResponse(page("Trace explorer", body, token),
+                                headers=dict(response.headers))
+
+        if not document["traces"]:
+            body = """
+<h2>Trace explorer</h2>
+<p class=mut>No traces recorded yet. Ask the agent something and reload.</p>
+"""
+            return HTMLResponse(page("Trace explorer", body, token),
+                                headers=dict(response.headers))
+
+        return HTMLResponse(traceview.render(document),
+                            headers=dict(response.headers))
+
+    @app.get("/explorer.json")
+    def explorer_json(request: Request, response: Response,
+                      limit: int = EXPLORER_TRACES,
+                      input_messages: bool = False,
+                      actor: str = Depends(require_admin)) -> JSONResponse:
+        """The same document as JSON.
+
+        So the page's own 'Load JSON…' button has something to eat, and so a
+        researcher can pull the live corpus without shelling into a container.
+        """
+        import datetime as dt
+
+        limit = max(1, min(int(limit), 500))
+        try:
+            document = traceview.from_phoenix(
+                state.phoenix, limit=limit, project=state.phoenix_project,
+                include_input_messages=bool(input_messages),
+                exported_at=dt.datetime.now(dt.timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%SZ"))
+        except Exception as exc:
+            raise HTTPException(503, f"Phoenix unavailable: {exc}") from exc
+        return JSONResponse(document)
 
     # ---------------------------------------------------------------- audit
 
