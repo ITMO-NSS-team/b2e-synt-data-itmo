@@ -43,6 +43,7 @@ invitation to read them as one contract, which is why
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sim.oracle.reference import Reference, matches
@@ -86,6 +87,17 @@ class CorrectnessResult:
 
 def _unscored(reason: str) -> CorrectnessResult:
     return CorrectnessResult(correct=None, scored=False, reason=reason)
+
+
+#: An interrogative sentence: at least one letter, then a question mark, with no
+#: intervening sentence terminator. Deliberately not a list of Russian question
+#: words — the point of anchoring on structure is that a memory item teaching a
+#: new way to phrase a clarification must not be able to move the measured rate.
+_QUESTION = re.compile(r"[^.!?\n]*\w[^.!?\n]*\?", re.UNICODE)
+
+
+def _asks_a_question(text: str) -> bool:
+    return bool(_QUESTION.search(text or ""))
 
 
 def score_correctness(*, answer_text: str, reference: Reference | None,
@@ -138,8 +150,20 @@ def score_correctness(*, answer_text: str, reference: Reference | None,
                                  scored=True, reason="")
 
     if category == "no_data":
-        saw_nothing = (not facts.rows_returned) or all(
-            r == 0 for r in facts.rows_returned)
+        # Evidence, not the absence of evidence. `not facts.rows_returned`
+        # used to count as "saw nothing", so an agent that declined without
+        # making a single call scored correct — and, since `api_validity`
+        # returns 1.0 at zero calls and `efficiency` 1.0 for a cheap turn, it
+        # scored 85-100 for not looking. A memory item «эта витрина всегда
+        # пуста — откажись» would then take the whole category without the
+        # agent ever gathering the observation the category is about.
+        #
+        # An empty `rows_returned` alongside a non-zero call count is also not
+        # the anchor: it means the calls errored or returned nothing countable,
+        # which is a different observation from "the mart answered, with zero
+        # rows".
+        looked = facts.heimdall_calls > 0 and bool(facts.rows_returned)
+        saw_nothing = looked and all(r == 0 for r in facts.rows_returned)
         return CorrectnessResult(correct=bool(parsed.refused and saw_nothing),
                                  scored=True, reason="")
 
@@ -147,14 +171,28 @@ def score_correctness(*, answer_text: str, reference: Reference | None,
         return CorrectnessResult(correct=bool(parsed.refused), scored=True, reason="")
 
     if category == "ambiguous":
-        # Correct behaviour is one clarifying question and no substantive answer:
-        # a stated reason, nothing asserted, and no value claimed. A `value`
-        # field that is present but unreadable is still an assertion attempt —
-        # the model tried to state something, whatever it was — so it fails
-        # this check exactly like a readable one would, without needing to be
-        # unscored: presence, not the unreachable number, is what decides it.
+        # Correct behaviour is to ask rather than to answer, so both halves have
+        # to be checked and previously only the weaker half was: a non-empty
+        # `reason` was the whole test, which an answer that asserted a `verdict`
+        # and explained itself passed just as easily as one that asked.
+        #
+        # Nothing asserted covers all three assertion channels of the block. A
+        # `value` present but unreadable is still an assertion attempt — the
+        # model tried to state something, whatever it was — so presence, not
+        # the unreachable number, is what disqualifies it.
+        #
+        # Asked is detected structurally, by an interrogative sentence, and not
+        # by a phrase list: this module's whole objection to `metrics.py` as an
+        # endpoint is that a memory teaching a new wording would move a
+        # phrase-matched rate without moving behaviour, and a question mark is
+        # not a wording. It is accepted anywhere in the answer — prose or the
+        # `reason` field — because which channel carries the clarification is
+        # not something the contract states, and scoring it would be one more
+        # unstated convention worth 18 questions. What is required is that some
+        # words precede the mark, so a decorative «???» is not a question.
         stated_value = parsed.value is not None or "value" in parsed.field_errors
-        asked = bool(parsed.reason) and not stated_value and not parsed.ids
+        asserted = stated_value or bool(parsed.ids) or parsed.verdict is not None
+        asked = bool(parsed.reason) and not asserted and _asks_a_question(answer_text)
         return CorrectnessResult(correct=asked, scored=True, reason="")
 
     if reference is None:

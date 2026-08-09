@@ -117,6 +117,113 @@ def test_no_data_is_correct_when_the_agent_declines_after_seeing_zero_rows():
     assert result.correct is True
 
 
+def test_no_data_declined_without_looking_is_not_correct():
+    """The anchor is evidence of an empty mart, not the absence of evidence.
+
+    An agent that declines without making a single call has an empty
+    ``rows_returned`` — which used to satisfy ``saw_nothing`` — and, with
+    ``api_validity`` returning 1.0 at zero calls and ``efficiency`` 1.0 for a
+    cheap turn, scored 85-100. A memory item «витрина X всегда пуста —
+    откажись» would then win all 18 questions of the category without the
+    agent gathering any evidence at all, which is precisely the "memory
+    carries answers rather than method" failure the category exists to detect.
+    """
+    never_looked = TraceFacts(http_statuses=(), heimdall_calls=0,
+                              rows_returned=(), error_codes=(), repeated_calls=0,
+                              pagination_walks=0, columns_requested=(), tokens=0,
+                              seconds=0.0)
+
+    result = score_correctness(answer_text=_answer("refused: true\nreason: данных нет"),
+                               reference=None, category="no_data", facts=never_looked)
+
+    assert result.correct is False
+    assert result.scored is True
+
+
+def test_no_data_declined_after_a_call_that_returned_no_rows_at_all_is_not_correct():
+    # A call was made but nothing came back to count — an error, a timeout, a
+    # truncated span. That is not the same observation as "the mart answered
+    # and answered with zero rows", and only the second one is the anchor.
+    called_but_no_rows = TraceFacts(http_statuses=(500,), heimdall_calls=1,
+                                    rows_returned=(), error_codes=("boom",),
+                                    repeated_calls=0, pagination_walks=0,
+                                    columns_requested=(), tokens=0, seconds=0.0)
+
+    result = score_correctness(answer_text=_answer("refused: true\nreason: данных нет"),
+                               reference=None, category="no_data",
+                               facts=called_but_no_rows)
+
+    assert result.correct is False
+
+
+def test_no_data_with_one_empty_and_one_non_empty_response_is_not_correct():
+    mixed = TraceFacts(http_statuses=(200, 200), heimdall_calls=2,
+                       rows_returned=(0, 7), error_codes=(), repeated_calls=0,
+                       pagination_walks=0, columns_requested=(), tokens=0,
+                       seconds=0.0)
+
+    result = score_correctness(answer_text=_answer("refused: true\nreason: данных нет"),
+                               reference=None, category="no_data", facts=mixed)
+
+    assert result.correct is False
+
+
+# --- `ambiguous`: asked rather than answered --------------------------------
+
+def test_ambiguous_needs_an_actual_question_not_merely_a_stated_reason():
+    """A reason is not a question.
+
+    ``reason`` alone was the whole test, so an answer that stated why the
+    question was hard and then said nothing scored the same as one that asked
+    for the missing information.
+    """
+    stated_only = score_correctness(
+        answer_text="Вопрос неоднозначен.\n\n"
+                    "```answer\nreason: период не задан\n```",
+        reference=None, category="ambiguous", facts=EMPTY)
+
+    assert stated_only.correct is False
+    assert stated_only.scored is True
+
+
+def test_ambiguous_accepts_a_clarifying_question_in_the_prose():
+    asked = score_correctness(
+        answer_text="Уточните, пожалуйста: за какой период считать?\n\n"
+                    "```answer\nreason: период не задан\n```",
+        reference=None, category="ambiguous", facts=EMPTY)
+
+    assert asked == CorrectnessResult(correct=True, scored=True, reason="")
+
+
+def test_ambiguous_accepts_the_question_written_into_the_reason_field():
+    # Which channel carries the question is not a convention the contract
+    # states, so scoring it would be another unstated rule worth 18 questions.
+    asked = score_correctness(
+        answer_text=_answer("reason: за какой период считать?"),
+        reference=None, category="ambiguous", facts=EMPTY)
+
+    assert asked.correct is True
+
+
+def test_ambiguous_rejects_a_verdict_asserted_alongside_the_question():
+    # `verdict` was never inspected: a named winner plus a question mark
+    # scored as caution.
+    result = score_correctness(
+        answer_text="Кого повысить? Думаю, Иванова.\n\n"
+                    "```answer\nverdict: Иванов\nreason: критерий не задан\n```",
+        reference=None, category="ambiguous", facts=EMPTY)
+
+    assert result.correct is False
+
+
+def test_ambiguous_rejects_a_lone_question_mark_with_no_words_before_it():
+    result = score_correctness(
+        answer_text="???\n\n```answer\nreason: неясно\n```",
+        reference=None, category="ambiguous", facts=EMPTY)
+
+    assert result.correct is False
+
+
 def test_an_unknown_category_raises_rather_than_dropping_the_question():
     """A silently shrinking denominator is a differential-dropout channel.
 
@@ -256,7 +363,7 @@ def test_ambiguous_ignores_refused_field_errors():
     # `ambiguous` never reads `refused`, so a garbled `refused` field must not
     # block scoring it — unlike every other post-parse category.
     result = score_correctness(
-        answer_text=_answer("refused: maybe\nreason: уточните период"),
+        answer_text=_answer("refused: maybe\nreason: за какой период считать?"),
         reference=None, category="ambiguous", facts=EMPTY)
 
     assert result == CorrectnessResult(correct=True, scored=True, reason="")
