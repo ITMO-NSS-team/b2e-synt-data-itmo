@@ -446,6 +446,17 @@ a string. `extract.py` has a test asserting that no person id and no surname sur
 * **A traps-off replication.** Would change `data_snapshot_hash` and therefore
   `condition_id`, making it a separately declared condition. Worth doing if a memory arm
   wins, to check it did not merely learn the corpus's deliberate defects.
+* **Questions that require disambiguating a unit by its path.** Unit names repeat across
+  the org tree — 20 of 141 names in the 800-person build denote two or three different
+  units, which is realistic, since each territorial bank has its own «Департамент
+  кредитных рисков». Generation therefore restricts itself to units whose name is unique
+  across the whole tree. The alternative — naming the unit by its path and asking the
+  agent to resolve it — tests a genuinely interesting retrieval skill and should be a
+  later question class, but admitting it now would confound "did memory help?" with
+  "did the agent resolve the reference?". Measured before the exclusion: 24–29 of 180
+  questions per seed had two or three different correct answers depending on which unit
+  was meant, which is a floor of forced failures in every arm and pure noise against the
+  contrast the experiment exists to measure.
 
 ## 9. Build order
 

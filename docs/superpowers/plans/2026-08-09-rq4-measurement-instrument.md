@@ -34,7 +34,7 @@ The declarative answer type. Pure function of the population; no I/O, no marts, 
 - Test: `tests/test_oracle_reference.py`
 
 **Interfaces:**
-- Consumes: `sim.oracle.labels.GoldLabels` (`members`, `subtree`, `grade_level`, `is_head`, `person_id`, `unit_of`, `tree.name`, `performance_pct`, `potential_pct`, `competency_avg`, `competency_pct`, `impact_pct`, `attrition_risk`), `sim.oracle.labels.ROUND_DP`.
+- Consumes: `sim.oracle.labels.GoldLabels` (`members`, `subtree`, `index_of`, `grade_level`, `is_head`, `person_id`, `unit_of`, `tree.name`, `performance_pct`, `potential_pct`, `competency_avg`, `competency_pct`, `impact_pct`), `sim.oracle.labels.ROUND_DP`. Note `attrition_risk` is deliberately **not** consumed: it is a banded categorical, no question class in Task 2 asks about it, and admitting it to `FIELDS` would imply an ordering over bands that the corpus does not define.
 - Produces:
   - `ReferenceSpec(op: str, field: str, scope: dict, predicate: dict | None, n: int | None, refs: tuple[str, ...])` — frozen.
   - `Reference(kind: str, value: float | None, ids: tuple[str, ...], verdict: str | None)` — frozen. `kind ∈ {"number", "ids", "verdict", "boolean"}`.
@@ -409,7 +409,7 @@ Emits the 180 deterministic questions with their specs. Russian text, real bound
 - Consumes: `sim.oracle.reference.ReferenceSpec`, `sim.oracle.reference.evaluate`, `sim.oracle.labels.GoldLabels`.
 - Produces:
   - `GeneratedQuestion(id: str, question_class: str, family: str, category: str, text: str, spec: ReferenceSpec, entities: tuple[str, ...])` — frozen.
-  - `generate(gold: GoldLabels, *, seed: int, epoch_pools: dict[int, list[int]] | None = None) -> tuple[GeneratedQuestion, ...]` — returns exactly 180 questions.
+  - `generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]` — returns exactly 180 questions, all with distinct text.
   - `CLASS_COUNTS: dict[str, int]` — the per-class targets from spec §2.
 
 - [ ] **Step 1: Write the failing test**
