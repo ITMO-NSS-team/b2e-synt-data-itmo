@@ -244,6 +244,12 @@ def _rule_g5(text: str) -> bool:
 # ------------------------------------------------------------------------ check
 
 _RULES = ("G1", "G2", "G3", "G4", "G5")
+#: Public alias of the same tuple. ``sim.reflection.reflect`` needs the rule
+#: vocabulary to initialise its per-epoch rejection-rate report with every
+#: rule present at zero (never only the rules that happened to fire this
+#: epoch, which would make a report reader unable to tell "this rule never
+#: rejected anything" from "this rule was never even counted").
+RULE_IDS = _RULES
 
 
 def check(text: str, *, evidence: Any = None, basket_texts: Sequence[str] = (),
