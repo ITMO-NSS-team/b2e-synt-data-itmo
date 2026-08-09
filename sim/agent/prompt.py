@@ -31,6 +31,25 @@ def render(template_text: str, variables: dict[str, Any]) -> str:
         ) from exc
 
 
+#: The structured tail the agent appends to every answer. Defined beside the
+#: prompt rather than beside the parser because this is prompt text; the parser
+#: imports it, and a test asserts the two agree about the field names. They have
+#: no other way to stay in step — one is a string sent to the model, the other
+#: reads what comes back.
+ANSWER_CONTRACT = """## Структурированный хвост ответа
+
+В конце каждого ответа приведи блок answer со следующими полями. Он нужен для
+автоматической проверки и не заменяет обычный ответ, а дополняет его.
+
+```answer
+verdict: <строка или null>   — вывод одним значением, если вопрос его требует
+ids: [person_id, ...]        — идентификаторы, о которых сделано утверждение
+value: <число или null>      — числовой ответ, если он есть
+refused: true|false          — отказался ли ты отвечать
+reason: <строка или null>    — если refused, то почему
+```
+"""
+
 #: Shipped default. Committed to the registry on first start as version 1, so
 #: even an untouched deployment has a prompt version to name in the fingerprint.
 DEFAULT_SYSTEM_PROMPT = """\
@@ -59,9 +78,13 @@ DEFAULT_SYSTEM_PROMPT = """\
 Широкая выборка дороже узкой. Запрашивай те колонки, которые нужны, а не
 `["*"]`. Один агрегирующий запрос обычно дешевле, чем N построчных.
 
+{{ answer_contract }}
 {% if memory_block %}
 ## Что известно о сотруднике
 
 {{ memory_block }}
 {% endif %}
 """
+
+DEFAULT_SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT.replace(
+    "{{ answer_contract }}", ANSWER_CONTRACT)
