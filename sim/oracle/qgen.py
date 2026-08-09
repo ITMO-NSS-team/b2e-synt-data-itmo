@@ -104,10 +104,21 @@ MART_PATHS: dict[str, tuple[str, ...]] = {
 #: How a unit-scoped question's membership is reachable. Every unit-scoped class
 #: evaluates with ``recursive=True``, so the agent needs the ancestor chain, not
 #: just the person's own unit. ``dm_core.employee_actual`` carries it as fifteen
-#: level columns; a person belongs to unit U's subtree exactly when U appears
-#: among them.
+#: level columns; a person belongs to unit U's subtree exactly when U's name
+#: appears among them.
+#:
+#: The ``_unit_name_main`` columns, not ``_unit_id_main``. Every unit-scoped
+#: question names its unit in prose — "«{unit}»", never an id — because
+#: ``spec.scope["unit_id"]`` is an index into the gold tree (`GoldLabels.tree`),
+#: assigned when the corpus is built, and has nothing to do with the id space
+#: these mart columns hold (they are strings like ``'1000000'`` from
+#: ``b2e/gen``'s org generator). An agent has only the rendered name to filter
+#: on, so that is the reachable column; the id columns are reachable by nothing
+#: the agent is ever shown. Verified by replaying a generated question through
+#: ``heimdall.engine.execute`` using only the named columns — see
+#: ``tests/test_oracle_qgen.py::test_unit_scope_paths_reproduce_a_unit_scoped_answer_through_heimdall``.
 UNIT_SCOPE_PATHS: tuple[str, ...] = tuple(
-    f"dm_core.employee_actual.oshs_level_{level}_unit_id_main"
+    f"dm_core.employee_actual.oshs_level_{level}_unit_name_main"
     for level in range(1, 16))
 
 _MIN_UNIT_SIZE = 12

@@ -151,6 +151,52 @@ def test_every_reference_quantity_is_reachable_from_the_catalogue(gold):
         assert q.spec.field in qgen.MART_PATHS, (q.id, q.spec.field)
 
 
+def test_unit_scope_paths_reproduce_a_unit_scoped_answer_through_heimdall(gold):
+    """`UNIT_SCOPE_PATHS` names the columns an agent would actually query.
+
+    Being *in the catalogue* (the test above) is necessary but not sufficient
+    — `oshs_level_N_unit_id_main` used to pass that test while being useless:
+    it holds a mart-internal id space unrelated to `spec.scope["unit_id"]`,
+    which is an index into the gold tree. An agent filtering on it would match
+    nothing, on every one of the 105 unit-scoped questions. This test replays
+    one such question through the real query engine, using only the columns
+    the map names, and checks the result against the reference — the same
+    check the re-reviewer ran by hand to find the bug.
+    """
+    from b2e.store import ProceduralSnapshot
+    from heimdall.catalog import Catalog
+    from heimdall.engine.execute import execute
+
+    catalog = Catalog.load(CATALOG)
+    model = catalog.models["dm_core.employee_actual"]
+    reader = ProceduralSnapshot(DATA, catalog).table("dm_core.employee_actual")
+
+    q = next(qq for qq in qgen.generate(gold, seed=1)
+             if qq.question_class == "count_by_grade")
+    unit_name = str(gold.tree.name[q.spec.scope["unit_id"]])
+    grade = q.spec.predicate["value"]
+    columns = [path.rsplit(".", 1)[1] for path in qgen.UNIT_SCOPE_PATHS]
+
+    body = {
+        "schema": model.schema, "logic_model": model.logic_model,
+        "columns": ["person_id"],
+        "filters": {"type": "and", "conditions": [
+            {"type": "or", "conditions": [
+                {"type": "condition", "column": col, "operator": "=",
+                 "value": unit_name} for col in columns
+            ]},
+            {"type": "condition", "column": "grade_level", "operator": ">=",
+             "value": grade},
+        ]},
+        "limit": 1000,
+    }
+    result = execute(body, model, reader)
+    expected = ref.evaluate(q.spec, gold)
+
+    assert expected.kind == "number"
+    assert len(result["data"]) == expected.value, (q.text, unit_name)
+
+
 def test_no_question_names_a_unit_whose_name_is_shared(gold):
     # A question names a unit in prose, not by id — "«Управление операционных
     # рисков»" is what reaches the agent. If a second unit anywhere in the org

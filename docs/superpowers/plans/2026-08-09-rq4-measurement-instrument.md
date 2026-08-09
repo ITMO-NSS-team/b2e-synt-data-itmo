@@ -525,6 +525,22 @@ Emits the 180 deterministic questions with their specs. Russian text, real bound
 > asserts the phrase on every unit-scoped question and asserts every generated
 > question's field is in `MART_PATHS` with the named columns present in the
 > catalogue, so neither can regress.
+>
+> **Amendment (residual finding, `UNIT_SCOPE_PATHS`).** Being *named in the
+> catalogue* turned out not to mean *reachable*: `UNIT_SCOPE_PATHS` shipped
+> pointing at `oshs_level_N_unit_id_main`, which holds a mart-internal id space
+> (values like `'1000000'`) with no relationship to `spec.scope["unit_id"]` — a
+> gold-tree index assigned at corpus build time. Every unit-scoped question
+> names its unit by the rendered name, never an id, so the id columns are
+> reachable by nothing an agent is ever shown; filtering on them returns zero
+> rows (or, since the column is integer-typed, a type error before any rows are
+> considered). `UNIT_SCOPE_PATHS` now names `oshs_level_N_unit_name_main`
+> instead. `tests/test_oracle_qgen.py::test_unit_scope_paths_reproduce_a_unit_scoped_answer_through_heimdall`
+> replays a generated `count_by_grade` question through `heimdall.engine.execute`
+> using only the named columns and checks the row count against the reference,
+> so "in the catalogue" and "reachable" cannot drift apart silently again. The
+> 540-of-540 reproduction claim above is unaffected — it was computed from mart
+> columns via `ref.evaluate`'s own path, not through this map.
 
 - [ ] **Step 1: Write the failing test**
 
