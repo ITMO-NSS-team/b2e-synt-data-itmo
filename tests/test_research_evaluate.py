@@ -333,6 +333,37 @@ def test_efficiency_caps_at_one_so_a_trivial_answer_cannot_earn_a_bonus():
                       median_tokens=20_000, median_seconds=60.0) == 1.0
 
 
+def test_efficiency_penalises_on_the_worse_axis_cheap_tokens_slow_seconds():
+    # A turn cheap on tokens but slow on time: the slower axis must govern.
+    # Tokens: 2_000 / 20_000 = 0.1x median, Seconds: 120.0 / 60.0 = 2.0x median.
+    # Max-based (correct): ratio = max(0.1, 2.0) = 2.0, efficiency = 0.5.
+    # Averaging (wrong): ratio = 0.5*(0.1 + 2.0) = 1.05, efficiency ≈ 0.952.
+    cheap_slow = efficiency(_facts(tokens=2_000, seconds=120.0),
+                            median_tokens=20_000, median_seconds=60.0)
+
+    assert cheap_slow == 0.5  # Would be ~0.952 with averaging
+
+
+def test_efficiency_penalises_on_the_worse_axis_expensive_tokens_fast_seconds():
+    # A turn expensive on tokens but fast on time: the expensive axis must govern.
+    # Tokens: 40_000 / 20_000 = 2.0x median, Seconds: 6.0 / 60.0 = 0.1x median.
+    # Max-based (correct): ratio = max(2.0, 0.1) = 2.0, efficiency = 0.5.
+    # Averaging (wrong): ratio = 0.5*(2.0 + 0.1) = 1.05, efficiency ≈ 0.952.
+    expensive_fast = efficiency(_facts(tokens=40_000, seconds=6.0),
+                                median_tokens=20_000, median_seconds=60.0)
+
+    assert expensive_fast == 0.5  # Would be ~0.952 with averaging
+
+
+def test_api_validity_with_zero_heimdall_calls():
+    # Zero API calls with defects reported is edge-casey, but should not crash.
+    # The code uses max(calls, 1) to avoid division by zero, treating 0 as 1.
+    zero_calls = _facts(heimdall_calls=0, http_statuses=(400,))
+
+    result = api_validity(zero_calls)
+    assert 0.0 <= result <= 1.0
+
+
 def test_an_incorrect_answer_scores_zero_however_cheap_it_was():
     wrong = CorrectnessResult(correct=False, scored=True, reason="")
 

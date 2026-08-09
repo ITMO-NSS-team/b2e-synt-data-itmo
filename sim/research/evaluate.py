@@ -176,15 +176,18 @@ def efficiency(facts: TraceFacts, *, median_tokens: float,
                median_seconds: float) -> float:
     """How this turn's cost compares with the median for its question class.
 
-    Capped at 1.0 rather than rewarded below the median, because the cheapest
-    possible turn is one that answers nothing, and correctness has already
-    gated this term — but an arm that learns to answer in one call should not
-    be able to farm unbounded points from that either.
+    Penalises on the worse axis, not the average, because the experiment
+    observes token cost and latency separately. A turn that halves tokens but
+    doubles latency reports "no change" under averaging, but these dimensions
+    move differently under each configuration being measured, and the
+    experiment needs to see both. Capped at 1.0 rather than rewarded below the
+    median, because the cheapest possible turn is one that answers nothing, and
+    correctness has already gated this term.
     """
     tok = facts.tokens / max(median_tokens, 1.0)
     sec = facts.seconds / max(median_seconds, 1e-6)
-    ratio = 0.5 * tok + 0.5 * sec
-    return max(0.0, min(1.0, 1.0 / max(ratio, 1e-6) if ratio > 1.0 else 1.0))
+    ratio = max(tok, sec)
+    return max(0.0, min(1.0, 1.0 / ratio if ratio > 1.0 else 1.0))
 
 
 def quality(correctness: CorrectnessResult, facts: TraceFacts, *,
