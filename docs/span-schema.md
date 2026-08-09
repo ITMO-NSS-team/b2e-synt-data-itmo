@@ -56,19 +56,32 @@ AGENT  b2e.turn                                ← fingerprint lives here
 
 The model call happens **inside the Claude Code subprocess**. Nothing here is on
 that call path — but the CLI writes a session transcript, and every assistant
-entry in it carries `message.usage`. Grouped by `message.id`, those are the API
-calls, one `LLM` span each. Per-iteration `CHAIN` spans remain absent:
+entry in it carries `message.usage` *and the content blocks the model produced*.
+Grouped by `message.id`, those are the API calls, one `LLM` span each. The
+stream names the same `message.id` while the turn runs, which is what gives the
+iteration level its boundaries:
 
 ```
 AGENT  b2e.turn                                ← fingerprint + turn-level totals
-├── LLM    llm.messages.create                 ← per-call tokens, model, stop reason
-├── TOOL   tool.mcp__heimdall__mcp_query       ← real start/end, input, output
-│   └── CHAIN  heimdall.mcp_query              ← status, path, rows, bridge-measured
-├── LLM    llm.messages.create
-├── TOOL   tool.Bash
-│   └── CHAIN  sandbox.execute                 ← skill hash, exit, limits
-└── LLM    llm.messages.create                 ← stop_reason=end_turn
+├── CHAIN  iteration.1                         ← one model call and the tools it asked for
+│   ├── LLM    llm.messages.create             ← tokens, reasoning, completion, measured ttft
+│   └── TOOL   tool.mcp__heimdall__mcp_query   ← real start/end, input, output
+│       └── CHAIN  heimdall.mcp_query          ← status, path, rows, bridge-measured
+├── CHAIN  iteration.2
+│   ├── LLM    llm.messages.create
+│   └── TOOL   tool.Bash
+│       └── CHAIN  sandbox.execute             ← skill hash, exit, limits
+└── CHAIN  iteration.3
+    └── LLM    llm.messages.create             ← stop_reason=end_turn
 ```
+
+Verified on a live 14-iteration turn (2026-08-09, trace `d1f1df08…`): 11
+`iteration.N` spans, 11 `LLM` spans one per iteration, 13 `TOOL` spans under the
+iteration that asked for each, and 10 `heimdall.*` under their tool call.
+
+**This is the same shape as `messages_api`.** Until 2026-08-09 this document
+said the iteration level was unobservable outside the CLI. It is observable: the
+CLI announces the message.
 
 What is available at each level, and what is not:
 
@@ -77,12 +90,15 @@ What is available at each level, and what is not:
 | per-model-call tokens | `LLM` span | `LLM` span, from the CLI's session transcript |
 | per-call model, stop reason | `LLM` span | `LLM` span |
 | per-call latency | measured | **derived** — see below |
-| prompt / completion text per call | `LLM` span | **no** — the transcript has no system prompt |
+| per-call time to first token | not emitted | **measured**, `b2e.llm.ttft_ms` |
+| per-call reasoning | not emitted | `LLM` span, from the transcript |
+| completion text per call | `LLM` span | `LLM` span, from the transcript |
+| the prompt as sent | `LLM` span | **partial** — conversation yes, CLI system prompt and tool schemas no |
 | tool latency | `TOOL` span | `TOOL` span, timed live off the event stream |
 | tool input / output | `TOOL` span | `TOOL` span |
 | HTTP status, path, row counts | Heimdall `CHAIN` | Heimdall `CHAIN`, from the bridge's own journal |
 | skill digest, sandbox limits | sandbox `CHAIN` | sandbox `CHAIN`, from the runner's own output |
-| iteration boundaries | `CHAIN iteration.N` | **no** — `b2e.turn.iterations` is the count only |
+| iteration boundaries | `CHAIN iteration.N` | `CHAIN iteration.N`, from the stream |
 
 Where each timing comes from, because they are not the same kind of number:
 
@@ -95,12 +111,25 @@ Where each timing comes from, because they are not the same kind of number:
   `b2e.sandbox.wall_ms` as an attribute. The window is the tool call's, because
   when within that call the code ran is not something anyone measured, and a
   fabricated timestamp beside a real one is worse than none.
-- **`LLM`** — **derived, and says so.** The transcript carries no duration of any
-  kind (checked: no `ttft`, `duration`, `latency`, `elapsed`, `_ms`; and
-  `diagnostics` is null). The window is the gap between the previous recorded
-  row and the response's own timestamp — two real stamps, but nothing timed the
-  request. Every such span carries `b2e.llm.timing="derived"`. Do not compare it
-  with a `messages_api` `LLM` duration without saying which is which.
+- **`CHAIN iteration.N`** — measured live off the stream. The boundary between
+  one iteration and the next is **when the previous iteration's last tool result
+  arrived**, not when the next message was first seen: the gap between the two
+  is the model thinking, and that belongs to the call it produced. Cutting at
+  first sight instead would leave every `LLM` span starting fractionally before
+  its own parent.
+- **`LLM`** — **the window is derived, and says so; the first token is
+  measured.** The transcript carries no duration of any kind (checked: no
+  `ttft`, `duration`, `latency`, `elapsed`, `_ms`; and `diagnostics` is null).
+  The window is the gap between the previous recorded row and the message's
+  **last** row — two real stamps, but nothing timed the request. Every such span
+  carries `b2e.llm.timing="derived"`. Do not compare it with a `messages_api`
+  `LLM` duration without saying which is which.
+
+  Separately, `b2e.llm.ttft_ms` **is** a measurement, taken by the CLI and
+  reported on the `message_start` row that `--include-partial-messages`
+  produces, keyed by the same `message.id`. It carries
+  `b2e.llm.ttft_source="measured"` so the two numbers on one span are never
+  confused for each other. Range on the live turn above: 824–4 387 ms.
 
 Until 2026-08-08 the `TOOL` spans were replayed after the subprocess exited and
 every one had a duration of zero, and the two `CHAIN` layers did not exist at
@@ -180,6 +209,14 @@ rather than a duplicate:
 | `b2e.turn.tool_time_ms` | wall time inside tool calls |
 | `b2e.turn.duration_ms` | turn duration as the CLI measured it |
 | `b2e.turn.iterations` / `.tool_calls` / `.heimdall_calls` / `.skill_runs` / `.cost_usd` | turn counters |
+| `b2e.turn.iteration_spans` | how many `iteration.N` spans were opened; below `iterations` when the CLI counts a turn the stream did not announce |
+| `b2e.turn.api_duration_ms` / `.ttft_ms` / `.ttft_stream_ms` / `.time_to_request_ms` | the CLI's own measurements, recorded as reported |
+
+`api_duration_ms` is **not** a wall-clock slice of the turn and must not be
+subtracted from one — on the live turn above it was 55 152 ms against a
+`duration_ms` of 90 189 ms, and on a single-call probe it exceeded the turn
+duration outright (5 732 against 3 898). It is the CLI's figure for time inside
+model calls, whatever that includes; nothing here reinterprets it.
 
 The standard `llm.token_count.*` keys are used rather than bespoke `b2e.*` ones
 because they are the names every other tool already understands.
@@ -224,15 +261,48 @@ signal is a switchable strategy, so the trace records the value and
 `b2e.budget_strategy` records whether it was consulted.
 
 On `harness=claude_code` these spans are reconstructed from the CLI's session
-transcript, so a narrower set is present: model, provider, all five
-`llm.token_count.*` keys, `llm.finish_reason`, plus `b2e.llm.message_id` (the
-Anthropic `msg_…` id) and `b2e.llm.timing="derived"`.
+transcript: model, provider, all five `llm.token_count.*` keys,
+`llm.finish_reason`, plus `b2e.llm.message_id` (the Anthropic `msg_…` id) and
+`b2e.llm.timing="derived"`.
 
-Absent there: `llm.input_messages` / `llm.output_messages`,
-`llm.invocation_parameters`, `llm.system`, and `b2e.remaining_token_budget`. The
-transcript holds the conversation, not the request — no system prompt, no tool
-schemas. Nothing is invented to fill the gap; do not write a query that assumes
-those keys on the default harness.
+Since 2026-08-09 they also carry what the model said. `llm.output_messages` is
+written as **indexed flat attributes**, which Phoenix re-nests on ingest — a
+JSON string is stored as a string and stays opaque, so the shape matters:
+
+| Key | Value |
+|---|---|
+| `llm.output_messages.0.message.role` | `assistant` |
+| `…contents.N.message_content.type` | `reasoning` or `text` |
+| `…contents.N.message_content.text` | the reasoning, or the visible answer |
+| `…contents.N.message_content.signature` | Anthropic's thinking signature |
+| `…contents.N.message_content.data` | a `redacted_thinking` payload, when there is one |
+| `…tool_calls.N.tool_call.{id,function.name,function.arguments}` | the calls this response asked for |
+| `output.value` | the visible text **only** — reasoning is deliberately excluded, so a scorer scanning outputs for fabricated identifiers cannot find them in a passage the user never saw |
+
+`reasoning` is the convention's own word for it; Anthropic's `thinking` is
+translated at the parser and appears nowhere downstream.
+
+`llm.input_messages` is present too and is **a reconstruction, not the
+request** — it always travels with the flags that say so:
+
+| Key | Meaning |
+|---|---|
+| `b2e.llm.prompt_reconstruction` | `conversation_only` |
+| `b2e.llm.prompt_missing` | `cli_system_prompt,tool_schemas` |
+| `llm.system` + `b2e.llm.system_partial` | the suffix this harness appended; Claude Code's own base prompt sits in front of it and is not exposed |
+| `b2e.llm.input_messages_elided` | messages dropped from a long prefix, when any were |
+| `b2e.trace.llm_content` | `transcript`, or `disabled` when capture is switched off |
+
+The size of the hole is not small and is worth stating: on a real turn the first
+call reported `input_tokens=10, cache_read=6526, cache_creation=5690` — about
+12 200 prompt tokens for a 61-character question, of which the harness can
+account for perhaps a thousand. **Do not read `llm.input_messages` on this
+harness as the prompt that was billed.** Tool results inside a prefix are capped
+and point at the `TOOL` span that has them in full.
+
+Still absent: `llm.invocation_parameters` and `b2e.remaining_token_budget`.
+Nothing is invented to fill those; do not write a query that assumes them on the
+default harness.
 
 Unlike the `AGENT` root, these **do** populate Phoenix's own `llm_token_count_*`
 columns and produce `span_costs` rows — verified on a live turn (2026-08-08,
@@ -246,8 +316,10 @@ being read once and not twice.
 `tool_call.function.arguments`.
 
 On `harness=claude_code`, `tool.name` is the harness-side name the CLI reports
-(`mcp__heimdall__mcp_query`, `Bash`, `ToolSearch`), the span is parented directly
-to the root, and one further attribute may appear: `b2e.tool.unfinished=true`,
+(`mcp__heimdall__mcp_query`, `Bash`, `ToolSearch`), the span is parented to the
+`iteration.N` that asked for it — to the root only when the stream announced a
+call without a message id — and one further attribute may appear:
+`b2e.tool.unfinished=true`,
 set when the turn ended before the tool returned. Such a span is closed and kept
 rather than dropped — a hanging call is the one most worth seeing, and a missing
 span is indistinguishable from a call that never happened.

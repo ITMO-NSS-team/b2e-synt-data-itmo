@@ -534,7 +534,11 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         # result arrives, so the span carries the time the call actually took.
         # Reconstructing them after the subprocess exits — which is what this
         # did until 2026-08-08 — gives every tool span a duration of zero.
-        recorder = ToolSpanRecorder(root)
+        # `started_ns` is where the first iteration begins. Without it the
+        # recorder would start counting at its own construction, which is close
+        # enough to be plausible and wrong enough to put the first model call
+        # outside its own iteration.
+        recorder = ToolSpanRecorder(root, started_ns=time.time_ns())
 
         def observe(event: dict[str, Any]) -> None:
             """Both consumers of the stream, in the order that matters.

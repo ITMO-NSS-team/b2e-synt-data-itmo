@@ -95,10 +95,21 @@ HARNESSES = ("claude_code", "messages_api")
 #: Whether a session is a conversation or a sequence of independent turns.
 #:
 #: ``stateless`` is the default and the measurement baseline: every turn starts
-#: cold. For ``claude_code`` that is ``--no-session-persistence``; for
-#: ``messages_api`` it is an empty history. A batch arm must stay here — runs
-#: that share context are not independent samples, and the per-turn token counts
-#: stop being comparable once turn *n* is paying to re-read turns 1..n-1.
+#: cold. A batch arm must stay here — runs that share context are not
+#: independent samples, and the per-turn token counts stop being comparable once
+#: turn *n* is paying to re-read turns 1..n-1.
+#:
+#: What enforces it on ``claude_code`` is the absence of ``--resume``; for
+#: ``messages_api`` it is an empty history. This comment used to say
+#: ``--no-session-persistence``, and that was worth more than a stale word: the
+#: flag conflated *sharing context*, which is this experimental variable, with
+#: *filing a transcript*, which is the CLI's own bookkeeping. Believing the two
+#: were one thing cost the stand every per-model-call measurement for fifty
+#: traces and sent two expensive alternatives — the CLI's OTel exporter, a
+#: TLS-terminating egress proxy — to be designed before anyone tried dropping
+#: the flag. Verified on the live stack when it was dropped: two turns in the
+#: same working directory, persistence on, no ``--resume``, and the second had
+#: no memory of the first.
 #:
 #: ``resume`` makes the session an actual dialogue. ``claude_code`` reopens the
 #: same headless session with ``--resume``, so the model sees its own prior tool
