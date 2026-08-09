@@ -163,7 +163,7 @@ correct == true   →  quality = 55·api_validity + 30·efficiency + 15·present
 |---|---|---|
 | `correct` | exact match against the reference computation (deterministic items) or anchor satisfied (caution items) | `truth/`, trace spans |
 | `api_validity` | 1 − weighted rate of: 4xx responses, never-recovered errors, byte-identical repeated calls, offset-pagination walks, column over-fetch measured against the trace's own leanest successful query on the same mart | Heimdall CHAIN spans |
-| `efficiency` | tokens and seconds versus the median of that question class, pooled across all arms and replications | root span `llm.token_count.*`, `b2e.turn.duration_ms` |
+| `efficiency` | the **worse** of (tokens, seconds) versus the median of that question class, pooled across all arms and replications. The worse axis governs rather than the average, because averaging lets cheap tokens conceal a latency regression — measured at 0.952 for a turn taking 2× the median duration — and the arms differ by prompt text that plausibly moves the two axes in opposite directions | root span `llm.token_count.*`, `b2e.turn.duration_ms` |
 | `presentation` | 0–4 rubric: claims tied to fetched data, clear structure, uncertainty stated | blinded LLM judge |
 
 `efficiency` is a post-hoc normalisation: the class medians are only known once every
