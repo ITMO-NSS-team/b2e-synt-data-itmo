@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent trace explorer</title>
+<style>
+:root{
+  color-scheme: light;
+  --surface-1:#fcfcfb; --plane:#f9f9f7; --surface-2:#ffffff;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948; --s9:#898781;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --r-sm:4px; --r-md:8px; --r-lg:14px;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme: dark;
+    --surface-1:#1a1a19; --plane:#0d0d0d; --surface-2:#212120;
+    --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767; --s9:#898781;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface-1:#1a1a19; --plane:#0d0d0d; --surface-2:#212120;
+  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767; --s9:#898781;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--sans); background:var(--plane); color:var(--text-primary);
+  font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit}
+
+/* ---------- header ---------- */
+header{
+  position:sticky; top:0; z-index:40; background:var(--surface-1);
+  border-bottom:1px solid var(--border); padding:10px 18px;
+  display:flex; gap:16px; align-items:center; flex-wrap:wrap;
+}
+.brand{display:flex;flex-direction:column;gap:2px;margin-right:auto;min-width:0}
+.brand h1{font-size:15px;margin:0;font-weight:650;letter-spacing:-0.01em}
+.brand .sub{font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:62vw}
+.hbtn{
+  background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r-sm);
+  padding:6px 11px; cursor:pointer; font-size:12.5px; color:var(--text-secondary);
+}
+.hbtn:hover{border-color:var(--axis); color:var(--text-primary)}
+
+/* ---------- layout ---------- */
+.layout{display:grid; grid-template-columns:320px minmax(0,1fr); align-items:start}
+aside{
+  position:sticky; top:53px; height:calc(100vh - 53px); overflow-y:auto;
+  border-right:1px solid var(--border); background:var(--surface-1); padding:12px;
+}
+main{padding:22px 26px 90px; min-width:0; max-width:1220px}
+
+/* ---------- sidebar ---------- */
+.search{
+  width:100%; padding:7px 10px; border-radius:var(--r-sm); font-size:13px;
+  border:1px solid var(--border); background:var(--plane); color:var(--text-primary);
+  margin-bottom:10px;
+}
+.navitem{
+  display:block; width:100%; text-align:left; cursor:pointer; margin-bottom:6px;
+  background:var(--surface-2); border:1px solid var(--border); border-left:3px solid transparent;
+  border-radius:var(--r-md); padding:9px 11px;
+}
+.navitem:hover{border-color:var(--axis)}
+.navitem.active{border-left-color:var(--s1); background:color-mix(in srgb, var(--s1) 8%, var(--surface-2))}
+.navitem .top{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-muted);margin-bottom:3px}
+.navitem .ttl{
+  font-size:12.5px; color:var(--text-primary); line-height:1.35;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.navitem .meta{display:flex;gap:10px;font-size:11.5px;color:var(--text-muted);margin-top:5px;font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.grouplabel{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:14px 2px 7px}
+
+/* ---------- generic ---------- */
+.card{background:var(--surface-1); border:1px solid var(--border); border-radius:var(--r-lg); padding:16px 18px; margin-bottom:18px}
+h2{font-size:16px;margin:0 0 3px;font-weight:650;letter-spacing:-0.01em}
+h3{font-size:13px;margin:0 0 12px;font-weight:600;color:var(--text-secondary)}
+.dim{color:var(--text-muted)}
+.mono{font-family:var(--mono);font-size:12px}
+.pill{
+  display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;
+  font-size:11.5px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-secondary);
+  white-space:nowrap;
+}
+.pill.err{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
+.pill.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+.pill.warn{color:var(--serious);border-color:color-mix(in srgb,var(--serious) 45%,transparent)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+
+/* stat tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(136px,1fr));gap:10px}
+.tile{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 13px}
+.tile .k{font-size:11.5px;color:var(--text-muted);margin-bottom:4px}
+.tile .v{font-size:21px;font-weight:600;letter-spacing:-0.02em}
+.tile .u{font-size:12px;color:var(--text-muted);font-weight:400;margin-left:3px}
+.tile .sub{font-size:11.5px;color:var(--text-muted);margin-top:2px}
+
+/* bar chart */
+.bars{display:flex;flex-direction:column;gap:7px}
+.barrow{display:grid;grid-template-columns:var(--labelw,150px) minmax(0,1fr) 78px;gap:10px;align-items:center}
+.barrow .lbl{font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.track{height:14px;background:linear-gradient(var(--grid),var(--grid)) left center/100% 1px no-repeat;border-radius:var(--r-sm);position:relative;display:flex}
+.bar{height:14px;border-radius:0 var(--r-sm) var(--r-sm) 0;min-width:2px}
+.seg{height:14px;min-width:2px;margin-right:2px}
+.seg:last-child{border-radius:0 var(--r-sm) var(--r-sm) 0;margin-right:0}
+.barrow .val{font-size:12px;color:var(--text-secondary);text-align:right;font-variant-numeric:tabular-nums}
+.barrow:hover .lbl,.barrow:hover .val{color:var(--text-primary)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;font-size:12px;color:var(--text-secondary)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+
+/* waterfall / sequence */
+.wf{display:flex;flex-direction:column;gap:0}
+.grid5{display:grid;grid-template-columns:32px 208px minmax(0,1fr) 300px 74px;gap:12px;align-items:center}
+.head5{color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:4px 6px}
+.axis{
+  position:relative;height:17px;border-bottom:1px solid var(--grid);
+  font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums;
+  text-transform:none;letter-spacing:0;
+}
+.axis span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+.axis span:first-child{transform:none}
+.axis span:last-child{transform:translateX(-100%)}
+.step{padding:5px 6px;border-radius:var(--r-sm);cursor:pointer;border:1px solid transparent}
+.step:hover{background:var(--surface-2);border-color:var(--border)}
+.step.open{background:var(--surface-2);border-color:var(--axis)}
+.step .idx{font-size:11px;color:var(--text-muted);text-align:right;font-variant-numeric:tabular-nums}
+.step .nm{display:flex;align-items:center;gap:7px;font-size:12px;min-width:0}
+.step .nm .swatch{width:9px;height:9px;border-radius:2px;flex:none}
+.step .nm .txt{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step .args{
+  font-family:var(--mono);font-size:11.5px;color:var(--text-secondary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.step .dur{font-size:11.5px;color:var(--text-secondary);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lane{position:relative;height:16px}
+.lane .bar2{position:absolute;top:3px;height:10px;border-radius:3px;min-width:3px;box-shadow:0 0 0 2px var(--surface-1)}
+.lane .bar2.sub{top:5px;height:6px}
+.ribbon{display:flex;flex-wrap:wrap;gap:3px;margin:2px 0 16px}
+.rtile{width:15px;height:15px;border-radius:3px;cursor:pointer;border:1px solid transparent}
+.rtile:hover{outline:2px solid var(--text-primary);outline-offset:1px}
+.rtile.bad{border:2px solid var(--critical)}
+.detail{
+  margin:2px 0 10px 44px;padding:12px 14px;border:1px solid var(--border);
+  border-left:3px solid var(--s1);border-radius:var(--r-md);background:var(--surface-2);
+}
+.detail h4{margin:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);font-weight:600}
+.detail section{margin-bottom:12px}
+.detail section:last-child{margin-bottom:0}
+pre{
+  margin:0;padding:10px 12px;background:var(--plane);border:1px solid var(--border);
+  border-radius:var(--r-sm);overflow:auto;max-height:340px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;
+}
+pre.tall{max-height:640px}
+.answer{
+  padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);
+  white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.6;max-height:520px;overflow:auto;
+}
+.prompt{
+  padding:12px 14px;border:1px solid var(--border);border-left:3px solid var(--s3);
+  border-radius:var(--r-md);background:var(--surface-2);white-space:pre-wrap;font-size:13.5px;line-height:1.55;
+}
+.note{
+  padding:10px 13px;border:1px solid var(--border);border-left:3px solid var(--s4);
+  border-radius:var(--r-md);background:var(--surface-2);font-size:12.5px;color:var(--text-secondary);
+}
+.note.bad{border-left-color:var(--critical)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.toolchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--surface-2);
+  border-radius:999px;padding:3px 10px;font-size:11.5px;color:var(--text-secondary);font-variant-numeric:tabular-nums}
+.toolchip .swatch{width:9px;height:9px;border-radius:2px;flex:none}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--grid);vertical-align:top}
+th{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted);font-weight:600;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--surface-2)}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:12px}
+.kv dt{color:var(--text-muted)}
+.kv dd{margin:0;font-family:var(--mono);font-size:11.5px;word-break:break-all}
+details summary{cursor:pointer;font-size:12px;color:var(--text-secondary);padding:3px 0}
+details summary:hover{color:var(--text-primary)}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.toolbar label{font-size:12px;color:var(--text-secondary);display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+.copy{float:right;background:none;border:1px solid var(--border);border-radius:var(--r-sm);
+  font-size:11px;padding:2px 7px;cursor:pointer;color:var(--text-muted)}
+.copy:hover{color:var(--text-primary);border-color:var(--axis)}
+.finding{border:1px solid var(--border);border-left:3px solid var(--s9);border-radius:var(--r-md);
+  background:var(--surface-2);padding:12px 14px;margin-bottom:10px}
+.finding.defect{border-left-color:var(--critical)}
+.finding.gap{border-left-color:var(--serious)}
+.finding.verification{border-left-color:var(--good)}
+.finding.behaviour{border-left-color:var(--s1)}
+.finding.data{border-left-color:var(--s4)}
+.finding .hd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:7px}
+.finding .st{font-size:13px;line-height:1.55}
+.finding .rd{font-size:12.5px;color:var(--text-secondary);margin-top:7px;line-height:1.55}
+.finding .ev{font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-top:7px;word-break:break-word}
+
+/* conversation: reasoning, assistant text, tool calls, tool results */
+.msg{border:1px solid var(--border);border-left:3px solid var(--s9);border-radius:var(--r-md);
+  background:var(--surface-2);padding:9px 11px;margin-bottom:8px}
+.msg .role{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);
+  margin-bottom:5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.msg .body{white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.6;max-height:360px;overflow:auto}
+.msg .body.mono{font-family:var(--mono);font-size:11.5px}
+.msg.think{border-left-color:var(--s7)}
+.msg.say{border-left-color:var(--s3)}
+.msg.call{border-left-color:var(--s2)}
+.msg.user{border-left-color:var(--s1)}
+.msg.result{border-left-color:var(--s9)}
+.turnhd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0 8px;
+  padding-top:12px;border-top:1px solid var(--grid)}
+.turnhd:first-child{margin-top:0;padding-top:0;border-top:none}
+.turnhd .n{font-size:12.5px;font-weight:600}
+.elide{font-size:11.5px;color:var(--text-muted);margin:6px 0 10px}
+#tip{
+  position:fixed;pointer-events:none;z-index:99;background:var(--surface-1);color:var(--text-primary);
+  border:1px solid var(--axis);border-radius:var(--r-sm);padding:6px 9px;font-size:11.5px;
+  box-shadow:0 4px 16px rgba(0,0,0,.16);opacity:0;transition:opacity .08s;max-width:340px;
+  white-space:pre-line;line-height:1.4;
+}
+.scatter{width:100%;height:auto;display:block}
+.scatter text{font-size:10px;fill:var(--text-muted)}
+.scatter .gl{stroke:var(--grid);stroke-width:1}
+.scatter .ax{stroke:var(--axis);stroke-width:1}
+@media (max-width:1150px){
+  .grid5{grid-template-columns:32px 200px minmax(0,1fr) 74px}
+  .lane{display:none}
+}
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr}
+  aside{position:static;height:auto;max-height:none;border-right:none;border-bottom:1px solid var(--border)}
+  main{padding:16px 14px 60px}
+  .grid5{grid-template-columns:26px minmax(0,1fr) 84px}
+  .step .args,.head5 .args{display:none}
+  .barrow{grid-template-columns:minmax(0,1fr) 78px;grid-template-areas:"l v" "t t"}
+  .barrow .lbl{grid-area:l}.barrow .val{grid-area:v}.barrow .track{grid-area:t}
+  .detail{margin-left:0}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1 id="hTitle">Agent trace explorer</h1>
+    <div class="sub" id="hSub"></div>
+  </div>
+  <button class="hbtn" id="btnLoad">Load JSON…</button>
+  <button class="hbtn" id="btnTheme">Theme</button>
+  <input type="file" id="file" accept=".json,application/json" hidden>
+</header>
+
+<div class="layout">
+  <aside>
+    <input class="search" id="q" placeholder="Filter traces (prompt, tool, user, id)…" autocomplete="off">
+    <button class="navitem" data-view="overview" id="navOverview">
+      <div class="top"><strong style="color:var(--text-primary);font-size:12.5px">Overview</strong></div>
+      <div class="ttl">Corpus totals, latency, tokens, tools and the Heimdall layer</div>
+    </button>
+    <button class="navitem" data-view="findings" id="navFindings" hidden>
+      <div class="top"><strong style="color:var(--text-primary);font-size:12.5px">Findings</strong></div>
+      <div class="ttl">What the exporter's own analysis concluded</div>
+    </button>
+    <div class="grouplabel">Traces</div>
+    <div id="navList"></div>
+  </aside>
+  <main id="main"></main>
+</div>
+<div id="tip"></div>
+
+<script id="TRACE_DATA" type="application/json">__DATA__</script>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ state */
+let DB = JSON.parse(document.getElementById("TRACE_DATA").textContent);
+let TRACES = [], ABOUT = {}, ANALYSIS = null, FINDINGS = [], FINDINGS_DETAIL = null;
+let SEL = "overview", QUERY = "";
+
+const SERIES = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+const LLM_COLOR = "var(--s9)";     // the model layer is not a peer of the tools — kept neutral
+const ITER_COLOR = "var(--axis)";  // iterations are structure, not work — quieter still
+let COLOR_OF = new Map();
+
+const colorFor = (name) => `var(${COLOR_OF.get(name) || "--s9"})`;
+
+function shortTool(n){
+  return String(n || "")
+    .replace(/^tool\./, "")
+    .replace(/^mcp__([a-z0-9_]+)__/i, "$1·");
+}
+function esc(s){
+  return String(s==null?"":s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+const fmtS = (s) => s==null ? "—" : (s >= 100 ? s.toFixed(0)+" s" : s >= 10 ? s.toFixed(1)+" s" : s >= 1 ? s.toFixed(2)+" s" : (s*1000).toFixed(0)+" ms");
+const fmtUsd = (v) => v==null ? "—" : "$" + (v < 1 ? v.toFixed(4) : v.toFixed(2));
+const fmtN = (v) => v==null ? "—" : v.toLocaleString("en-US");
+const fmtTok = (v) => v==null ? "—" : (v >= 1e6 ? (v/1e6).toFixed(2)+"M" : v >= 1000 ? (v/1000).toFixed(1)+"k" : String(v));
+const fmtBytes = (n) => n==null ? "—" : (n > 1024 ? (n/1024).toFixed(1)+" KB" : n+" B");
+const fmtMs = (ms) => ms==null ? "—" : fmtS(ms/1000);
+const num = (v) => v==null ? "—" : String(v);
+const obj = (v) => { if (typeof v !== "string") return v || {}; try { return JSON.parse(v) || {}; } catch(e){ return {}; } };
+const median = (xs) => { if (!xs.length) return null; const a = xs.slice().sort((p,q)=>p-q);
+  const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m-1]+a[m])/2; };
+
+/* Message lists arrive either as real arrays (2026-08-08 on) or as a JSON string
+   (the …-sample.json generation). Anything else is treated as absent. */
+const asList = (v) => {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string"){ try { const p = JSON.parse(v); if (Array.isArray(p)) return p; } catch(e){} }
+  return [];
+};
+
+/* An OpenInference message is a small union: plain `content`, a `contents` list of
+   typed blocks (reasoning / text), and `tool_calls`. Older exports put those fields
+   at the top level instead of under `message`. Flatten either into the four things
+   worth showing. Reasoning signatures are opaque base64 and are dropped — unreadable,
+   and they dwarf everything else in a raw dump. */
+function readMessage(m){
+  const msg = (m && m.message) || m || {};
+  const r = {role: msg.role || "", think: [], text: [], calls: [], toolCallId: msg.tool_call_id || ""};
+  if (typeof msg.content === "string" && msg.content) r.text.push(msg.content);
+  (msg.contents || []).forEach(c => {
+    const mc = (c && c.message_content) || {};
+    if (mc.type === "reasoning") { if (mc.text) r.think.push(mc.text); }
+    else if (mc.text) r.text.push(mc.text);
+  });
+  (msg.tool_calls || []).forEach(tc => {
+    const call = (tc && tc.tool_call) || {}, fn = call.function || {};
+    r.calls.push({id: call.id || "", name: fn.name || "", args: fn.arguments || ""});
+  });
+  return r;
+}
+function stripSignatures(v){
+  return JSON.parse(JSON.stringify(v, (k, val) =>
+    (k === "signature" && typeof val === "string") ? `‹signature dropped, ${val.length} chars›` : val));
+}
+
+/* ------------------------------------------------------------ normalising
+   Three export generations live in the wild:
+     old (…-sample.json)  — no LLM layer, TOOL durations all 0, run_config
+     2026-08-08           — AGENT > LLM/TOOL > heimdall CHAIN, real durations,
+                            token counts, run_fingerprint, _analysis/_findings,
+                            spans carry duration_s and span_cost_usd
+     2026-08-09           — an iteration.N CHAIN sits between the turn and its
+                            model call, spans carry duration_ms (not duration_s),
+                            LLM spans carry real content (system prompt, input
+                            messages, reasoning, tool calls) and a measured ttft.
+                            Per-trace tool_call_counts / heimdall_* roll-ups are
+                            gone, so those are derived from the spans instead.
+   Everything below reduces all three to one shape.                          */
+function prepare(db){
+  ABOUT = db._about || {};
+  ANALYSIS = db._analysis || null;
+  FINDINGS = db._findings || [];
+  FINDINGS_DETAIL = db._findings_detail || null;
+
+  const traces = (db.traces || []).map((t, ti) => {
+    const spans = (t.spans || []).slice();
+    spans.forEach(s => { s._t = Date.parse(s.start_utc || s.start_time || 0) || 0; });
+    spans.sort((a,b) => a._t - b._t);
+    const root = spans.find(s => !s.parent_id) || spans[0] || null;
+    const t0 = root ? root._t : 0;
+    const dur = t.duration_s != null ? t.duration_s : ((root && root.duration_s) || 0);
+
+    const byId = new Map(spans.map(s => [s.span_id, s]));
+    spans.forEach(s => {
+      let d = 0, p = s.parent_id, guard = 0;
+      while (p && byId.has(p) && guard++ < 20){ d++; p = byId.get(p).parent_id; }
+      s._depth = d;
+      s._off = (s._t - t0) / 1000;
+      // 2026-08-09 renamed the field to duration_ms; older exports say duration_s.
+      s._dur = s.duration_s != null ? s.duration_s
+             : s.duration_ms != null ? s.duration_ms / 1000 : 0;
+      const at = s.attributes || {};
+      const b = at.b2e || {};
+      s._tool = (at.tool && at.tool.name) || shortTool(s.name);
+      s._err = s.status_code === "ERROR";
+      s._out = (at.output && at.output.value) || "";
+      s._in  = (at.input && at.input.value) || "";
+      s._outErr = /^\s*(Error|Traceback|<tool_use_error>|\{"error"|\{"code")/i.test(s._out);
+      s._hd = b.heimdall || null;                       // heimdall CHAIN
+      s._http = b.http || null;
+      s._llm = at.llm || null;
+      s._lm = b.llm || null;                            // ttft, message_id, reconstruction flags
+      s._iterIdx = b.iteration ? b.iteration.index : null;
+      s._isIter = s.span_kind === "CHAIN" && s._iterIdx != null;
+      s._label = s.span_kind === "AGENT" ? "turn"
+               : s._isIter ? `iteration ${s._iterIdx}`
+               : s.span_kind === "LLM" ? "model call"
+               : shortTool(s.name);
+      s._ttft = (s._lm && s._lm.ttft_ms != null) ? s._lm.ttft_ms / 1000 : null;
+      // 2026-08-09 LLM spans carry the assistant turn itself, not just accounting.
+      s._inRaw = asList(s._llm && s._llm.input_messages);
+      s._outMsgs = asList(s._llm && s._llm.output_messages).map(readMessage);
+      s._inMsgs  = s._inRaw.map(readMessage);
+      s._think = s._outMsgs.flatMap(m => m.think);
+      s._say   = s._outMsgs.flatMap(m => m.text);
+      s._asked = s._outMsgs.flatMap(m => m.calls);
+      s._cost = s.span_cost_usd != null ? s.span_cost_usd : null;
+    });
+    // Which iteration a span sits under. Parents always start before their children,
+    // so one pass over the time-sorted list is enough. Null on pre-2026-08-09 exports.
+    spans.forEach(s => {
+      let ix = s._iterIdx, p = s.parent_id, guard = 0;
+      while (ix == null && p && byId.has(p) && guard++ < 20){ const q = byId.get(p); ix = q._iterIdx; p = q.parent_id; }
+      s._inIter = ix;
+    });
+
+    const kids = spans.filter(s => s !== root);
+    kids.forEach((s, i) => { s._gap = s._off - (i === 0 ? 0 : kids[i-1]._off); });
+    // Old exports flush every child span with the turn's end timestamp and record
+    // 0 s durations: there is no timeline to draw. Detect that instead of faking one.
+    const spread = kids.length ? kids[kids.length-1]._off - kids[0]._off : 0;
+    const hasTiming = kids.some(s => s._dur > 0) && !(kids.length > 1 && dur > 2 && spread < dur * 0.02);
+
+    const rootAttr = (root && root.attributes) || {};
+    const b2e = obj(rootAttr.b2e);
+    const stats = t.turn_stats || b2e.turn || {};
+    const tok = t.turn_token_counts || (rootAttr.llm && rootAttr.llm.token_count) || null;
+    const cfg = t.run_config || t.run_fingerprint || b2e.run || {};
+
+    // 2026-08-09 dropped the per-trace roll-ups (tool_call_counts, heimdall_endpoint_counts,
+    // heimdall_error_codes). Recount from the spans, which every generation has, and fall
+    // back to the shipped roll-up only when there are no spans of that layer at all.
+    const toolCounts = {}, hdEndpoints = {}, hdErrors = {};
+    spans.forEach(s => {
+      if (s.span_kind === "TOOL") toolCounts[s._tool] = (toolCounts[s._tool] || 0) + 1;
+      if (!s._hd) return;
+      const ep = s._hd.endpoint || "?";
+      hdEndpoints[ep] = (hdEndpoints[ep] || 0) + 1;
+      if (s._hd.error_code) hdErrors[s._hd.error_code] = (hdErrors[s._hd.error_code] || 0) + 1;
+    });
+    const pick = (derived, shipped) => Object.keys(derived).length ? derived : (shipped || {});
+    const llmSpans = spans.filter(s => s.span_kind === "LLM");
+
+    const ts = { ...t,
+      _i: ti,
+      _id: t.phoenix_rowid != null ? t.phoenix_rowid : ti+1,
+      _spans: spans, _kids: kids, _root: root, _t0: t0, _dur: dur,
+      _spread: spread, _hasTiming: hasTiming,
+      _err: !!(root && root.status_code === "ERROR"),
+      _stats: stats, _tok: tok, _cfg: cfg, _b2e: b2e,
+      _cost: stats.cost_usd != null ? stats.cost_usd : null,
+      _iter: stats.iterations != null ? stats.iterations : null,
+      _calls: stats.tool_calls != null ? stats.tool_calls : kids.filter(s=>s.span_kind==="TOOL").length,
+      _llmCalls: llmSpans.length,
+      _llmSpans: llmSpans,
+      _toolTime: stats.tool_time_ms != null ? stats.tool_time_ms/1000 : null,
+      _modelTime: (stats.duration_ms != null && stats.tool_time_ms != null)
+                    ? (stats.duration_ms - stats.tool_time_ms)/1000 : null,
+      _ttft: stats.ttft_ms != null ? stats.ttft_ms/1000 : null,
+      _reasoning: t.reasoning || null,
+      _denials: t.permission_denials || b2e.permission_denials || 0,
+      _forbidden: obj(t.attempted_forbidden_tools || b2e.attempted_forbidden_tools) ,
+      _denialDetail: obj(b2e.permission_denials_detail),
+      _hdErrors: pick(hdErrors, t.heimdall_error_codes),
+      _hdEndpoints: pick(hdEndpoints, t.heimdall_endpoint_counts),
+      _toolCounts: pick(toolCounts, t.tool_call_counts),
+      _prompt: t.user_prompt || (rootAttr.input && rootAttr.input.value) || "",
+      _answer: t.final_answer != null ? t.final_answer
+               : ((rootAttr.output && rootAttr.output.value) || ""),
+    };
+    // Count failures once per tool call: a failed Heimdall request shows up both on the
+    // CHAIN span and, relayed, in its parent TOOL span's output.
+    const failedChainParents = new Set(spans.filter(s => s._err && s.parent_id).map(s => s.parent_id));
+    ts._failedCalls = spans.filter(s =>
+      s.span_kind === "TOOL" ? (s._err || s._outErr || failedChainParents.has(s.span_id))
+                             : (s._err && !byId.has(s.parent_id))).length;
+    ts._search = [ts._prompt, ts.why_included, ts.trace_id, ts.session_id, ts.user_id, ts.harness,
+                  Object.keys(ts._toolCounts).join(" ")].join(" ").toLowerCase();
+    return ts;
+  });
+
+  // Fixed colour order by corpus-wide frequency, so a tool keeps its hue everywhere.
+  const freq = new Map();
+  traces.forEach(t => t._kids.forEach(s => {
+    if (s.span_kind !== "TOOL") return;
+    freq.set(s._tool, (freq.get(s._tool)||0)+1);
+  }));
+  COLOR_OF = new Map([...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8)
+                      .map(([n],i)=>[n, SERIES[i]]));
+  return traces;
+}
+
+/* One vocabulary for turn outcome, used in the sidebar, the header and the table. */
+function outcome(t){
+  if (t._err) return {cls:"err", label:"error"};
+  if (!t._answer) return {cls:"warn", label:"no output"};
+  return {cls:"ok", label:"completed"};
+}
+const pillFor = (t, text) => {
+  const o = outcome(t);
+  return `<span class="pill ${o.cls}"><span class="dot"></span>${esc(text || o.label)}</span>`;
+};
+
+/* --------------------------------------------------------------- charts */
+function barChart(rows, {labelw = 170, fmt = String, color = "var(--s1)"} = {}){
+  const max = Math.max(1, ...rows.map(r => r.v));
+  return `<div class="bars" style="--labelw:${labelw}px">` + rows.map(r => `
+    <div class="barrow" data-tip="${esc(r.tip || (r.k + " — " + fmt(r.v)))}">
+      <div class="lbl">${r.swatch ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${r.swatch};margin-right:6px"></span>`:""}${esc(r.k)}</div>
+      <div class="track"><div class="bar" style="width:${(r.v/max*100).toFixed(2)}%;background:${r.color||color}"></div></div>
+      <div class="val">${esc(fmt(r.v))}</div>
+    </div>`).join("") + `</div>`;
+}
+
+/* Stacked: segments share one axis and one unit — a part-to-whole of the same measure. */
+function stackedChart(rows, series, {labelw = 200, fmt = String} = {}){
+  const total = r => series.reduce((a,s) => a + (r[s.key]||0), 0);
+  const max = Math.max(1, ...rows.map(total));
+  return `<div class="legend">${series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join("")}</div>
+  <div class="bars" style="--labelw:${labelw}px">` + rows.map(r => `
+    <div class="barrow" data-tip="${esc(r.k + "\n" + series.map(s=>`${s.label}: ${fmt(r[s.key]||0)}`).join("\n"))}">
+      <div class="lbl">${esc(r.k)}</div>
+      <div class="track">${series.map(s=>`<div class="seg" style="width:${((r[s.key]||0)/max*100).toFixed(2)}%;background:${s.color}"></div>`).join("")}</div>
+      <div class="val">${esc(fmt(total(r)))}</div>
+    </div>`).join("") + `</div>`;
+}
+
+function scatter(pts, xLabel, yLabel){
+  const W=680,H=300,P={l:56,r:16,t:14,b:38};
+  const xmax=Math.max(1,...pts.map(p=>p.x))*1.08, ymax=Math.max(1e-4,...pts.map(p=>p.y))*1.14;
+  const X=v=>P.l+(v/xmax)*(W-P.l-P.r), Y=v=>H-P.b-(v/ymax)*(H-P.t-P.b);
+  const ticks=n=>Array.from({length:n+1},(_,i)=>i/n);
+  const at = pts.map(p => [X(p.x), Y(p.y)]);
+  const placed = [];
+  return `<svg class="scatter" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(xLabel)} versus ${esc(yLabel)}">
+    ${ticks(4).map(f=>`<line class="gl" x1="${P.l}" x2="${W-P.r}" y1="${Y(f*ymax)}" y2="${Y(f*ymax)}"/>
+      <text x="${P.l-8}" y="${Y(f*ymax)+3}" text-anchor="end">${(f*ymax).toFixed(2)}</text>`).join("")}
+    ${ticks(4).map(f=>`<text x="${X(f*xmax)}" y="${H-P.b+15}" text-anchor="middle">${Math.round(f*xmax)}</text>`).join("")}
+    <line class="ax" x1="${P.l}" x2="${W-P.r}" y1="${H-P.b}" y2="${H-P.b}"/>
+    <text x="${(P.l+W-P.r)/2}" y="${H-6}" text-anchor="middle">${esc(xLabel)}</text>
+    <text x="13" y="${(P.t+H-P.b)/2}" text-anchor="middle" transform="rotate(-90 13 ${(P.t+H-P.b)/2})">${esc(yLabel)}</text>
+    ${pts.map((p,k)=>{
+      const [cx,cy] = at[k];
+      const lonely = at.every(([qx,qy],j) => j===k || Math.hypot(qx-cx,qy-cy) > 22);
+      const room = lonely && placed.every(q => Math.abs(q[0]-cx) > 26 || Math.abs(q[1]-cy) > 13);
+      if (room) placed.push([cx,cy]);
+      return `<g class="pt" data-i="${p.i}" data-tip="${esc(p.tip)}" style="cursor:pointer">
+        <circle cx="${cx}" cy="${cy}" r="6" fill="var(--s1)" stroke="var(--surface-1)" stroke-width="2"/>
+        ${room?`<text x="${cx}" y="${cy-11}" text-anchor="middle">#${p.label}</text>`:""}</g>`;
+    }).join("")}
+  </svg>`;
+}
+
+/* ------------------------------------------------------------- overview */
+function renderOverview(){
+  const T = TRACES;
+  const spans   = T.reduce((a,t)=>a+t._spans.length,0);
+  const calls   = T.reduce((a,t)=>a+t._calls,0);
+  const llm     = T.reduce((a,t)=>a+t._llmCalls,0);
+  const cost    = T.reduce((a,t)=>a+(t._cost||0),0);
+  const tokens  = T.reduce((a,t)=>a+((t._tok&&t._tok.total)||0),0);
+  const cacheRd = T.reduce((a,t)=>a+((t._tok&&t._tok.prompt_details&&t._tok.prompt_details.cache_read)||0),0);
+  const prompt  = T.reduce((a,t)=>a+((t._tok&&t._tok.prompt)||0),0);
+  const errs    = T.filter(t=>t._err).length;
+  const failed  = T.reduce((a,t)=>a+t._failedCalls,0);
+  const denials = T.reduce((a,t)=>a+t._denials,0);
+  const hdCalls = T.reduce((a,t)=>a+((t._stats.heimdall_calls)||0),0);
+  const timing  = T.some(t=>t._hasTiming);
+  const A = ANALYSIS || {};
+
+  const toolTotals = new Map();
+  T.forEach(t => Object.entries(t._toolCounts).forEach(([k,v]) => {
+    const name = shortTool(k);
+    toolTotals.set(name, (toolTotals.get(name)||0)+v);
+  }));
+
+  // Time to first token and reasoning only exist from the 2026-08-09 generation on.
+  const ttfts = T.flatMap(t => t._llmSpans.map(s => s._ttft).filter(v => v != null));
+  const ttftMed = (A.ttft_ms && A.ttft_ms.median != null) ? A.ttft_ms.median/1000 : median(ttfts);
+  const thinkChars = (A.reasoning && A.reasoning.reasoning_chars != null)
+    ? A.reasoning.reasoning_chars
+    : T.reduce((a,t) => a + t._llmSpans.reduce((b,s) => b + s._think.join("").length, 0), 0);
+  const thinkSpans = T.reduce((a,t) => a + t._llmSpans.filter(s => s._think.length).length, 0);
+
+  const ttftRows = T.filter(t => t._llmSpans.some(s => s._ttft != null)).map(t => {
+    const v = t._llmSpans.map(s => s._ttft).filter(x => x != null);
+    return {k:`#${t._id} · ${(t._prompt||"").slice(0,30)}`, v:+median(v).toFixed(3), color:"var(--s7)",
+            tip:`Trace #${t._id}\nmedian ${fmtS(median(v))} across ${v.length} model calls`
+                + `\nfirst call ${fmtS(v[0])} · slowest ${fmtS(Math.max(...v))}`};
+  });
+  const toolRows = [...toolTotals.entries()].sort((a,b)=>b[1]-a[1])
+    .map(([k,v]) => ({k, v, color: colorFor(k.includes("·") ? k.split("·").pop() : k) === "var(--s9)"
+                          ? colorForDisplay(k) : colorForDisplay(k),
+                      tip:`${k} — ${v} calls`}));
+
+  const latRows = T.filter(t => t._modelTime != null).map(t => ({
+    k:`#${t._id} · ${(t._prompt||"").slice(0,30)}`, model:t._modelTime, tool:t._toolTime||0 }));
+
+  const durRows = T.slice().sort((a,b)=>b._dur-a._dur).map(t => ({
+    k:`#${t._id}${t._err?" ⚠ error":""} · ${(t._prompt||"").slice(0,32)}`, v:+t._dur.toFixed(2),
+    color: t._err ? "var(--critical)" : "var(--s1)",
+    tip:`Trace #${t._id} — ${fmtS(t._dur)}, ${t._calls} tool calls, ${t._llmCalls} model calls`}));
+
+  const costRows = T.filter(t=>t._cost!=null).sort((a,b)=>b._cost-a._cost).map(t => ({
+    k:`#${t._id} · ${(t._prompt||"").slice(0,32)}`, v:+t._cost.toFixed(6), color:"var(--s2)",
+    tip:`Trace #${t._id} — ${fmtUsd(t._cost)}, ${fmtN((t._tok&&t._tok.total)||0)} tokens`}));
+
+  const pts = T.filter(t=>t._cost!=null && t._stats.heimdall_calls!=null).map(t => ({
+    x:t._stats.heimdall_calls, y:t._cost, i:t._i, label:t._id,
+    tip:`Trace #${t._id}\n${t._stats.heimdall_calls} Heimdall calls · ${fmtUsd(t._cost)} · ${fmtS(t._dur)}`}));
+
+  // Heimdall layer, straight off the CHAIN spans so it works without _analysis
+  const http = new Map(), codes = new Map();
+  T.forEach(t => t._spans.forEach(s => {
+    if (!s._hd) return;
+    const st = s._http ? String(s._http.status) : "?";
+    http.set(st, (http.get(st)||0)+1);
+    if (s._hd.error_code) codes.set(s._hd.error_code, (codes.get(s._hd.error_code)||0)+1);
+  }));
+  const httpColor = (s) => s.startsWith("2") ? "var(--good)" : s.startsWith("4") && s !== "403" ? "var(--warning)"
+                          : s === "403" ? "var(--critical)" : "var(--serious)";
+  const httpRows = [...http.entries()].sort((a,b)=>b[1]-a[1])
+    .map(([k,v]) => ({k:`HTTP ${k}`, v, color:httpColor(k), tip:`HTTP ${k} — ${v} calls`}));
+  const codeRows = [...codes.entries()].sort((a,b)=>b[1]-a[1])
+    .map(([k,v]) => ({k, v, color:"var(--serious)", tip:`${k} — ${v} calls`}));
+
+  const gaps = ABOUT.known_gaps || [];
+  const caveats = ABOUT.caveats || [];
+
+  document.getElementById("main").innerHTML = `
+  <div class="card">
+    <h2>Overview</h2>
+    <div class="dim" style="font-size:12.5px;margin-bottom:14px">
+      ${esc(ABOUT.selection || ABOUT.corpus || "")}${ABOUT.sample?" · "+esc(ABOUT.sample):""}</div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Traces</div><div class="v">${T.length}</div>
+        <div class="sub">${spans} spans</div></div>
+      <div class="tile"><div class="k">Model calls</div><div class="v">${llm||"—"}</div>
+        <div class="sub">${llm?Math.round(llm/T.length)+" per turn":"not instrumented"}</div></div>
+      <div class="tile"><div class="k">Tool calls</div><div class="v">${calls}</div>
+        <div class="sub">${hdCalls} to Heimdall</div></div>
+      <div class="tile"><div class="k">Tokens</div><div class="v">${fmtTok(tokens)}</div>
+        <div class="sub">${prompt?Math.round(cacheRd/prompt*100)+"% of prompt from cache":"—"}</div></div>
+      <div class="tile"><div class="k">Total cost</div><div class="v">${fmtUsd(cost)}</div>
+        <div class="sub">${fmtUsd(cost/Math.max(1,T.length))} per turn</div></div>
+      <div class="tile"><div class="k">Wall clock</div><div class="v">${(T.reduce((a,t)=>a+t._dur,0)/60).toFixed(1)}<span class="u">min</span></div></div>
+      ${ttftMed!=null?`<div class="tile"><div class="k">Time to first token</div><div class="v">${fmtS(ttftMed)}</div>
+        <div class="sub">median of ${ttfts.length||(A.ttft_ms&&A.ttft_ms.n)||0} model calls${
+          A.ttft_ms?` · ${fmtMs(A.ttft_ms.min)}–${fmtMs(A.ttft_ms.max)}`:""}</div></div>`:""}
+      ${thinkChars?`<div class="tile"><div class="k">Reasoning captured</div><div class="v">${fmtTok(thinkChars)}<span class="u">chars</span></div>
+        <div class="sub">${thinkSpans} of ${llm} model calls</div></div>`:""}
+      <div class="tile"><div class="k">Failed calls</div><div class="v" style="color:${failed?"var(--serious)":"inherit"}">${failed}</div>
+        <div class="sub">${errs} turn${errs===1?"":"s"} ended in error</div></div>
+      <div class="tile"><div class="k">Permission denials</div><div class="v" style="color:${denials?"var(--critical)":"inherit"}">${denials}</div>
+        <div class="sub">forbidden tool attempts</div></div>
+    </div>
+    ${A.layer_totals ? `<div class="chips" style="margin-top:14px">
+      ${Object.entries(A.layer_totals).map(([k,v])=>`<span class="toolchip">${esc(k)} <strong>${v}</strong></span>`).join("")}
+    </div>`:""}
+  </div>
+
+  ${gaps.length ? `<div class="card"><h3>What this export does not contain</h3>
+    <div class="note"><ul style="margin:0;padding-left:18px">${gaps.map(g=>`<li>${esc(g)}</li>`).join("")}</ul></div></div>`:""}
+  ${caveats.length ? `<div class="card"><h3>How to read these numbers</h3>
+    <div class="note"><ul style="margin:0;padding-left:18px">${caveats.map(c=>`<li>${esc(c)}</li>`).join("")}</ul></div></div>`:""}
+  ${ABOUT.format ? `<div class="card"><h3>Span schema</h3><div class="note">${esc(ABOUT.format)}</div></div>`:""}
+
+  ${latRows.length ? `<div class="card">
+    <h2>Where each turn spent its time</h2>
+    <h3>Model time is the turn duration minus measured tool time — the agent thinking between calls</h3>
+    ${stackedChart(latRows, [
+      {key:"model", label:"model time", color:"var(--s1)"},
+      {key:"tool",  label:"tool time",  color:"var(--s2)"}], {labelw:230, fmt:v=>fmtS(v)})}
+  </div>` : `<div class="card">
+    <h2>Turn duration</h2><h3>Seconds of wall clock per trace — red bars are turns that ended in an error</h3>
+    ${barChart(durRows,{labelw:240, fmt:v=>fmtS(v)})}
+  </div>`}
+
+  <div class="card">
+    <h2>Cost per turn</h2><h3>US dollars, from the agent's own accounting (turn_stats.cost_usd)</h3>
+    ${barChart(costRows,{labelw:240, fmt:v=>fmtUsd(v)})}
+  </div>
+
+  <div class="card">
+    <h2>Tool usage</h2><h3>Total calls per tool across all traces</h3>
+    ${barChart(toolRows,{labelw:210, fmt:v=>v+(v===1?" call":" calls")})}
+  </div>
+
+  ${ttftRows.length ? `<div class="card">
+    <h2>Time to first token</h2>
+    <h3>Median across the turn's model calls — the one latency that was measured rather than derived</h3>
+    ${barChart(ttftRows,{labelw:230, fmt:v=>fmtS(v)})}
+  </div>`:""}
+
+  ${httpRows.length ? `<div class="card">
+    <h2>Heimdall responses</h2>
+    <h3>Every MCP bridge call, by HTTP status — ${httpRows.reduce((a,r)=>a+r.v,0)} in total</h3>
+    ${barChart(httpRows,{labelw:110, fmt:v=>v+(v===1?" call":" calls")})}
+    ${codeRows.length ? `<h3 style="margin:18px 0 12px">Error codes returned</h3>
+      ${barChart(codeRows,{labelw:210, fmt:v=>v+(v===1?" call":" calls")})}`:""}
+  </div>`:""}
+
+  ${pts.length ? `<div class="card">
+    <h2>Cost against data calls</h2><h3>Each dot is one turn — click to open it</h3>
+    ${scatter(pts,"Heimdall calls","Cost, USD")}
+  </div>`:""}
+
+  <div class="card">
+    <h2>All traces</h2><h3>Click a row to open the trace</h3>
+    <div style="overflow-x:auto"><table>
+      <thead><tr>
+        <th>#</th><th>Started (UTC)</th><th>Prompt</th><th>User</th>
+        <th class="num">Spans</th><th class="num">Model</th><th class="num">Tools</th>
+        <th class="num">Tokens</th><th class="num">Duration</th><th class="num">Cost</th><th>Status</th>
+      </tr></thead>
+      <tbody>${T.map(t=>`<tr data-i="${t._i}">
+        <td class="num">${t._id}</td>
+        <td class="mono">${esc((t.started_utc||"").replace("T"," ").replace("Z",""))}</td>
+        <td style="max-width:300px">${esc((t._prompt||"").slice(0,80))}${(t._prompt||"").length>80?"…":""}</td>
+        <td class="mono">${esc(t.user_id||"—")}</td>
+        <td class="num">${t._spans.length}</td><td class="num">${t._llmCalls||"—"}</td><td class="num">${t._calls}</td>
+        <td class="num">${t._tok?fmtTok(t._tok.total):"—"}</td>
+        <td class="num">${fmtS(t._dur)}</td><td class="num">${fmtUsd(t._cost)}</td>
+        <td>${pillFor(t)}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+  </div>`;
+
+  document.querySelectorAll("#main tbody tr, #main .pt").forEach(el =>
+    el.addEventListener("click", () => select(+el.dataset.i)));
+}
+// tool colours are keyed on the raw tool name; the charts hold display names
+function colorForDisplay(display){
+  for (const [name, slot] of COLOR_OF) if (shortTool(name) === display) return `var(${slot})`;
+  return COLOR_OF.has(display) ? `var(${COLOR_OF.get(display)})` : "var(--s9)";
+}
+
+/* ------------------------------------------------------------- findings */
+/* A finding's `evidence` names where it came from. When that is a key inside
+   _findings_detail, the backing rows ship with the export — show them under the
+   finding rather than making the reader open the JSON. */
+function evidenceHTML(f){
+  if (!f.evidence) return "";
+  const rows = [];
+  String(f.evidence).split(/\s*,\s*/).forEach(ref => {
+    const m = /^_findings_detail\.([A-Za-z0-9_]+)$/.exec(ref.trim());
+    const val = m && FINDINGS_DETAIL ? FINDINGS_DETAIL[m[1]] : null;
+    if (val != null) rows.push({ref: ref.trim(), val});
+  });
+  return `<div class="ev">evidence: ${esc(f.evidence)}</div>` + rows.map(r => `
+    <details style="margin-top:6px"><summary>${esc(r.ref)}${Array.isArray(r.val)?` — ${r.val.length} row${r.val.length===1?"":"s"}`:""}</summary>
+      <pre class="tall" style="margin-top:6px">${esc(JSON.stringify(r.val, null, 2))}</pre></details>`).join("");
+}
+
+function tableHTML(rows, cols){
+  return `<div style="overflow-x:auto"><table>
+    <thead><tr>${cols.map(c=>`<th class="${c.num?"num":""}">${esc(c.label)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r=>`<tr style="cursor:default">${cols.map(c=>
+      `<td class="${c.num?"num":""} ${c.mono?"mono":""}">${c.html?c.html(r):esc(String(c.get(r)))}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function renderFindings(){
+  const A = ANALYSIS || {};
+  const tr = A.token_reconciliation || [];
+  const par = A.parenting || [];
+  const orphans = par.reduce((a,p)=>a+((p.spans_not_under_an_iteration||[]).length),0);
+  const shortId = id => String(id||"").slice(0,12) + "…";
+
+  document.getElementById("main").innerHTML = `
+  <div class="card">
+    <h2>Findings</h2>
+    <h3>Shipped inside the export as <span class="mono">_findings</span> — the exporter's own reading of this corpus, not something this page derived</h3>
+    ${FINDINGS.map(f => `
+      <div class="finding ${esc(f.kind||"")}">
+        <div class="hd">
+          <span class="pill ${f.kind==="defect"||f.severity==="high"?"err":f.kind==="verification"?"ok":"warn"}">
+            <span class="dot"></span>${esc(f.kind||"note")}${f.severity?" · "+esc(f.severity):""}</span>
+          <span class="mono dim">${esc(f.id||"")}</span>
+        </div>
+        <div class="st">${esc(f.statement||"")}</div>
+        ${f.reading?`<div class="rd"><strong>Reading:</strong> ${esc(f.reading)}</div>`:""}
+        ${evidenceHTML(f)}
+      </div>`).join("")}
+  </div>
+
+  ${tr.length ? `<div class="card">
+    <h2>Token reconciliation</h2>
+    <h3>Per-call token counts summed against the turn total — a non-zero delta means a model call was
+        double-counted or missed. ${tr.filter(r=>!r.delta_prompt&&!r.delta_completion).length}/${tr.length} traces reconcile exactly.</h3>
+    ${tableHTML(tr, [
+      {label:"Trace", mono:true, get:r=>shortId(r.trace_id)},
+      {label:"Turn prompt", num:true, get:r=>fmtN(r.turn_prompt)},
+      {label:"Σ span prompt", num:true, get:r=>fmtN(r.llm_span_prompt_sum)},
+      {label:"Δ", num:true, html:r=>`<span style="color:${r.delta_prompt?"var(--critical)":"var(--good)"}">${r.delta_prompt}</span>`},
+      {label:"Turn completion", num:true, get:r=>fmtN(r.turn_completion)},
+      {label:"Σ span completion", num:true, get:r=>fmtN(r.llm_span_completion_sum)},
+      {label:"Δ", num:true, html:r=>`<span style="color:${r.delta_completion?"var(--critical)":"var(--good)"}">${r.delta_completion}</span>`},
+    ])}
+  </div>`:""}
+
+  ${par.length ? `<div class="card">
+    <h2>Span parenting</h2>
+    <h3>Whether every model and tool call was filed under an iteration — correlation is by message id, not by timestamp</h3>
+    <div class="note ${orphans?"bad":""}">${orphans
+      ? `${orphans} span${orphans===1?"":"s"} could not be attached to an iteration.`
+      : `All ${par.length} traces are fully parented: no span sits outside an iteration.`}</div>
+    ${orphans ? `<pre class="tall" style="margin-top:10px">${esc(JSON.stringify(par.filter(p=>(p.spans_not_under_an_iteration||[]).length), null, 2))}</pre>`:""}
+  </div>`:""}
+
+  ${ANALYSIS ? `<div class="card"><h2>Raw analysis block</h2>
+    <h3>The full <span class="mono">_analysis</span> object as exported</h3>
+    <details><summary>Show JSON</summary><pre class="tall" style="margin-top:8px">${esc(JSON.stringify(ANALYSIS, null, 2))}</pre></details></div>`:""}
+  ${FINDINGS_DETAIL ? `<div class="card"><h2>Raw findings detail</h2>
+    <h3>The full <span class="mono">_findings_detail</span> object as exported</h3>
+    <details><summary>Show JSON</summary><pre class="tall" style="margin-top:8px">${esc(JSON.stringify(FINDINGS_DETAIL, null, 2))}</pre></details></div>`:""}`;
+}
+
+/* ---------------------------------------------------------- one trace */
+let OPEN = new Set(), SPANQ = "", ERRONLY = false, LAYER = "all";
+
+function renderTrace(){
+  const t = TRACES[SEL];
+  const cfg = t._cfg || {}, st = t._stats || {}, tok = t._tok;
+  const counts = Object.entries(t._toolCounts).sort((a,b)=>b[1]-a[1]);
+  const end = Math.max(t._dur, ...t._kids.map(s => s._off + s._dur), 0.001);
+  const hdErr = Object.entries(t._hdErrors||{});
+  const forb = Array.isArray(t._forbidden) ? t._forbidden : [];
+
+  document.getElementById("main").innerHTML = `
+  <div class="card">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <h2 style="margin:0">Trace #${t._id}</h2>
+      ${pillFor(t)}
+      <span class="pill">${esc((t.started_utc||"").replace("T"," ").replace("Z",""))} UTC</span>
+      <span class="pill mono">${esc(cfg.model_id||"model n/a")}</span>
+      ${t.harness?`<span class="pill mono">${esc(t.harness)}</span>`:""}
+      ${t.user_id?`<span class="pill mono">user ${esc(t.user_id)}</span>`:""}
+    </div>
+    ${t.why_included?`<div class="note" style="margin-bottom:14px">${esc(t.why_included)}</div>`:""}
+    ${t._denials?`<div class="note bad" style="margin-bottom:14px">
+      <strong>${t._denials} permission denial${t._denials===1?"":"s"}</strong> in this turn${forb.length?` — the agent tried to use ${forb.map(f=>`<span class="mono">${esc(f)}</span>`).join(", ")}, which this run forbids (<span class="mono">code_execution=${esc(t._b2e.code_execution||"forbidden")}</span>).`:"."}
+      ${t._denialDetail&&t._denialDetail.length?`<details style="margin-top:6px"><summary>What was attempted</summary><pre>${esc(JSON.stringify(t._denialDetail,null,2))}</pre></details>`:""}
+    </div>`:""}
+    <h3>User prompt</h3>
+    <div class="prompt">${esc(t._prompt||"(none)")}</div>
+    <div class="tiles" style="margin-top:14px">
+      <div class="tile"><div class="k">Duration</div><div class="v">${fmtS(t._dur)}</div>
+        ${t._modelTime!=null?`<div class="sub">${fmtS(t._modelTime)} model · ${fmtS(t._toolTime)} tools</div>`:""}</div>
+      <div class="tile"><div class="k">Iterations</div><div class="v">${num(t._iter)}</div>
+        ${t._llmCalls?`<div class="sub">${t._llmCalls} model calls traced${
+          st.iteration_spans!=null?` · ${st.iteration_spans} iteration spans`:""}</div>`:""}</div>
+      ${t._ttft!=null?`<div class="tile"><div class="k">Time to first token</div><div class="v">${fmtS(t._ttft)}</div>
+        <div class="sub">${st.time_to_request_ms!=null?`${fmtMs(st.time_to_request_ms)} to the request`:""}${
+          st.ttft_stream_ms!=null?` · ${fmtMs(st.ttft_stream_ms)} on the stream`:""}</div></div>`:""}
+      ${st.api_duration_ms!=null?`<div class="tile"><div class="k">API duration</div><div class="v">${fmtMs(st.api_duration_ms)}</div>
+        <div class="sub">the CLI's own figure, not a slice of the turn</div></div>`:""}
+      <div class="tile"><div class="k">Tool calls</div><div class="v">${t._calls}</div>
+        <div class="sub">${num(st.heimdall_calls)} to Heimdall</div></div>
+      <div class="tile"><div class="k">Tokens</div><div class="v">${tok?fmtTok(tok.total):"—"}</div>
+        ${tok?`<div class="sub">${fmtTok(tok.prompt)} in · ${fmtTok(tok.completion)} out</div>`:""}</div>
+      ${tok&&tok.prompt_details?`<div class="tile"><div class="k">Prompt cache</div>
+        <div class="v">${Math.round((tok.prompt_details.cache_read||0)/Math.max(1,tok.prompt)*100)}<span class="u">%</span></div>
+        <div class="sub">${fmtTok(tok.prompt_details.cache_read)} read · ${fmtTok(tok.prompt_details.cache_write)} written</div></div>`:""}
+      <div class="tile"><div class="k">Cost</div><div class="v">${fmtUsd(t._cost)}</div>
+        ${t.span_cost_usd_sum?`<div class="sub">${fmtUsd(t.span_cost_usd_sum)} attributed to spans</div>`:""}</div>
+    </div>
+    ${counts.length?`<div class="chips" style="margin-top:14px">
+      ${counts.map(([k,v])=>`<span class="toolchip"><span class="swatch" style="background:${colorFor((k||"").replace(/^tool\./,""))}"></span>${esc(shortTool(k))} <strong>${v}</strong></span>`).join("")}
+    </div>`:""}
+    ${hdErr.length?`<div class="chips" style="margin-top:8px">
+      ${hdErr.map(([k,v])=>`<span class="toolchip" style="color:var(--serious)"><span class="dot"></span>${esc(k)} <strong>${v}</strong></span>`).join("")}
+    </div>`:""}
+    <details style="margin-top:12px"><summary>Run configuration & identifiers</summary>
+      <dl class="kv" style="margin-top:8px">
+        ${Object.entries(cfg).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(typeof v==="object"?JSON.stringify(v):v)}</dd>`).join("")}
+        ${["harness","code_execution","context_window","conversation_mode","max_output_tokens","claude_session_id"]
+          .filter(k=>t._b2e[k]!=null).map(k=>`<dt>${esc(k)}</dt><dd>${esc(String(t._b2e[k]))}</dd>`).join("")}
+        <dt>session_id</dt><dd>${esc(t.session_id||"—")}</dd>
+        <dt>trace_id</dt><dd>${esc(t.trace_id||"—")}</dd>
+      </dl>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>${t._hasTiming ? "Timeline" : "Call sequence"}</h2>
+    <h3>${t._kids.length} spans${t._hasTiming ? ", drawn on the turn's own clock — bar length is measured duration" : ", in the order the agent issued them"}.</h3>
+    ${t._kids.length ? `
+    <div class="ribbon">${t._kids.map((s,i)=>`<span class="rtile ${(s._err||s._outErr)?"bad":""}" data-id="${s.span_id}"
+        style="background:${spanColor(s)}"
+        data-tip="${i+1}. ${esc(s._label)}${s._dur?" — "+fmtS(s._dur):""}${(s._err||s._outErr)?" — error":""}"></span>`).join("")}</div>
+    <div class="legend">
+      ${t._kids.some(s=>s._isIter)?`<span><i style="background:${ITER_COLOR}"></i>iteration (one model call and the tools it asked for)</span>`:""}
+      ${[...new Set(t._kids.filter(s=>s.span_kind==="TOOL").map(s=>s._tool))]
+        .map(n=>`<span><i style="background:${colorFor(n)}"></i>${esc(shortTool(n))}</span>`).join("")}
+      ${t._llmCalls?`<span><i style="background:${LLM_COLOR}"></i>model call</span>`:""}
+      ${t._kids.some(s=>s._hd)?`<span><i style="background:${LLM_COLOR};height:5px"></i>Heimdall HTTP (nested)</span>`:""}
+    </div>
+    ${!t._hasTiming ? `<div class="note" style="margin-bottom:14px">Per-step timing is not available in this export: every child span carries the turn's end timestamp (they span ${(t._spread*1000).toFixed(0)} ms against a ${fmtS(t._dur)} turn) and every tool duration is recorded as 0 s. The order below is real; the pacing is not.</div>`:""}
+    <div class="toolbar">
+      <input class="search" id="spanq" style="max-width:280px;margin:0" placeholder="Filter steps (tool, argument, result, reasoning)…" value="${esc(SPANQ)}">
+      <label>Layer
+        <select class="search" id="layer" style="width:auto;margin:0;padding:6px 8px">
+          ${[["all","All"],["iteration","Iterations"],["llm","Model calls"],["tool","Tool calls"],["heimdall","Heimdall HTTP"]]
+            .filter(([v]) => v==="all" || t._kids.some(s=>layerOf(s)===v))
+            .map(([v,l])=>`<option value="${v}" ${LAYER===v?"selected":""}>${l}</option>`).join("")}
+        </select></label>
+      <label><input type="checkbox" id="erronly" ${ERRONLY?"checked":""}> Only steps with an error</label>
+      <button class="hbtn" id="expandAll">Expand all</button>
+      <button class="hbtn" id="collapseAll">Collapse all</button>
+    </div>
+    <div class="grid5 head5">
+      <div style="text-align:right">#</div><div>Span</div><div class="args">Arguments / result</div>
+      ${t._hasTiming?`<div class="axis">${[0,.25,.5,.75,1].map(f=>`<span style="left:${f*100}%">${fmtS(f*end)}</span>`).join("")}</div>`:`<div></div>`}
+      <div style="text-align:right">${t._hasTiming?"Duration":"Result"}</div>
+    </div>
+    <div class="wf" id="wf">${t._kids.map((s,i)=>stepHTML(s,i,end,t)).join("")}</div>`
+    : `<div class="note">This turn made no tool calls — it is a single span, so there is nothing to sequence.</div>`}
+  </div>
+
+  ${reasoningCardHTML(t)}
+
+  ${t._answer?`<div class="card"><h2>Final answer</h2>
+    <h3>${t._answer.length} characters returned to the user</h3>
+    <div class="answer">${esc(t._answer)}</div></div>`:
+    `<div class="card"><h2>Final answer</h2><div class="note">The turn produced no output.</div></div>`}
+
+  ${t._root && t._root.events && t._root.events.length ? `<div class="card">
+     <h2>Exceptions on the turn</h2>${eventsHTML(t._root.events)}</div>`:""}
+  `;
+  wireTrace();
+}
+
+function spanColor(s){
+  if (s.span_kind === "TOOL") return colorFor(s._tool);
+  if (s._isIter) return ITER_COLOR;
+  if (s.span_kind === "CHAIN" && s._hd) return (s._err ? "var(--critical)" : LLM_COLOR);
+  return LLM_COLOR;
+}
+
+function layerOf(s){
+  if (s.span_kind === "LLM") return "llm";
+  if (s.span_kind === "TOOL") return "tool";
+  if (s._hd) return "heimdall";
+  if (s._isIter) return "iteration";
+  return "other";
+}
+
+function matchSpan(s){
+  if (ERRONLY && !(s._err || s._outErr)) return false;
+  if (LAYER !== "all" && layerOf(s) !== LAYER) return false;
+  if (!SPANQ) return true;
+  const hay = (s._label + " " + s._in + " " + s._out + " " +
+               s._think.join(" ") + " " + s._say.join(" ") + " " +
+               s._asked.map(c => c.name + " " + c.args).join(" ") + " " +
+               JSON.stringify((s.attributes||{}).tool||{}) + " " +
+               JSON.stringify(s._hd||{})).toLowerCase();
+  return hay.includes(SPANQ);
+}
+
+/* -------------------------------------------------- model turn rendering */
+function msgHTML(cls, role, body, {mono = false, meta = ""} = {}){
+  if (!body) return "";
+  return `<div class="msg ${cls}">
+    <div class="role">${esc(role)}${meta?`<span class="dim">${meta}</span>`:""}</div>
+    <div class="body ${mono?"mono":""}">${esc(body)}</div></div>`;
+}
+
+/* One model call, as a reader would want it: what it thought, what it said,
+   what it then asked the harness to run. */
+function modelTurnHTML(s, {heading = true} = {}){
+  const tc = (s._llm && s._llm.token_count) || {};
+  const bits = [];
+  if (s._ttft != null) bits.push(`<span class="pill">ttft ${fmtS(s._ttft)}${
+    s._lm && s._lm.ttft_source ? ` · ${esc(s._lm.ttft_source)}` : ""}</span>`);
+  if (tc.prompt != null) bits.push(`<span class="pill">${fmtTok(tc.prompt)} in → ${fmtTok(tc.completion)} out</span>`);
+  if (s._llm && s._llm.finish_reason) bits.push(`<span class="pill">${esc(s._llm.finish_reason)}</span>`);
+  if (s._dur) bits.push(`<span class="pill">${fmtS(s._dur)} span</span>`);
+
+  return (heading ? `<div class="turnhd">
+      <span class="n">${esc(s._inIter != null ? `Iteration ${s._inIter}` : s._label)}</span>${bits.join("")}
+    </div>` : "")
+    + s._think.map(x => msgHTML("think", "reasoning", x)).join("")
+    + s._say.map(x => msgHTML("say", "assistant", x)).join("")
+    + s._asked.map(c => msgHTML("call", `calls ${shortTool(c.name)}`, pretty(c.args),
+        {mono:true, meta: c.id ? esc(c.id) : ""})).join("");
+}
+
+/* The reconstruction caveats travel on every LLM span; state them once per trace. */
+function llmCaveatHTML(s){
+  if (!s || !s._lm) return "";
+  const m = s._lm, bits = [];
+  if (m.prompt_reconstruction) bits.push(`the input side is a reconstruction (<span class="mono">${esc(m.prompt_reconstruction)}</span>), not the request that was sent`);
+  if (m.prompt_missing) bits.push(`missing from it: <span class="mono">${esc(m.prompt_missing)}</span>`);
+  if (m.system_partial) bits.push("the system prompt shown is partial");
+  if (m.timing === "derived") bits.push("the span window is derived from two transcript timestamps — only ttft was measured");
+  if (!bits.length) return "";
+  return `<div class="note">Reasoning and completions come from the CLI session transcript, so they are exact. But ${bits.join("; ")}.</div>`;
+}
+
+function reasoningCardHTML(t){
+  const spans = t._llmSpans.filter(s => s._think.length || s._say.length || s._asked.length);
+  if (!spans.length) return "";
+  const r = t._reasoning || {};
+  const chars = r.reasoning_chars != null ? r.reasoning_chars
+              : t._llmSpans.reduce((a,s) => a + s._think.join("").length, 0);
+  const blocks = r.reasoning_blocks != null ? r.reasoning_blocks
+               : t._llmSpans.reduce((a,s) => a + s._think.length, 0);
+  const tt = t._llmSpans.map(s => s._ttft).filter(v => v != null);
+  return `<div class="card">
+    <h2>The model's own turns</h2>
+    <h3>${blocks} reasoning block${blocks===1?"":"s"}, ${fmtN(chars)} characters across ${spans.length} model call${spans.length===1?"":"s"}${
+      tt.length?` · time to first token ${fmtS(Math.min(...tt))}–${fmtS(Math.max(...tt))}, median ${fmtS(median(tt))}`:""}</h3>
+    ${llmCaveatHTML(t._llmSpans[0])}
+    <div style="margin-top:12px">${spans.map(s => modelTurnHTML(s)).join("")}</div>
+  </div>`;
+}
+
+function stepHTML(s, i, end, t){
+  if (!matchSpan(s)) return "";
+  const bad = s._err || s._outErr;
+  const open = OPEN.has(s.span_id);
+  const col = bad ? "var(--critical)" : spanColor(s);
+  const x = end ? (s._off/end*100) : 0;
+  const w = end ? Math.max(0.4, s._dur/end*100) : 0.4;
+  return `<div class="step grid5 ${open?"open":""}" data-id="${s.span_id}">
+      <div class="idx">${i+1}</div>
+      <div class="nm" style="padding-left:${(s._depth-1)*12}px">
+        <span class="swatch" style="background:${col}"></span>
+        <span class="txt">${esc(s._label)}</span>
+        ${bad?'<span class="pill err" style="padding:0 6px;flex:none"><span class="dot"></span>err</span>':""}
+      </div>
+      <div class="args">${esc(argHint(s))}</div>
+      ${t._hasTiming
+        ? `<div class="lane"><div class="bar2 ${s._depth>1?"sub":""}" style="left:${x}%;width:${w}%;background:${col}"
+             data-tip="${esc(s._label)}&#10;starts +${fmtS(s._off)}&#10;runs ${fmtS(s._dur)}"></div></div>`
+        : `<div></div>`}
+      <div class="dur">${t._hasTiming ? fmtS(s._dur) : resHint(s)}</div>
+    </div>` + (open ? spanDetailHTML(s, t) : "");
+}
+
+/* One line that says what the span actually did — arguments for tools,
+   endpoint + status for the Heimdall layer, tokens for a model call. */
+function argHint(s){
+  if (s._hd){
+    const bits = [`${s._http?s._http.method+" "+s._http.path:""}`, `→ ${s._http?s._http.status:"?"}`];
+    if (s._hd.error_code) bits.push(s._hd.error_code);
+    else if (s._hd.endpoint === "mcp_query") bits.push(`${s._hd.rows} row${s._hd.rows===1?"":"s"}`);
+    bits.push(fmtBytes(s._hd.response_bytes));
+    return bits.filter(Boolean).join("  ");
+  }
+  if (s._isIter){
+    return (s._lm && s._lm.message_id ? s._lm.message_id : "") + (s._dur ? `  ${fmtS(s._dur)}` : "");
+  }
+  if (s.span_kind === "LLM" && s._llm){
+    const tc = s._llm.token_count || {};
+    const head = `${fmtTok(tc.prompt)} in → ${fmtTok(tc.completion)} out` +
+                 (s._ttft != null ? `  ttft ${fmtS(s._ttft)}` : "") +
+                 `  ${s._llm.finish_reason||""}` +
+                 (s._cost!=null ? `  ${fmtUsd(s._cost)}` : "");
+    // When the export carries the reasoning, a line of it says more than the accounting.
+    const think = (s._think[0] || s._say[0] || "").replace(/\s+/g, " ").trim();
+    return think ? `${head}  ·  ${think.slice(0,110)}${think.length>110?"…":""}` : head;
+  }
+  const p = ((s.attributes||{}).tool||{}).parameters;
+  if (!p || typeof p !== "object") return s._in ? String(s._in).slice(0,140) : "";
+  return Object.entries(p).map(([k,v]) => {
+    let str = (v && typeof v === "object") ? JSON.stringify(v) : String(v);
+    if (str.length > 60) str = str.slice(0,60)+"…";
+    return k + "=" + str;
+  }).join("  ");
+}
+
+function resHint(s){
+  if (s.span_kind !== "TOOL") return s._err ? '<span style="color:var(--critical)">error</span>' : "";
+  if (!s._out) return '<span class="dim">not captured</span>';
+  const size = fmtBytes(s._out.length);
+  return s._outErr ? `<span style="color:var(--serious)">error · ${size}</span>` : size;
+}
+
+function pretty(v){
+  if (v == null || v === "") return "";
+  if (typeof v === "object") return JSON.stringify(v, null, 2);
+  const s = String(v).trim();
+  if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))){
+    try { return JSON.stringify(JSON.parse(s), null, 2); } catch(e){}
+  }
+  return String(v);
+}
+function block(title, body, cls){
+  if (!body) return "";
+  return `<section><h4>${esc(title)}<button class="copy" data-copy>copy</button></h4><pre class="${cls||""}">${esc(body)}</pre></section>`;
+}
+function eventsHTML(events){
+  return (events||[]).map(ev => {
+    const a = ev.attributes || {};
+    return `<section>
+      <h4>${esc(ev.name)} · ${esc((ev.timestamp||"").replace("T"," ").slice(0,23))}</h4>
+      <div style="font-size:12.5px;color:var(--critical);margin-bottom:6px">${esc(a["exception.type"]||"")} — ${esc(a["exception.message"]||"")}</div>
+      ${a["exception.stacktrace"]?`<details><summary>Stack trace</summary><pre class="tall">${esc(a["exception.stacktrace"])}</pre></details>`:""}
+    </section>`;
+  }).join("");
+}
+
+/* The input side of a model call: the conversation as the exporter reconstructed it.
+   Long, and every reasoning block carries a base64 signature, so it is folded away
+   and the raw dump has the signatures stripped. */
+function inputConversationHTML(s){
+  const elided = s._lm && s._lm.input_messages_elided;
+  const body = s._inMsgs.map(m => {
+    if (m.role === "tool")
+      return msgHTML("result", "tool result", m.text.join("\n") || "(empty)",
+                     {mono:true, meta: m.toolCallId ? esc(m.toolCallId) : ""});
+    if (m.role === "user") return m.text.map(x => msgHTML("user", "user", x)).join("");
+    return m.think.map(x => msgHTML("think", "assistant · reasoning", x)).join("")
+         + m.text.map(x => msgHTML("say", "assistant", x)).join("")
+         + m.calls.map(c => msgHTML("call", `assistant · calls ${shortTool(c.name)}`, pretty(c.args),
+             {mono:true, meta: c.id ? esc(c.id) : ""})).join("");
+  }).join("");
+  return `<section><h4>Input conversation</h4>
+    <div class="elide">${s._inMsgs.length} message${s._inMsgs.length===1?"":"s"}${
+      elided ? ` · ${elided} earlier message${elided===1?"":"s"} elided by the exporter` : ""}${
+      s._lm && s._lm.prompt_reconstruction ? ` · reconstructed: ${esc(s._lm.prompt_reconstruction)}` : ""}</div>
+    <details><summary>Show conversation</summary><div style="margin-top:8px">${body}</div></details>
+    <details><summary>Raw JSON (reasoning signatures dropped)</summary>
+      <pre class="tall" style="margin-top:8px">${esc(JSON.stringify(stripSignatures(s._inRaw), null, 2))}</pre></details>
+  </section>`;
+}
+
+function spanDetailHTML(s, t){
+  const at = s.attributes || {};
+  const parts = [];
+  parts.push(`<section><h4>Span</h4><dl class="kv">
+      <dt>name</dt><dd>${esc(s.name)}</dd>
+      <dt>kind</dt><dd>${esc(s.span_kind)}</dd>
+      <dt>started</dt><dd>${esc(s.start_utc||"")}${t&&t._hasTiming?`  (+${fmtS(s._off)} into the turn)`:"  (turn end time — not when the call ran)"}</dd>
+      <dt>duration</dt><dd>${s._dur ? fmtS(s._dur) : "0 s — not instrumented"}</dd>
+      <dt>status</dt><dd>${esc(s.status_code)}${s.status_message?" — "+esc(s.status_message):""}</dd>
+      <dt>span_id</dt><dd>${esc(s.span_id)}</dd>
+      ${at.tool_call&&at.tool_call.id?`<dt>tool_call.id</dt><dd>${esc(at.tool_call.id)}</dd>`:""}
+      ${s._cost!=null?`<dt>span cost</dt><dd>${fmtUsd(s._cost)}</dd>`:""}
+    </dl></section>`);
+
+  if (s._hd) parts.push(`<section><h4>Heimdall call</h4><dl class="kv">
+      <dt>endpoint</dt><dd>${esc(s._hd.endpoint||"")}</dd>
+      <dt>http</dt><dd>${esc((s._http&&s._http.method)||"")} ${esc((s._http&&s._http.path)||"")} → ${esc(String((s._http&&s._http.status)||"?"))}</dd>
+      ${s._hd.error_code?`<dt>error code</dt><dd style="color:var(--critical)">${esc(s._hd.error_code)}</dd>`:""}
+      <dt>rows</dt><dd>${esc(String(s._hd.rows))}${s._hd.endpoint!=="mcp_query"?"  (0 by construction outside mcp_query)":""}</dd>
+      <dt>response</dt><dd>${fmtBytes(s._hd.response_bytes)}</dd>
+      <dt>arguments</dt><dd>${esc(String(s._hd.argument_keys||""))}</dd>
+    </dl></section>`);
+
+  if (s._isIter) parts.push(`<section><h4>Iteration</h4><dl class="kv">
+      <dt>index</dt><dd>${esc(String(s._iterIdx))}</dd>
+      <dt>message_id</dt><dd>${esc((s._lm&&s._lm.message_id)||"")}</dd>
+    </dl>
+    <div class="note" style="margin-top:8px">One iteration is one model call and the tools that call asked for. The spans are correlated by message id, which both the stream and the transcript name.</div>
+    </section>`);
+
+  if (s.span_kind === "LLM" && s._llm){
+    const tc = s._llm.token_count || {}, pd = tc.prompt_details || {};
+    const m = s._lm || {};
+    parts.push(`<section><h4>Model call</h4><dl class="kv">
+      <dt>model</dt><dd>${esc(s._llm.model_name||"")} (${esc(s._llm.provider||"")})</dd>
+      <dt>finish reason</dt><dd>${esc(s._llm.finish_reason||"")}</dd>
+      <dt>prompt tokens</dt><dd>${fmtN(tc.prompt)} — ${fmtN(pd.cache_read||0)} cache read, ${fmtN(pd.cache_write||0)} cache write</dd>
+      <dt>completion tokens</dt><dd>${fmtN(tc.completion)}</dd>
+      ${m.ttft_ms!=null?`<dt>time to first token</dt><dd>${fmtMs(m.ttft_ms)}${m.ttft_source?` (${esc(m.ttft_source)})`:""}</dd>`:""}
+      ${m.timing?`<dt>span timing</dt><dd>${esc(m.timing)}</dd>`:""}
+      ${m.message_id?`<dt>message_id</dt><dd>${esc(m.message_id)}</dd>`:""}
+      ${s._inIter!=null?`<dt>iteration</dt><dd>${esc(String(s._inIter))}</dd>`:""}
+    </dl>${llmCaveatHTML(s) ? `<div style="margin-top:8px">${llmCaveatHTML(s)}</div>` : `
+    <div class="note" style="margin-top:8px">Prompt and completion text are not in this export — LLM spans are reconstructed from the CLI session transcript, so they carry accounting, not content.</div>`}
+    </section>`);
+
+    if (s._think.length || s._say.length || s._asked.length)
+      parts.push(`<section><h4>What the model produced</h4>${modelTurnHTML(s, {heading:false})}</section>`);
+  }
+
+  if (at.tool && at.tool.parameters) parts.push(block("Arguments", pretty(at.tool.parameters)));
+  else if (s._in) parts.push(block("Input", pretty(s._in)));
+  if (s._out) parts.push(block("Result", pretty(s._out), "tall"));
+  else if (s.span_kind === "TOOL") parts.push(`<section><h4>Result</h4><div class="dim" style="font-size:12px">Empty.</div></section>`);
+
+  if (at.llm && at.llm.system) parts.push(block(
+    "System prompt" + (s._lm && s._lm.system_partial ? " (partial — the CLI's own prefix is not in the transcript)" : ""),
+    at.llm.system, "tall"));
+  if (s._inMsgs.length) parts.push(inputConversationHTML(s));
+  if (at.llm && at.llm.tools) parts.push(block("Tool definitions", pretty(at.llm.tools), "tall"));
+  if (s.events && s.events.length) parts.push(`<section><h4>Events</h4>${eventsHTML(s.events)}</section>`);
+  return `<div class="detail">${parts.join("")}</div>`;
+}
+
+/* ------------------------------------------------------------ behaviour */
+function wireTrace(){
+  document.querySelectorAll("#wf .step").forEach(el => el.addEventListener("click", ev => {
+    if (ev.target.closest("pre, .detail, .copy")) return;
+    const id = el.dataset.id;
+    OPEN.has(id) ? OPEN.delete(id) : OPEN.add(id);
+    renderTrace();
+  }));
+  document.querySelectorAll(".rtile").forEach(el => el.addEventListener("click", () => {
+    const id = el.dataset.id;
+    OPEN.add(id); SPANQ = ""; ERRONLY = false; LAYER = "all";
+    renderTrace();
+    const row = document.querySelector(`.step[data-id="${id}"]`);
+    if (row && row.scrollIntoView) row.scrollIntoView({block:"center", behavior:"smooth"});
+  }));
+  const q = document.getElementById("spanq");
+  if (q) q.addEventListener("input", () => {
+    SPANQ = q.value.trim().toLowerCase();
+    const pos = q.selectionStart; renderTrace();
+    const n = document.getElementById("spanq"); n.focus(); n.setSelectionRange(pos,pos);
+  });
+  const eo = document.getElementById("erronly");
+  if (eo) eo.addEventListener("change", () => { ERRONLY = eo.checked; renderTrace(); });
+  const ly = document.getElementById("layer");
+  if (ly) ly.addEventListener("change", () => { LAYER = ly.value; renderTrace(); });
+  const ea = document.getElementById("expandAll");
+  if (ea) ea.addEventListener("click", () => { TRACES[SEL]._kids.forEach(s=>{ if(matchSpan(s)) OPEN.add(s.span_id); }); renderTrace(); });
+  const ca = document.getElementById("collapseAll");
+  if (ca) ca.addEventListener("click", () => { OPEN.clear(); renderTrace(); });
+  document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", ev => {
+    ev.stopPropagation();
+    const pre = b.closest("section").querySelector("pre");
+    navigator.clipboard.writeText(pre.textContent).then(()=>{ b.textContent="copied"; setTimeout(()=>b.textContent="copy",1200); });
+  }));
+}
+
+function renderNav(){
+  const list = document.getElementById("navList");
+  const shown = TRACES.filter(t => !QUERY || t._search.includes(QUERY));
+  list.innerHTML = shown.map(t => `
+    <button class="navitem ${SEL===t._i?"active":""}" data-view="trace" data-i="${t._i}">
+      <div class="top">
+        ${pillFor(t, "#"+t._id)}
+        <span>${esc((t.started_utc||"").replace("T"," ").replace("Z",""))}</span>
+      </div>
+      <div class="ttl">${esc(t._prompt || "(no prompt)")}</div>
+      <div class="meta">
+        <span>${fmtS(t._dur)}</span><span>${t._calls} calls</span><span>${fmtUsd(t._cost)}</span>
+        ${t._denials?`<span style="color:var(--critical)">${t._denials} denied</span>`:""}
+      </div>
+    </button>`).join("") || `<div class="dim" style="font-size:12px;padding:6px">No match.</div>`;
+  document.getElementById("navOverview").classList.toggle("active", SEL === "overview");
+  document.getElementById("navFindings").classList.toggle("active", SEL === "findings");
+}
+
+function select(i){
+  SEL = i; OPEN = new Set(); SPANQ = ""; ERRONLY = false; LAYER = "all";
+  renderNav(); renderTrace(); window.scrollTo({top:0});
+}
+function render(){
+  renderNav();
+  if (SEL === "overview") renderOverview();
+  else if (SEL === "findings") renderFindings();
+  else renderTrace();
+}
+
+/* tooltip */
+const tip = document.getElementById("tip");
+document.addEventListener("mousemove", ev => {
+  const el = ev.target.closest("[data-tip]");
+  if (!el){ tip.style.opacity = 0; return; }
+  tip.textContent = el.dataset.tip;
+  tip.style.opacity = 1;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.min(ev.clientX + 14, innerWidth - r.width - 10) + "px";
+  tip.style.top  = Math.max(8, ev.clientY - r.height - 12) + "px";
+});
+
+document.addEventListener("click", ev => {
+  const nav = ev.target.closest(".navitem");
+  if (!nav) return;
+  const v = nav.dataset.view;
+  if (v === "overview" || v === "findings"){ SEL = v; render(); window.scrollTo({top:0}); }
+  else select(+nav.dataset.i);
+});
+document.getElementById("q").addEventListener("input", e => { QUERY = e.target.value.trim().toLowerCase(); renderNav(); });
+document.getElementById("btnTheme").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+});
+document.getElementById("btnLoad").addEventListener("click", () => document.getElementById("file").click());
+document.getElementById("file").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try { DB = JSON.parse(r.result); boot(f.name); }
+    catch(err){ alert("Could not parse that file: " + err.message); }
+  };
+  r.readAsText(f);
+});
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea")) return;
+  if (e.key === "j" || e.key === "k"){
+    const i = typeof SEL === "number" ? SEL : -1;
+    select(e.key === "j" ? Math.min(TRACES.length-1, i+1) : Math.max(0, i-1));
+  }
+});
+
+function boot(src){
+  TRACES = prepare(DB);
+  SEL = "overview";
+  document.getElementById("navFindings").hidden = !FINDINGS.length;
+  const win = ANALYSIS && ANALYSIS.corpus && ANALYSIS.corpus.window_utc;
+  document.getElementById("hSub").textContent =
+    (ABOUT.source || src || "") +
+    (win ? ` · ${win[0]} → ${win[1]}` : "") +
+    (ABOUT.exported_at_utc ? ` · exported ${ABOUT.exported_at_utc}` : "");
+  render();
+}
+boot();
+</script>
+</body>
+</html>

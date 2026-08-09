@@ -29,6 +29,7 @@ from sim.fingerprint import RunFingerprint, require_complete
 try:
     from openinference.semconv.trace import (
         MessageAttributes,
+        MessageContentAttributes,
         OpenInferenceSpanKindValues,
         SpanAttributes,
         ToolCallAttributes,
@@ -122,6 +123,80 @@ def set_io(span: Span, *, input_value: Any = None, output_value: Any = None) -> 
         set_attr(span, SpanAttributes.OUTPUT_VALUE, output_value)
         set_attr(span, SpanAttributes.OUTPUT_MIME_TYPE,
                  "text/plain" if isinstance(output_value, str) else "application/json")
+
+
+# ----------------------------------------------------------------- messages
+
+#: Content types the convention names. Read out of the installed
+#: ``MessageContentAttributes`` docstring, which lists `"text"`, `"image"`,
+#: `"audio"`, `"reasoning"`, `"tool_use"`. A provider's own word — Anthropic
+#: says `thinking` — would leave every other OpenInference reader unable to find
+#: it, so the mapping happens at the edge that knows the provider.
+REASONING = "reasoning"
+TEXT = "text"
+
+
+def set_messages(span: Span, collection: str,
+                 messages: list[dict[str, Any]]) -> None:
+    """Write messages as **indexed flat attributes**, not one JSON blob.
+
+    ``collection`` is ``SpanAttributes.LLM_INPUT_MESSAGES`` or
+    ``LLM_OUTPUT_MESSAGES``. Each entry may carry ``role``, ``content`` (a
+    plain string), ``contents`` (a list of ``{type, text, signature, data}``),
+    ``tool_calls`` (a list of ``{id, name, arguments}``) and ``tool_call_id``.
+
+    Why flat and not a blob
+    -----------------------
+    Both forms are accepted by the exporter and only one is understood. Checked
+    against the deployed Phoenix (19.13.0) on 2026-08-09 by emitting the same
+    span twice: the flat keys are re-nested on ingest into
+    ``llm.output_messages[0].message.contents[…].message_content.type``, which
+    is what the UI renders and what any other OpenInference reader expects,
+    while a JSON string is stored as a string and stays opaque.
+
+    ``record_llm_result`` still writes the blob form on the ``messages_api``
+    harness. That is a known defect kept out of this change's blast radius — it
+    is the same wrong shape those spans have always had, and fixing it changes
+    a corpus this one does not touch.
+    """
+    for i, message in enumerate(messages):
+        at = f"{collection}.{i}."
+        role = message.get("role")
+        if role:
+            span.set_attribute(at + MessageAttributes.MESSAGE_ROLE, str(role))
+        if message.get("content") is not None:
+            set_attr(span, at + MessageAttributes.MESSAGE_CONTENT,
+                     message["content"])
+        if message.get("tool_call_id"):
+            span.set_attribute(at + MessageAttributes.MESSAGE_TOOL_CALL_ID,
+                               str(message["tool_call_id"]))
+        for j, item in enumerate(message.get("contents") or []):
+            content_at = f"{at}{MessageAttributes.MESSAGE_CONTENTS}.{j}."
+            span.set_attribute(
+                content_at + MessageContentAttributes.MESSAGE_CONTENT_TYPE,
+                str(item.get("type") or TEXT))
+            set_attr(span, content_at + MessageContentAttributes.MESSAGE_CONTENT_TEXT,
+                     item.get("text"))
+            set_attr(span,
+                     content_at + MessageContentAttributes.MESSAGE_CONTENT_SIGNATURE,
+                     item.get("signature"))
+            # `redacted_thinking` arrives as opaque bytes with no text at all.
+            # The convention has a field for exactly this and names Anthropic in
+            # its docstring, so a redacted block stays a reasoning block that
+            # happens to be unreadable rather than becoming a missing one.
+            set_attr(span,
+                     content_at + MessageContentAttributes.MESSAGE_CONTENT_DATA,
+                     item.get("data"))
+        for j, call in enumerate(message.get("tool_calls") or []):
+            call_at = f"{at}{MessageAttributes.MESSAGE_TOOL_CALLS}.{j}."
+            if call.get("id"):
+                span.set_attribute(call_at + ToolCallAttributes.TOOL_CALL_ID,
+                                   str(call["id"]))
+            span.set_attribute(call_at + ToolCallAttributes.TOOL_CALL_FUNCTION_NAME,
+                               str(call.get("name") or ""))
+            set_attr(span,
+                     call_at + ToolCallAttributes.TOOL_CALL_FUNCTION_ARGUMENTS_JSON,
+                     call.get("arguments"))
 
 
 # -------------------------------------------------------------------- spans

@@ -259,11 +259,20 @@ services:
       # Deep links for the browser. Separate from PUBLIC_HOST because that may
       # be a bare site address like ":443", which is not a URL.
       PHOENIX_PUBLIC_URL: ${PUBLIC_URL:-https://localhost}/phoenix
+      # Where this container talks to Phoenix. Deliberately not the public URL:
+      # that is an https host on the far side of the proxy, which this service
+      # has no route to — so the trace explorer would fail in the deployment it
+      # exists for while working fine on a laptop.
+      PHOENIX_URL: http://phoenix:6006
+      PHOENIX_PROJECT: b2e-sim
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
     volumes: [registry_data:/app/registry]
     networks: [edge, internal]
-    mem_limit: 192m
+    # The explorer assembles a hundred turns of spans in memory before it
+    # renders. 192m was enough for a server-rendered page and is not enough for
+    # this one.
+    mem_limit: 384m
     depends_on: [b2e-agent]
 
   # ----------------------------------------------------------- skill sandbox

@@ -304,6 +304,15 @@ latency or the exact bytes sent. None currently does.
 
 ## 7. What stays unmeasurable, and saying so
 
+> **Corrected 2026-08-09.** The paragraph below was wrong about reasoning, and
+> the correction is `docs/reasoning-tracing-plan.md`. The reasoning was in the
+> transcript this document had just taught the stack to read — 291 `thinking`
+> blocks across the 16 sessions then on the deployed volume, every one of them
+> non-empty — and `parse_transcript` was taking `message.usage` off those rows
+> and discarding `message.content`. What was true is narrower: the trace does
+> not see the *request*, and it does not see per-token timing. It now sees what
+> the model said, because the CLI wrote it down.
+
 Even with all four stages, the trace never sees inside the model: no reasoning,
 no per-token timing, no view of why one query shape was chosen over another.
 Nothing planned here changes that, and no attribute should ever be named in a

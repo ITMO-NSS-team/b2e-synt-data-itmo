@@ -311,6 +311,22 @@ class ClaudeCodeResult:
     #: that silently lost its context looks, from the outside, like an agent
     #: that suddenly forgot what it was doing.
     resumed_failed: bool = False
+    #: The system prompt this harness appended — the part of the request that is
+    #: actually known here. Not the whole system prompt: Claude Code's own sits
+    #: in front of it and is not exposed. Carried so the LLM spans can record it
+    #: beside the flag that says it is partial.
+    system_suffix: str = ""
+    #: Timings the CLI measured and reports in its closing envelope. Distinct
+    #: from `duration_ms`, which is the turn as a whole: `api_duration_ms` is
+    #: what it spent inside model calls, and the two `ttft` figures are how long
+    #: the first token took to arrive. Recorded rather than interpreted — they
+    #: are the CLI's numbers, and `api_duration_ms` can exceed `duration_ms`
+    #: (5 732 against 3 898 on the probe of 2026-08-09), so it is plainly not a
+    #: wall-clock slice of the turn.
+    api_duration_ms: int = 0
+    ttft_ms: int = 0
+    ttft_stream_ms: int = 0
+    time_to_request_ms: int = 0
 
     @property
     def prompt_tokens(self) -> int:
@@ -482,6 +498,16 @@ class ClaudeCodeHarness:
             "--model", config.model_id,
             "--output-format", "stream-json",
             "--verbose",
+            # The only source of a *measured* per-call latency this stack has.
+            # Probed live on 2.1.220 (2026-08-09): with the flag the stream
+            # gains `stream_event` rows, and `message_start` carries `ttft_ms`
+            # — a real time-to-first-token, per model call, keyed by the same
+            # `message.id` the transcript uses. Without it there is only the gap
+            # between two recorded timestamps.
+            #
+            # It changes the output stream, not the request: same model, same
+            # tools, same system prompt. No fingerprint field moves.
+            "--include-partial-messages",
         ]
 
         if config.conversation_mode == "resume" and resume_session_id:
@@ -636,6 +662,7 @@ class ClaudeCodeHarness:
                 result.error = (f"resume of {resume_session_id} failed; "
                                 f"continued in a new session without history")
 
+        result.system_suffix = suffix
         result.bridge_calls = _read_bridge_log(bridge_log)
         self._read_transcript(result, since=started_at,
                               resumable=persistent is not None,
@@ -810,10 +837,116 @@ class LlmCall:
     #: transcript carries no duration of any kind — see parse_transcript.
     ended_ns: int
     started_ns: int
+    #: What the model produced, in the convention's vocabulary: `reasoning` and
+    #: `text` blocks in the order they were written.
+    contents: list[dict[str, Any]] = field(default_factory=list)
+    #: The tool calls this response asked for.
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    #: The conversation as it stood *before* this call. A reconstruction, not
+    #: the request — see ``PROMPT_RECONSTRUCTION``.
+    input_messages: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def prompt_tokens(self) -> int:
         return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
+
+    @property
+    def reasoning(self) -> str:
+        """The reasoning text of this call, concatenated. For tests and counts."""
+        return "\n".join(c.get("text") or "" for c in self.contents
+                         if c.get("type") == telemetry.REASONING)
+
+
+#: What ``llm.input_messages`` on a `claude_code` LLM span actually is.
+#:
+#: Not the request. The transcript holds the conversation; it does not hold
+#: Claude Code's own base system prompt or the tool schemas, and those are the
+#: bulk of it — measured on a real turn, the first call reported
+#: ``input_tokens=10, cache_read=6526, cache_creation=5690``, about 12 200
+#: prompt tokens for a 61-character question, of which the harness can account
+#: for perhaps a thousand.
+#:
+#: So the value is labelled on every span that carries it. Someone querying
+#: token cost against these messages has to meet the flag before they reach a
+#: conclusion, which is the same discipline as ``b2e.llm.timing="derived"``.
+PROMPT_RECONSTRUCTION = "conversation_only"
+PROMPT_MISSING = "cli_system_prompt,tool_schemas"
+
+#: Tool results are already on their own TOOL span in full. Copying them into
+#: every later call's reconstructed prompt is quadratic in the iteration count —
+#: on the longest session measured (49 model calls, 713 KB of tool output) the
+#: same payloads would be written some 1 200 times. The copy inside a prompt is
+#: therefore capped and says where the whole thing is.
+MAX_PROMPT_TOOL_RESULT_CHARS = 2000
+TRUNCATION_NOTE = "…[обрезано; полный текст — на спане инструмента]"
+
+#: And the prefix itself is capped, keeping the question and the most recent
+#: exchanges. Elision is counted on the span rather than done silently.
+MAX_PROMPT_MESSAGES = 40
+
+
+def _content_payload(blocks: list[Any]) -> tuple[list[dict[str, Any]],
+                                                 list[dict[str, Any]]]:
+    """Anthropic content blocks → the convention's contents and tool calls.
+
+    ``thinking`` becomes ``reasoning`` here, at the edge that knows the
+    provider's vocabulary. Nothing downstream should ever see the word
+    ``thinking``: the installed semconv names the type ``reasoning``, and a
+    private synonym would hide the field from every other reader of this store.
+    """
+    contents: list[dict[str, Any]] = []
+    tool_calls: list[dict[str, Any]] = []
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "thinking":
+            contents.append({"type": telemetry.REASONING,
+                             "text": block.get("thinking") or "",
+                             "signature": block.get("signature")})
+        elif kind == "redacted_thinking":
+            contents.append({"type": telemetry.REASONING,
+                             "data": block.get("data")})
+        elif kind == "text":
+            contents.append({"type": telemetry.TEXT,
+                             "text": block.get("text") or ""})
+        elif kind == "tool_use":
+            tool_calls.append({
+                "id": block.get("id"),
+                "name": block.get("name"),
+                "arguments": json.dumps(block.get("input") or {},
+                                        ensure_ascii=False, default=str),
+            })
+    return contents, tool_calls
+
+
+def _user_messages(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """The conversation entries one user row contributes.
+
+    A user row is either the human's question or the results of the tools the
+    model just called. Tool results become ``role="tool"`` messages carrying
+    their ``tool_call_id``, which is what ties a result back to the call that
+    asked for it when the prompt is read back.
+    """
+    message = row.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if isinstance(content, str):
+        return [{"role": "user", "content": content}]
+    entries: list[dict[str, Any]] = []
+    for block in content or []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_result":
+            text = _tool_result_text(block.get("content"))
+            if len(text) > MAX_PROMPT_TOOL_RESULT_CHARS:
+                text = text[:MAX_PROMPT_TOOL_RESULT_CHARS] + TRUNCATION_NOTE
+            entries.append({"role": "tool", "content": text,
+                            "tool_call_id": block.get("tool_use_id")})
+        elif block.get("type") == "text":
+            entries.append({"role": "user", "content": block.get("text") or ""})
+    return entries
 
 
 def find_transcript(claude_home: str, session_id: str) -> Path | None:
@@ -847,8 +980,16 @@ def parse_transcript(path: Path, *, since: float) -> list[LlmCall]:
     """The model calls this turn made, in order.
 
     Rows are grouped by ``message.id``: one API response arrives as several rows
-    — a text block, then a tool_use block — and counting rows would report a
-    turn of 15 calls as 43.
+    — a thinking block, then a text block, then a tool_use block — and counting
+    rows would report a turn of 15 calls as 43.
+
+    Until 2026-08-09 the later rows of a message were *discarded* rather than
+    merged, and with them everything the model actually said. The reasoning was
+    in the file the whole time: measured across the 16 sessions on the deployed
+    stack, 291 ``thinking`` blocks, every one of them non-empty. Headless
+    sessions (``entrypoint: "sdk-cli"``) persist reasoning in full; the
+    interactive CLI redacts it to a bare signature, which is why the field looks
+    empty to anyone who checks their own ``~/.claude``.
 
     ``since`` drops everything older. A resumed session appends to one file, so
     without the cutoff turn two would re-emit turn one's calls and double every
@@ -881,9 +1022,21 @@ def parse_transcript(path: Path, *, since: float) -> list[LlmCall]:
     calls: dict[str, LlmCall] = {}
     malformed = 0
     previous_ns = 0
+    #: The conversation as it accretes, and the entry each assistant message is
+    #: accumulating into. One API response is written as several rows — one per
+    #: content block, each with its own timestamp — so the entry has to stay
+    #: open across rows rather than be rebuilt per row.
+    conversation: list[dict[str, Any]] = []
+    entries: dict[str, dict[str, Any]] = {}
     for row in rows:
         ended = int(_row_epoch(row) * 1e9)
-        if row.get("type") != "assistant":
+        kind = row.get("type")
+        if kind == "user":
+            conversation.extend(_user_messages(row))
+            if ended:
+                previous_ns = ended
+            continue
+        if kind != "assistant":
             if ended:
                 previous_ns = ended
             continue
@@ -893,24 +1046,51 @@ def parse_transcript(path: Path, *, since: float) -> list[LlmCall]:
         if not isinstance(message, dict) or not isinstance(usage, dict):
             malformed += 1
             continue
-        if _row_epoch(row) < since:
-            previous_ns = ended or previous_ns
-            continue
 
         message_id = str(message.get("id") or "")
-        if not message_id or message_id in calls:
+        if not message_id:
             continue
-        calls[message_id] = LlmCall(
-            message_id=message_id,
-            model=str(message.get("model") or ""),
-            input_tokens=int(usage.get("input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
-            cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
-            cache_creation_tokens=int(usage.get("cache_creation_input_tokens") or 0),
-            stop_reason=str(message.get("stop_reason") or ""),
-            ended_ns=ended,
-            started_ns=previous_ns or ended,
-        )
+        contents, tool_calls = _content_payload(message.get("content") or [])
+
+        # Rows older than the cutoff belong to earlier turns of a resumed
+        # session. They make no call of their own, but they *are* context the
+        # calls after the cutoff were sent — so they join the conversation and
+        # only the LlmCall is withheld.
+        if _row_epoch(row) >= since:
+            call = calls.get(message_id)
+            if call is None:
+                call = LlmCall(
+                    message_id=message_id,
+                    model=str(message.get("model") or ""),
+                    input_tokens=int(usage.get("input_tokens") or 0),
+                    output_tokens=int(usage.get("output_tokens") or 0),
+                    cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
+                    cache_creation_tokens=int(
+                        usage.get("cache_creation_input_tokens") or 0),
+                    stop_reason=str(message.get("stop_reason") or ""),
+                    ended_ns=ended,
+                    started_ns=previous_ns or ended,
+                    # Snapshot taken before this message joins the conversation,
+                    # so a call never carries its own response as its prompt.
+                    input_messages=list(conversation),
+                )
+                calls[message_id] = call
+            call.contents.extend(contents)
+            call.tool_calls.extend(tool_calls)
+            # The window closes at the message's *last* row. Ending it at the
+            # first — which is what this did until 2026-08-09 — closes the span
+            # before the answer was written, and on a model that reasons first
+            # the first row is the reasoning block.
+            call.ended_ns = max(call.ended_ns, ended)
+
+        entry = entries.get(message_id)
+        if entry is None:
+            entry = {"role": "assistant", "contents": [], "tool_calls": []}
+            entries[message_id] = entry
+            conversation.append(entry)
+        entry["contents"].extend(contents)
+        entry["tool_calls"].extend(tool_calls)
+
         previous_ns = ended or previous_ns
 
     # Assistant rows that carried nothing recognisable, and not one that did:
@@ -922,18 +1102,48 @@ def parse_transcript(path: Path, *, since: float) -> list[LlmCall]:
     return list(calls.values())
 
 
-def emit_llm_spans(calls: list[LlmCall], *, root: Span) -> None:
+def _prompt_messages(call: LlmCall) -> tuple[list[dict[str, Any]], int]:
+    """The prefix to record, and how many messages were elided to get there."""
+    messages = call.input_messages
+    if len(messages) <= MAX_PROMPT_MESSAGES:
+        return messages, 0
+    # The question is what the whole turn is about and the tail is what this
+    # call was responding to. The middle is the part a reader can recover from
+    # the other spans, so it is the part that goes.
+    kept = messages[:1] + messages[-(MAX_PROMPT_MESSAGES - 1):]
+    return kept, len(messages) - len(kept)
+
+
+def emit_llm_spans(calls: list[LlmCall], *, root: Span,
+                   system: str | None = None, content: bool = True,
+                   recorder: "ToolSpanRecorder | None" = None) -> None:
     """One LLM span per API call, under the turn.
 
     Unlike the AGENT root, these do populate Phoenix's own token columns — that
-    is what an LLM span is for. What they cannot carry is the request itself:
-    the transcript holds the conversation, not the system prompt or the tool
-    schemas, so there is no prompt text to record and none is invented.
+    is what an LLM span is for.
+
+    They also carry what the model said: the reasoning that preceded each tool
+    call, the assistant text, and the calls themselves, written as the
+    convention's indexed message attributes. That is a transcription of the
+    response, not an interpretation of it.
+
+    The *prompt* is a different kind of thing and is labelled as one. What goes
+    into ``llm.input_messages`` is the conversation, which is real; what is
+    missing from it is Claude Code's own system prompt and the tool schemas,
+    which are most of the request. ``system`` is the suffix this harness
+    appended — genuinely known, and genuinely not the whole system prompt, which
+    is why it travels with ``b2e.llm.system_partial``.
+
+    ``content=False`` records the calls without their bodies and says so on
+    every span, so a store configured not to keep prompts still shows that the
+    model reasoned rather than looking like one that did not.
     """
     for call in calls:
+        parent = (recorder.iteration_for(call.message_id)
+                  if recorder is not None else None)
         span = telemetry.get_tracer().start_span(
             "llm.messages.create",
-            context=trace.set_span_in_context(root),
+            context=trace.set_span_in_context(parent or root),
             start_time=call.started_ns)
         try:
             span.set_attribute(telemetry.SPAN_KIND,
@@ -959,8 +1169,73 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span) -> None:
             # this window is the gap between two recorded timestamps, not a
             # timed request.
             span.set_attribute("b2e.llm.timing", "derived")
+            # …but the first token *was* timed, by the CLI, and reported on the
+            # `message_start` row. One measured number beside a derived one, and
+            # each says which it is.
+            ttft = recorder.ttft_for(call.message_id) if recorder is not None else None
+            if ttft is not None:
+                span.set_attribute("b2e.llm.ttft_ms", int(ttft))
+                span.set_attribute("b2e.llm.ttft_source", "measured")
+
+            if not content:
+                span.set_attribute("b2e.trace.llm_content", "disabled")
+            else:
+                span.set_attribute("b2e.trace.llm_content", "transcript")
+                telemetry.set_messages(
+                    span, SpanAttributes.LLM_OUTPUT_MESSAGES,
+                    [{"role": "assistant", "contents": call.contents,
+                      "tool_calls": call.tool_calls}])
+                messages, elided = _prompt_messages(call)
+                telemetry.set_messages(
+                    span, SpanAttributes.LLM_INPUT_MESSAGES, messages)
+                # The reconstruction flags. Not optional, and not in a doc:
+                # anyone reading these messages as "the prompt" has to meet
+                # them first.
+                span.set_attribute("b2e.llm.prompt_reconstruction",
+                                   PROMPT_RECONSTRUCTION)
+                span.set_attribute("b2e.llm.prompt_missing", PROMPT_MISSING)
+                if elided:
+                    span.set_attribute("b2e.llm.input_messages_elided", elided)
+                if system:
+                    telemetry.set_attr(span, SpanAttributes.LLM_SYSTEM, system)
+                    span.set_attribute("b2e.llm.system_partial", True)
+                # `output.value` so the span reads at a glance in a list, where
+                # the structured messages are one click away.
+                telemetry.set_io(span, output_value=_answer_text(call))
         finally:
             span.end(end_time=max(call.ended_ns, call.started_ns))
+
+
+def _answer_text(call: LlmCall) -> str:
+    """What the model said out loud on this call, without the reasoning.
+
+    Reasoning is deliberately excluded from ``output.value``: the two are
+    different kinds of evidence and a scorer scanning outputs for fabricated
+    identifiers must not find them in a passage the user never saw.
+    """
+    return "\n".join(c.get("text") or "" for c in call.contents
+                     if c.get("type") == telemetry.TEXT)
+
+
+def capture_llm_content() -> bool:
+    """Whether model reasoning and prompts go on the spans. Default: yes.
+
+    The plan for this change proposed gating it on ``_keeps_raw_stream``, so
+    only experiment turns would carry content. That was wrong and is worth
+    recording rather than quietly reversing: ``TOOL`` spans already carry every
+    tool result in full, on every turn, and those hold far more of the corpus
+    than an agent's reasoning about it does. Gating the reasoning while leaving
+    the data ungated would protect nothing and would blind exactly the turns a
+    researcher debugs — the ones that went wrong in conversation.
+
+    So it is on, with an explicit way off for a deployment that decides
+    otherwise. Turning it off is recorded on the span
+    (``b2e.trace.llm_content="disabled"``) rather than leaving an absence: a
+    turn with no reasoning and no reason given is indistinguishable from a model
+    that did not reason.
+    """
+    return os.environ.get("B2E_TRACE_LLM_CONTENT", "1").strip().lower() not in (
+        "0", "false", "no", "off")
 
 
 def mark_transcript_gap(root: Span, reason: str) -> None:
@@ -1065,6 +1340,10 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
         max_output_tokens=first_model.get("maxOutputTokens"),
         is_error=bool(final.get("is_error")),
         error=str(final.get("api_error_status") or ""),
+        api_duration_ms=int(final.get("duration_api_ms") or 0),
+        ttft_ms=int(final.get("ttft_ms") or 0),
+        ttft_stream_ms=int(final.get("ttft_stream_ms") or 0),
+        time_to_request_ms=int(final.get("time_to_request_ms") or 0),
     )
 
 
@@ -1202,7 +1481,7 @@ class ToolSpanRecorder:
     the end of the turn, so the bookkeeping is under a lock.
     """
 
-    def __init__(self, root: Span) -> None:
+    def __init__(self, root: Span, *, started_ns: int | None = None) -> None:
         self._root = root
         self._lock = threading.Lock()
         self._open: dict[str, _OpenCall] = {}
@@ -1211,6 +1490,22 @@ class ToolSpanRecorder:
         #: records can be filed under the call that caused them.
         self._finished: list[_FinishedCall] = []
         self._tool_time_s = 0.0
+        #: One `CHAIN iteration.N` per model call, opened when the CLI first
+        #: announces that message and closed when the next one starts. The
+        #: schema doc called this level unobservable outside the CLI; it is
+        #: observable, because the stream names the message.
+        self._iterations: dict[str, Span] = {}
+        self._iteration_order: list[str] = []
+        self._current_iteration: Span | None = None
+        #: An iteration covers the model call *and* the tool calls it asked
+        #: for, so it opens where the previous one closed rather than when the
+        #: response happened to arrive.
+        self._iteration_start_ns = started_ns or time.time_ns()
+        #: When the last tool result came back — the boundary between one
+        #: iteration and the next.
+        self._last_activity_ns = self._iteration_start_ns
+        #: Measured time-to-first-token per model call, keyed by message id.
+        self._ttft_ms: dict[str, int] = {}
 
     # ------------------------------------------------------------- writing
 
@@ -1224,21 +1519,88 @@ class ToolSpanRecorder:
         try:
             kind = event.get("type")
             if kind == "assistant":
-                for block in (event.get("message") or {}).get("content") or []:
+                message = event.get("message") or {}
+                self._rotate_iteration(str(message.get("id") or ""))
+                for block in message.get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         self._open_call(block)
             elif kind == "user":
                 for block in (event.get("message") or {}).get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
                         self._close_call(block)
+            elif kind == "stream_event":
+                self._observe_stream_event(event)
         except Exception:                                    # pragma: no cover
             logger.debug("tool span recorder skipped an event", exc_info=True)
+
+    def _observe_stream_event(self, event: dict[str, Any]) -> None:
+        """Take the one thing these rows carry that nothing else does.
+
+        ``--include-partial-messages`` produces a row per content-block delta,
+        which is a lot of events for very little: the assembled blocks arrive on
+        the ``assistant`` events anyway. ``message_start`` is the exception — it
+        carries ``ttft_ms``, an actually measured time-to-first-token, keyed by
+        the same ``message.id`` the transcript uses. So only that row is read,
+        and the deltas are dropped without being parsed.
+        """
+        inner = event.get("event") or {}
+        if inner.get("type") != "message_start":
+            return
+        message_id = str((inner.get("message") or {}).get("id") or "")
+        ttft = event.get("ttft_ms")
+        if message_id and ttft is not None:
+            with self._lock:
+                self._ttft_ms[message_id] = int(ttft)
+
+    def _rotate_iteration(self, message_id: str) -> None:
+        """Close the iteration that was open and start the one for this message.
+
+        The boundary is **when the previous iteration's last tool result
+        arrived**, not when this message was first seen. The difference matters
+        because the gap between the two is the model thinking, and that gap
+        belongs to the call it produced. Cutting at first sight instead would
+        leave every `LLM` span starting fractionally before its own parent —
+        the transcript dates a call from the row that preceded it, which is
+        exactly that tool result.
+        """
+        if not message_id:
+            return
+        with self._lock:
+            if message_id in self._iterations:
+                return
+            previous = self._current_iteration
+            # Never behind the open iteration's own start: a message that
+            # arrives with no tool result before it would otherwise produce a
+            # negative window.
+            edge = max(self._last_activity_ns, self._iteration_start_ns)
+            index = len(self._iteration_order) + 1
+            self._iteration_start_ns = edge
+        if previous is not None:
+            previous.end(end_time=edge)
+        span = telemetry.get_tracer().start_span(
+            f"iteration.{index}",
+            context=trace.set_span_in_context(self._root),
+            start_time=edge)
+        span.set_attribute(telemetry.SPAN_KIND,
+                           OpenInferenceSpanKindValues.CHAIN.value)
+        span.set_attribute("b2e.iteration.index", index)
+        span.set_attribute("b2e.llm.message_id", message_id)
+        with self._lock:
+            self._iterations[message_id] = span
+            self._iteration_order.append(message_id)
+            self._current_iteration = span
 
     def _open_call(self, block: dict[str, Any]) -> None:
         call_id = str(block.get("id") or "")
         name = str(block.get("name") or "unknown")
+        with self._lock:
+            # Under the iteration that asked for it, so the tree finally has the
+            # level `docs/span-schema.md` described and this harness lacked.
+            # Falls back to the turn when there is no iteration — a tool call
+            # the stream announced without a message id would otherwise vanish.
+            parent = self._current_iteration or self._root
         span = telemetry.open_tool_span(
-            name, parent=self._root, parameters=block.get("input"),
+            name, parent=parent, parameters=block.get("input"),
             tool_call_id=call_id or None)
         with self._lock:
             self._open[call_id] = _OpenCall(
@@ -1257,6 +1619,7 @@ class ToolSpanRecorder:
         ended_ns = time.time_ns()
         with self._lock:
             self._tool_time_s += time.perf_counter() - call.started
+            self._last_activity_ns = max(self._last_activity_ns, ended_ns)
             self._finished.append(_FinishedCall(
                 span=call.span, name=call.name,
                 started_ns=call.started_ns, ended_ns=ended_ns))
@@ -1278,6 +1641,13 @@ class ToolSpanRecorder:
                     span=call.span, name=call.name,
                     started_ns=call.started_ns, ended_ns=ended_ns))
             telemetry.close_tool_span(call.span, unfinished=True)
+        # The last iteration has no successor to close it. It must still be
+        # closed here and not left to the exporter, which would simply drop it.
+        with self._lock:
+            last = self._current_iteration
+            self._current_iteration = None
+        if last is not None:
+            last.end()
 
     # ------------------------------------------------- bridge correlation
 
@@ -1316,6 +1686,25 @@ class ToolSpanRecorder:
         share — the split that makes an 81-second average actionable."""
         with self._lock:
             return round(self._tool_time_s * 1000, 3)
+
+    @property
+    def iteration_count(self) -> int:
+        with self._lock:
+            return len(self._iteration_order)
+
+    def iteration_for(self, message_id: str) -> Span | None:
+        """The iteration span a model call belongs to, matched by message id.
+
+        Exact, not heuristic: the stream and the transcript name the same
+        Anthropic ``msg_…`` id, so an LLM span rebuilt from the file lands under
+        the iteration the stream watched happen.
+        """
+        with self._lock:
+            return self._iterations.get(message_id)
+
+    def ttft_for(self, message_id: str) -> int | None:
+        with self._lock:
+            return self._ttft_ms.get(message_id)
 
 
 def _emit_heimdall_span(record: dict[str, Any], *, root: Span,
@@ -1413,9 +1802,22 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute("b2e.turn.uncached_prompt_tokens", result.input_tokens)
     if result.duration_ms:
         root.set_attribute("b2e.turn.duration_ms", int(result.duration_ms))
+    # The CLI's own measurements, recorded rather than interpreted. Note that
+    # `api_duration_ms` can exceed `duration_ms` — 5 732 against 3 898 on the
+    # 2026-08-09 probe — so it is not a wall-clock slice of the turn and must
+    # not be subtracted from one.
+    if result.api_duration_ms:
+        root.set_attribute("b2e.turn.api_duration_ms", result.api_duration_ms)
+    if result.ttft_ms:
+        root.set_attribute("b2e.turn.ttft_ms", result.ttft_ms)
+    if result.ttft_stream_ms:
+        root.set_attribute("b2e.turn.ttft_stream_ms", result.ttft_stream_ms)
+    if result.time_to_request_ms:
+        root.set_attribute("b2e.turn.time_to_request_ms", result.time_to_request_ms)
     if recorder is not None:
         # Wall time inside tools, so model time is turn duration minus this.
         root.set_attribute("b2e.turn.tool_time_ms", recorder.tool_time_ms)
+        root.set_attribute("b2e.turn.iteration_spans", recorder.iteration_count)
     if config is not None:
         root.set_attribute("b2e.conversation_mode", config.conversation_mode)
     if result.resumed_failed:
@@ -1435,7 +1837,11 @@ def emit_spans(result: ClaudeCodeResult, *, root,
         telemetry.set_attr(root, "b2e.attempted_forbidden_tools",
                            result.attempted_forbidden_tools)
 
-    emit_llm_spans(result.llm_calls, root=root)
+    content = capture_llm_content()
+    emit_llm_spans(result.llm_calls, root=root, system=result.system_suffix or None,
+                   content=content, recorder=recorder)
+    if not content:
+        root.set_attribute("b2e.trace.llm_content", "disabled")
     if result.transcript_status:
         mark_transcript_gap(root, result.transcript_status)
 

@@ -71,6 +71,64 @@ class PhoenixClient:
             f"Phoenix returned {response.status_code} for a span query; "
             f"the REST contract may have moved (see docs/observability.md §6)")
 
+    def latest_traces(self, *, limit: int = 100,
+                      span_cap: int = 20000) -> list[dict[str, Any]]:
+        """The newest ``limit`` traces, each with all of its spans.
+
+        Two calls, not one. ``/traces?include_spans=true`` returns the spans
+        without their attributes — names and timings only — which is not enough
+        to show what an agent did. So the traces come first, newest by start
+        time, and the spans are fetched for exactly those trace ids.
+
+        ``span_cap`` bounds the second call. A hundred turns of this agent is on
+        the order of five thousand spans, but a runaway session is the case
+        where a page must stay openable, so paging stops rather than growing
+        without limit. The shortfall is reported by the caller, not swallowed.
+        """
+        try:
+            listing = self._client.get(
+                f"/v1/projects/{self.project}/traces",
+                params={"limit": limit, "sort": "start_time", "order": "desc"})
+            if listing.status_code != 200:
+                raise PhoenixUnavailable(
+                    f"Phoenix returned {listing.status_code} listing traces; "
+                    f"the REST contract may have moved "
+                    f"(see docs/observability.md §6)")
+            traces = _as_span_list(listing.json())
+            if not traces:
+                return []
+
+            ids = [t.get("trace_id") for t in traces if t.get("trace_id")]
+            spans: list[dict[str, Any]] = []
+            cursor = None
+            while len(spans) < span_cap:
+                params: list[tuple[str, Any]] = [("limit", 1000)]
+                params += [("trace_id", i) for i in ids]
+                if cursor:
+                    params.append(("cursor", cursor))
+                page = self._client.get(f"/v1/projects/{self.project}/spans",
+                                        params=params)
+                if page.status_code != 200:
+                    raise PhoenixUnavailable(
+                        f"Phoenix returned {page.status_code} fetching spans")
+                body = page.json()
+                batch = _as_span_list(body)
+                spans.extend(batch)
+                cursor = body.get("next_cursor") if isinstance(body, dict) else None
+                if not cursor or not batch:
+                    break
+        except httpx.HTTPError as exc:
+            raise PhoenixUnavailable(str(exc)) from exc
+
+        by_trace: dict[str, list[dict[str, Any]]] = {}
+        for span in spans:
+            trace_id = (span.get("context") or {}).get("trace_id")
+            if trace_id:
+                by_trace.setdefault(trace_id, []).append(span)
+        for trace in traces:
+            trace["spans"] = by_trace.get(trace.get("trace_id"), [])
+        return traces
+
     # ----------------------------------------------------------- annotations
 
     def annotate_span(self, *, span_id: str, name: str, label: str | None,
