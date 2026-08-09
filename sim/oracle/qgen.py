@@ -25,32 +25,109 @@ from typing import Any, Callable, Sequence
 from .labels import GoldLabels
 from .reference import ReferenceSpec
 
-#: Per-class targets, straight from the spec. Asserted at generation time so
-#: the basket cannot drift away from the document that describes it.
+#: Per-class targets. Asserted at generation time so the basket cannot drift
+#: away from the document that describes it.
+#:
+#: Every class here is answerable *in principle* from the marts — see
+#: ``MART_PATHS`` for where from, and the plan's Task 2 section for the
+#: measurement that put five earlier classes out. Answerability is not a
+#: quality bar, it is a validity one: a question whose reference quantity no
+#: served column determines is not a hard question, it is a floor under every
+#: arm equally, and 75 of 180 such questions would have spent almost half the
+#: deterministic basket measuring nothing.
 CLASS_COUNTS: dict[str, int] = {
     "count_by_grade": 20,
     "share_by_grade": 20,
+    "count_heads": 15,
     "mean_by_unit": 15,
     "median_by_unit": 15,
-    "top_n_potential": 15,
-    "top_n_impact": 15,
+    "top_n_competency": 15,
     "lookup_unit": 15,
     "lookup_grade": 15,
-    "compare_performance": 15,
-    "compare_potential": 15,
+    "compare_competency": 15,
+    "compare_grade": 15,
     "exists_senior": 20,
 }
 
 _FAMILY_OF: dict[str, str] = {
-    "count_by_grade": "org", "share_by_grade": "org",
+    "count_by_grade": "org", "share_by_grade": "org", "count_heads": "org",
     "mean_by_unit": "team_analysis", "median_by_unit": "team_analysis",
-    "top_n_potential": "key_employees", "top_n_impact": "key_employees",
+    "top_n_competency": "key_employees",
     "lookup_unit": "profile", "lookup_grade": "profile",
-    "compare_performance": "compare_people", "compare_potential": "compare_people",
+    "compare_competency": "compare_people", "compare_grade": "compare_people",
     "exists_senior": "org",
 }
 
+#: For every population field a generated reference is computed from, the
+#: catalogue columns through which an agent can reach the same quantity.
+#:
+#: This map is the standing answer to "is this question answerable at all",
+#: and it is data rather than prose so a test can check it against
+#: ``catalog/snapshot.json``. Three fields the reference evaluator supports are
+#: deliberately absent, and their absence is the reason five question classes
+#: were replaced:
+#:
+#: * ``performance_pct`` — the snapshot-wide rank of ``perf_latent``. What the
+#:   marts serve is ``estimation.performance``, an A-E ordinal mark drawn
+#:   through a quantile model with a per-rater bias that
+#:   ``b2e/gen/population.py::_ordinal_marks`` adds *on purpose* so that
+#:   averaging the eight quarters cannot recover the latent. Measured on the
+#:   800-person corpus: the served mark decides only 85% of random pairs and,
+#:   where it decides, agrees with the latent ordering 75% of the time.
+#: * ``potential_pct`` — the rank of ``truth['potential']``. No served column
+#:   is a function of it alone; ``talent_pool`` is binary and ``career_status``
+#:   is a four-way categorical, both mixing potential with tenure and ability.
+#: * ``impact_pct`` — a composite whose weights exist only in
+#:   ``sim/oracle/labels.py::IMPACT_WEIGHTS``. No mart publishes the weights or
+#:   the snapshot-wide ranks it combines, so there is no quantity to compute.
+MART_PATHS: dict[str, tuple[str, ...]] = {
+    "grade_level": ("dm_core.employee_actual.grade_level",),
+    "is_head": ("dm_core.employee_actual.position_flag_boss",),
+    "unit_name": ("dm_core.employee_oshs.unit_name",),
+    # The nine populated competency scores. Every other numeric column on this
+    # mart is NULL for every row, so "the average of the competency scores" is
+    # discoverable rather than a convention the question has to state — which
+    # it states anyway, for the same reason the unit scope is stated.
+    "competency_avg": (
+        "dm_special.employee_competence_actual.personality_traits_group_score",
+        "dm_special.employee_competence_actual.cognitive_features_group_score",
+        "dm_special.employee_competence_actual.soft_skills_competency_score",
+        "dm_special.employee_competence_actual.management_competency_score",
+        "dm_special.employee_competence_actual.wide_context",
+        "dm_special.employee_competence_actual.influence_scale",
+        "dm_special.employee_competence_actual.reflection",
+        "dm_special.employee_competence_actual.life_intelligenc",
+        "dm_special.employee_competence_actual.extrinsic_motivation",
+    ),
+}
+
+#: How a unit-scoped question's membership is reachable. Every unit-scoped class
+#: evaluates with ``recursive=True``, so the agent needs the ancestor chain, not
+#: just the person's own unit. ``dm_core.employee_actual`` carries it as fifteen
+#: level columns; a person belongs to unit U's subtree exactly when U appears
+#: among them.
+UNIT_SCOPE_PATHS: tuple[str, ...] = tuple(
+    f"dm_core.employee_actual.oshs_level_{level}_unit_id_main"
+    for level in range(1, 16))
+
 _MIN_UNIT_SIZE = 12
+
+#: Said in every unit-scoped question, because the reference always evaluates
+#: recursively and the text never said so. On the 800-person corpus 95 of 120
+#: named units have no direct members at all — they are internal org nodes —
+#: and 92 of 120 questions get a different answer under a direct-membership
+#: reading. That is not a hard question, it is one sentence of unstated
+#: convention worth tens of percentage points to whichever arm memorises it
+#: first, against an expected between-arm effect of a few. The spec's
+#: anti-leakage machinery protects against memorising facts; nothing protects
+#: against memorising the scorer's conventions except stating them.
+_SUBTREE = "включая подчинённые подразделения"
+
+#: Said in every question about the competency average, for the same reason:
+#: the quantity is the mean of a person's competency scores, and a question that
+#: leaves the reader to guess which numbers are meant is scoring the guess.
+_COMPETENCY_NOTE = ("Балл сотрудника — среднее по всем его оценкам "
+                    "компетенций.")
 
 
 def _h(seed: int, *parts: Any) -> int:
@@ -73,9 +150,17 @@ _MAX_DRAW_TRIES = 500
 
 def _unique_draw(class_name: str, index: int, used: set[Any],
                  candidate: Callable[[int], Any],
-                 key: Callable[[Any], Any] = lambda x: x) -> Any:
+                 key: Callable[[Any], Any] = lambda x: x,
+                 valid: Callable[[Any], bool] = lambda x: True) -> Any:
     """Draw one value per question, retried until it does not repeat a value
-    already used earlier in the same class.
+    already used earlier in the same class and satisfies ``valid``.
+
+    ``valid`` is how a class states the condition under which its question has
+    exactly one defensible answer: a comparison needs the two people to differ
+    on the compared field, a ranking needs its cut to be unambiguous. Rejecting
+    at draw time is the only place that can be done — by the time a spec exists
+    the question text has been written, and ``evaluate`` would happily compute
+    one of several equally correct answers and mark the other ones wrong.
 
     ``_pick`` alone samples independently at every index — sampling *with*
     replacement from a finite pool. Two different indices in the same class
@@ -100,12 +185,12 @@ def _unique_draw(class_name: str, index: int, used: set[Any],
     for attempt in range(_MAX_DRAW_TRIES):
         value = candidate(attempt)
         k = key(value)
-        if k not in used:
+        if k not in used and valid(value):
             used.add(k)
             return value
     raise ValueError(
-        f"could not draw a unique value for {class_name!r} index {index} "
-        f"after {_MAX_DRAW_TRIES} tries; the pool is too small for "
+        f"could not draw a unique, unambiguous value for {class_name!r} index "
+        f"{index} after {_MAX_DRAW_TRIES} tries; the pool is too small for "
         f"CLASS_COUNTS[{class_name!r}]")
 
 
@@ -165,6 +250,30 @@ def _unambiguous_units(gold: GoldLabels) -> list[int]:
         name = _unit_name(gold, u)
         name_counts[name] = name_counts.get(name, 0) + 1
     return [u for u in _eligible_units(gold) if name_counts[_unit_name(gold, u)] == 1]
+
+
+def _top_is_strict(gold: GoldLabels, unit_id: int, n: int) -> bool:
+    """Are the top ``n + 1`` competency averages in this unit all distinct?
+
+    ``n + 1`` and not ``n``: the ranking is single-valued only if both the
+    order *within* the answer and the cut *at its edge* are determined. Two
+    people tied at rank n and n+1 make "the top n" an arbitrary choice between
+    them, which ``evaluate`` resolves by snapshot row order — deterministic,
+    and invisible to any agent.
+    """
+    values = sorted(
+        (float(v) for v in gold.competency_avg[gold.members(int(unit_id))]),
+        reverse=True)[:n + 1]
+    return len(values) == n + 1 and len(set(values)) == n + 1
+
+
+def _separates(gold: GoldLabels, field: str, a: str, b: str) -> bool:
+    """Do these two people actually differ on the field being compared?"""
+    rows = [gold.index_of(a), gold.index_of(b)]
+    if any(r is None for r in rows):
+        return False
+    values = getattr(gold, field)
+    return float(values[rows[0]]) != float(values[rows[1]])
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,8 +337,8 @@ def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
             key=lambda t: (_unit_name(gold, t[0]), t[1]))
         out.append(_make(
             seed, "count_by_grade", i,
-            f"Сколько сотрудников в подразделении «{_unit_name(gold, unit)}» "
-            f"имеют грейд {grade} или выше?",
+            f"Сколько сотрудников подразделения «{_unit_name(gold, unit)}», "
+            f"{_SUBTREE}, имеют грейд {grade} или выше?",
             ReferenceSpec(op="count", field="grade_level",
                           scope={"unit_id": unit, "recursive": True},
                           predicate={"op": ">=", "value": grade}),
@@ -244,11 +353,27 @@ def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
             key=lambda t: (_unit_name(gold, t[0]), t[1]))
         out.append(_make(
             seed, "share_by_grade", i,
-            f"Какая доля сотрудников подразделения «{_unit_name(gold, unit)}» "
-            f"имеет грейд {grade} или выше? Ответ — долей от единицы.",
+            f"Какая доля сотрудников подразделения «{_unit_name(gold, unit)}», "
+            f"{_SUBTREE}, имеет грейд {grade} или выше? "
+            f"Ответ — долей от единицы.",
             ReferenceSpec(op="share", field="grade_level",
                           scope={"unit_id": unit, "recursive": True},
                           predicate={"op": ">=", "value": grade}),
+            (f"unit:{unit}",)))
+
+    used_count_heads: set[str] = set()
+    for i in range(CLASS_COUNTS["count_heads"]):
+        unit = _unique_draw(
+            "count_heads", i, used_count_heads,
+            lambda attempt, i=i: _pick(units, seed, "count_heads", i, attempt),
+            key=lambda u: _unit_name(gold, u))
+        out.append(_make(
+            seed, "count_heads", i,
+            f"Сколько руководителей подразделений работает в подразделении "
+            f"«{_unit_name(gold, unit)}», {_SUBTREE}?",
+            ReferenceSpec(op="count", field="is_head",
+                          scope={"unit_id": unit, "recursive": True},
+                          predicate={"op": ">=", "value": 1}),
             (f"unit:{unit}",)))
 
     used_mean_by_unit: set[str] = set()
@@ -259,9 +384,9 @@ def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
             key=lambda u: _unit_name(gold, u))
         out.append(_make(
             seed, "mean_by_unit", i,
-            f"Каков средний перцентиль результативности в подразделении "
-            f"«{_unit_name(gold, unit)}»?",
-            ReferenceSpec(op="mean", field="performance_pct",
+            f"Каков средний балл компетенций сотрудников подразделения "
+            f"«{_unit_name(gold, unit)}», {_SUBTREE}? {_COMPETENCY_NOTE}",
+            ReferenceSpec(op="mean", field="competency_avg",
                           scope={"unit_id": unit, "recursive": True}),
             (f"unit:{unit}",)))
 
@@ -273,29 +398,34 @@ def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
             key=lambda u: _unit_name(gold, u))
         out.append(_make(
             seed, "median_by_unit", i,
-            f"Какова медиана среднего балла компетенций в подразделении "
-            f"«{_unit_name(gold, unit)}»?",
-            ReferenceSpec(op="median", field="competency_avg",
+            f"Какова медиана грейда сотрудников подразделения "
+            f"«{_unit_name(gold, unit)}», {_SUBTREE}?",
+            ReferenceSpec(op="median", field="grade_level",
                           scope={"unit_id": unit, "recursive": True}),
             (f"unit:{unit}",)))
 
-    for cls, fld, word in (("top_n_potential", "potential_pct", "потенциалу"),
-                           ("top_n_impact", "impact_pct", "вкладу")):
-        used_top_n: set[tuple[str, int]] = set()
-        for i in range(CLASS_COUNTS[cls]):
-            unit, n = _unique_draw(
-                cls, i, used_top_n,
-                lambda attempt, cls=cls, i=i: (_pick(units, seed, cls, i, attempt),
-                                               3 + (_h(seed, cls, "n", i, attempt) % 3)),
-                key=lambda t: (_unit_name(gold, t[0]), t[1]))
-            out.append(_make(
-                seed, cls, i,
-                f"Назови {n} сотрудников подразделения «{_unit_name(gold, unit)}» "
-                f"с наивысшим показателем по {word}. Перечисли их person_id по "
-                f"убыванию показателя.",
-                ReferenceSpec(op="top_n", field=fld,
-                              scope={"unit_id": unit, "recursive": True}, n=n),
-                (f"unit:{unit}",)))
+    # A ranking is only single-valued if its cut is. `evaluate` breaks ties by
+    # snapshot row order, which is deterministic but invisible to the agent, so
+    # a unit whose n-th and (n+1)-th competency averages are equal has several
+    # equally right answers and exactly one of them scored. Requiring the top
+    # n+1 values to be distinct removes the case rather than scoring it.
+    used_top_n: set[tuple[str, int]] = set()
+    for i in range(CLASS_COUNTS["top_n_competency"]):
+        unit, n = _unique_draw(
+            "top_n_competency", i, used_top_n,
+            lambda attempt, i=i: (
+                _pick(units, seed, "top_n_competency", i, attempt),
+                3 + (_h(seed, "top_n_competency", "n", i, attempt) % 3)),
+            key=lambda t: (_unit_name(gold, t[0]), t[1]),
+            valid=lambda t: _top_is_strict(gold, t[0], t[1]))
+        out.append(_make(
+            seed, "top_n_competency", i,
+            f"Назови {n} сотрудников подразделения «{_unit_name(gold, unit)}», "
+            f"{_SUBTREE}, с наивысшим средним баллом компетенций. Перечисли их "
+            f"person_id по убыванию балла. {_COMPETENCY_NOTE}",
+            ReferenceSpec(op="top_n", field="competency_avg",
+                          scope={"unit_id": unit, "recursive": True}, n=n),
+            (f"unit:{unit}",)))
 
     used_lookup_unit: set[str] = set()
     for i in range(CLASS_COUNTS["lookup_unit"]):
@@ -320,8 +450,14 @@ def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
             ReferenceSpec(op="lookup", field="grade_level", refs=(person,)),
             (f"person:{person}",)))
 
-    for cls, fld, word in (("compare_performance", "performance_pct", "результативности"),
-                           ("compare_potential", "potential_pct", "потенциалу")):
+    # A comparison of two people who tie on the compared field has two right
+    # answers and one scored one — `evaluate`'s `argmax` silently keeps the
+    # first. Grades tie on 10.9% of random pairs on the test corpus, so this is
+    # a routine draw rather than an edge case, and the pair is redrawn instead.
+    for cls, fld, phrase, note in (
+            ("compare_competency", "competency_avg",
+             "средний балл компетенций", " " + _COMPETENCY_NOTE),
+            ("compare_grade", "grade_level", "грейд", "")):
         used_compare: set[frozenset[str]] = set()
         for i in range(CLASS_COUNTS[cls]):
             def _draw_pair(attempt, cls=cls, i=i):
@@ -330,12 +466,14 @@ def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
                 if a == b:
                     b = people[(people.index(a) + 1) % len(people)]
                 return a, b
-            a, b = _unique_draw(cls, i, used_compare, _draw_pair,
-                                key=lambda pair: frozenset(pair))
+            a, b = _unique_draw(
+                cls, i, used_compare, _draw_pair,
+                key=lambda pair: frozenset(pair),
+                valid=lambda pair, fld=fld: _separates(gold, fld, *pair))
             out.append(_make(
                 seed, cls, i,
-                f"Кто выше по {word} — {a} или {b}? "
-                f"Ответ — person_id победителя.",
+                f"У кого выше {phrase} — {a} или {b}? "
+                f"Ответ — person_id.{note}",
                 ReferenceSpec(op="compare", field=fld, refs=(a, b)),
                 (f"person:{a}", f"person:{b}")))
 
@@ -348,8 +486,9 @@ def generate(gold: GoldLabels, *, seed: int) -> tuple[GeneratedQuestion, ...]:
             key=lambda t: (_unit_name(gold, t[0]), t[1]))
         out.append(_make(
             seed, "exists_senior", i,
-            f"Есть ли в подразделении «{_unit_name(gold, unit)}» хотя бы один "
-            f"сотрудник грейда {grade} или выше? Ответь да или нет.",
+            f"Есть ли в подразделении «{_unit_name(gold, unit)}», {_SUBTREE}, "
+            f"хотя бы один сотрудник грейда {grade} или выше? "
+            f"Ответь да или нет.",
             ReferenceSpec(op="exists", field="grade_level",
                           scope={"unit_id": unit, "recursive": True},
                           predicate={"op": ">=", "value": grade}),

@@ -8,6 +8,7 @@ would make a run impossible to re-score later.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -96,6 +97,58 @@ def test_all_questions_in_a_basket_have_distinct_text(gold):
         texts = [q.text for q in qgen.generate(gold, seed=seed)]
         duplicates = [t for t in set(texts) if texts.count(t) > 1]
         assert not duplicates, (seed, duplicates[:3])
+
+
+def test_every_unit_scoped_question_states_that_the_subtree_counts(gold):
+    """The reference always evaluates recursively; the text never said so.
+
+    On the 800-person corpus 95 of the 120 named units have zero direct
+    members — they are internal org nodes — and 92 of 120 questions get a
+    different answer under a direct-membership reading. That is not a hard
+    question. It is one sentence of learnable convention, and a single memory
+    item that discovers it flips ~92 questions at once, against an expected
+    between-arm effect of a few percentage points. The spec's anti-leakage
+    machinery protects against memorising *facts*; nothing protects against
+    memorising the scorer's *conventions* except stating them in the question.
+    """
+    for seed in (1, 2, 7):
+        for q in qgen.generate(gold, seed=seed):
+            if q.spec.scope.get("unit_id") is None:
+                continue
+            assert q.spec.scope.get("recursive") is True, q.id
+            assert "включая подчинённые подразделения" in q.text, (q.id, q.text)
+
+
+def test_every_reference_quantity_is_reachable_from_the_catalogue(gold):
+    """A question whose answer no served column determines measures nothing.
+
+    Two earlier classes ranked latents (`potential_pct`, `impact_pct`) that no
+    mart exposes, and one ranked `performance_pct`, whose only served proxy is
+    an A-E mark the generator deliberately makes noisy. Those are not hard
+    questions either — they are a floor under every arm equally, and they would
+    have spent 75 of the 180 deterministic slots on it. This test is what stops
+    the basket from acquiring another one.
+    """
+    catalogue = json.loads((ROOT / "catalog" / "snapshot.json").read_text("utf-8"))
+
+    def exists(path: str) -> bool:
+        model, _, column = path.rpartition(".")
+        entry = catalogue["models"].get(model)
+        if entry is None:
+            return False
+        names = {c["name"] for c in entry.get("columns", ())}
+        names |= {c["name"] for c in entry.get("metrics", ())}
+        return column in names
+
+    for path in qgen.UNIT_SCOPE_PATHS:
+        assert exists(path), path
+    for field, paths in qgen.MART_PATHS.items():
+        assert paths, field
+        for path in paths:
+            assert exists(path), (field, path)
+
+    for q in qgen.generate(gold, seed=1):
+        assert q.spec.field in qgen.MART_PATHS, (q.id, q.spec.field)
 
 
 def test_no_question_names_a_unit_whose_name_is_shared(gold):
