@@ -284,3 +284,74 @@ def test_correct_is_none_exactly_when_unscored_across_all_categories():
     for kwargs in cases:
         result = score_correctness(**kwargs)
         assert (result.correct is None) == (result.scored is False), kwargs
+
+
+from sim.research.evaluate import (W_API, W_EFF, W_PRES, api_validity,   # noqa: E402
+                                   efficiency, quality)
+
+
+def _facts(**kw) -> TraceFacts:
+    base = dict(http_statuses=(200, 200), heimdall_calls=2, rows_returned=(10, 10),
+                error_codes=(), repeated_calls=0, pagination_walks=0,
+                columns_requested=(4, 4), tokens=20_000, seconds=60.0)
+    base.update(kw)
+    return TraceFacts(**base)
+
+
+def test_a_clean_trace_scores_full_api_validity():
+    assert api_validity(_facts()) == 1.0
+
+
+def test_each_defect_class_lowers_api_validity():
+    clean = api_validity(_facts())
+
+    assert api_validity(_facts(http_statuses=(400, 200), error_codes=("unknown-column",))) < clean
+    assert api_validity(_facts(repeated_calls=1)) < clean
+    assert api_validity(_facts(pagination_walks=1)) < clean
+    assert api_validity(_facts(columns_requested=(4, 400))) < clean
+
+
+def test_api_validity_is_clamped_to_zero_not_negative():
+    awful = _facts(http_statuses=(400, 400, 400), heimdall_calls=3,
+                   error_codes=("a", "b", "c"), repeated_calls=9,
+                   pagination_walks=9, columns_requested=(600, 600))
+
+    assert api_validity(awful) == 0.0
+
+
+def test_efficiency_is_one_at_the_median_and_falls_above_it():
+    at_median = efficiency(_facts(), median_tokens=20_000, median_seconds=60.0)
+    twice_as_costly = efficiency(_facts(tokens=40_000, seconds=120.0),
+                                 median_tokens=20_000, median_seconds=60.0)
+
+    assert at_median == 1.0
+    assert 0.0 < twice_as_costly < at_median
+
+
+def test_efficiency_caps_at_one_so_a_trivial_answer_cannot_earn_a_bonus():
+    assert efficiency(_facts(tokens=1, seconds=0.1),
+                      median_tokens=20_000, median_seconds=60.0) == 1.0
+
+
+def test_an_incorrect_answer_scores_zero_however_cheap_it_was():
+    wrong = CorrectnessResult(correct=False, scored=True, reason="")
+
+    assert quality(wrong, _facts(tokens=1, seconds=0.1),
+                   median_tokens=20_000, median_seconds=60.0,
+                   presentation=1.0) == 0.0
+
+
+def test_an_unscored_run_yields_none_not_zero():
+    unscored = CorrectnessResult(correct=None, scored=False, reason="no_answer_block")
+
+    assert quality(unscored, _facts(), median_tokens=20_000,
+                   median_seconds=60.0) is None
+
+
+def test_a_perfect_correct_answer_scores_the_full_weight_sum():
+    right = CorrectnessResult(correct=True, scored=True, reason="")
+
+    got = quality(right, _facts(), median_tokens=20_000, median_seconds=60.0,
+                  presentation=1.0)
+
+    assert got == W_API + W_EFF + W_PRES == 100.0

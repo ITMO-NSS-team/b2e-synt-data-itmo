@@ -138,3 +138,70 @@ def score_correctness(*, answer_text: str, reference: Reference | None,
                  verdict=parsed.verdict)
     return CorrectnessResult(correct=bool(ok and not parsed.refused),
                              scored=True, reason="")
+
+
+W_API = 55.0
+W_EFF = 30.0
+W_PRES = 15.0
+
+#: Per-defect penalties on API validity, as a fraction of the call count. Chosen
+#: so that any single defect is visible and no single defect alone zeroes the
+#: term — the report needs to see *which* one moved, and a term that saturates
+#: on the first 400 cannot show that.
+_P_ERROR = 0.40
+_P_REPEAT = 0.25
+_P_WALK = 0.25
+_P_OVERFETCH = 0.20
+
+#: A query asking for more than this many columns is over-fetching for the
+#: purposes of the metric. The catalogue's widest mart has 642 columns and the
+#: storage is columnar, so a wide select is honestly more expensive — this is a
+#: real cost, not a style rule.
+_WIDE_COLUMNS = 40
+
+
+def api_validity(facts: TraceFacts) -> float:
+    """1 minus the weighted defect rate of the turn's Heimdall calls."""
+    calls = max(int(facts.heimdall_calls), 1)
+    errors = sum(1 for s in facts.http_statuses if s >= 400)
+    overfetch = sum(1 for c in facts.columns_requested if c > _WIDE_COLUMNS)
+    penalty = (_P_ERROR * errors
+               + _P_REPEAT * facts.repeated_calls
+               + _P_WALK * facts.pagination_walks
+               + _P_OVERFETCH * overfetch) / calls
+    return max(0.0, min(1.0, 1.0 - penalty))
+
+
+def efficiency(facts: TraceFacts, *, median_tokens: float,
+               median_seconds: float) -> float:
+    """How this turn's cost compares with the median for its question class.
+
+    Capped at 1.0 rather than rewarded below the median, because the cheapest
+    possible turn is one that answers nothing, and correctness has already
+    gated this term — but an arm that learns to answer in one call should not
+    be able to farm unbounded points from that either.
+    """
+    tok = facts.tokens / max(median_tokens, 1.0)
+    sec = facts.seconds / max(median_seconds, 1e-6)
+    ratio = 0.5 * tok + 0.5 * sec
+    return max(0.0, min(1.0, 1.0 / max(ratio, 1e-6) if ratio > 1.0 else 1.0))
+
+
+def quality(correctness: CorrectnessResult, facts: TraceFacts, *,
+            median_tokens: float, median_seconds: float,
+            presentation: float = 0.0) -> float | None:
+    """The 0-100 composite, gated on correctness.
+
+    ``presentation`` arrives on 0-1; it is the judge's 0-4 rubric divided by 4,
+    and it is zero whenever the judge has not cleared its kappa gate. Passing it
+    in rather than computing it here keeps this function a pure function of
+    numbers, which is what makes the weights arguable without a rerun.
+    """
+    if not correctness.scored:
+        return None
+    if not correctness.correct:
+        return 0.0
+    return (W_API * api_validity(facts)
+            + W_EFF * efficiency(facts, median_tokens=median_tokens,
+                                 median_seconds=median_seconds)
+            + W_PRES * max(0.0, min(1.0, presentation)))
