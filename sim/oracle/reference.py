@@ -1,0 +1,178 @@
+"""Computable reference answers, expressed as data rather than as code.
+
+A question's correct answer is a ``ReferenceSpec`` — an operation, a field, a
+scope and an optional predicate — evaluated against the population. Two
+consequences follow, and both are the point.
+
+First, the reference never touches a mart. ``sim/oracle/labels.py`` already
+takes this position for gold labels and states why: if the reference were
+computed by querying the same projection the agent queries, a projection bug
+would appear on both sides and cancel, scoring a pass. Here the agent goes
+through Heimdall and the reference goes through ``truth/people.json``, so a
+disagreement is always a real disagreement.
+
+Second, because the spec is data, a generated question can be serialised,
+committed to the registry alongside the run, and re-evaluated later against a
+rebuilt snapshot. A reference expressed as a Python lambda could not be.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field as dc_field
+from typing import Any
+
+import numpy as np
+
+from .labels import GoldLabels, ROUND_DP
+
+#: Operations a generated question may ask for. Closed set: an unknown op is a
+#: generator bug, and a generator bug that silently returns ``None`` would be
+#: scored as an agent failure on every question it produced.
+OPS: tuple[str, ...] = (
+    "count", "share", "mean", "median", "top_n", "lookup", "compare", "exists",
+)
+
+#: Population fields a question may be about. Every one is a per-person array on
+#: ``GoldLabels``; ``unit_name`` is the single exception and is resolved through
+#: the org tree.
+FIELDS: tuple[str, ...] = (
+    "grade_level", "performance_pct", "potential_pct", "competency_avg",
+    "competency_pct", "impact_pct", "is_head", "unit_name",
+)
+
+_PREDICATES = {
+    ">=": lambda a, b: a >= b,
+    ">": lambda a, b: a > b,
+    "<=": lambda a, b: a <= b,
+    "<": lambda a, b: a < b,
+    "==": lambda a, b: a == b,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceSpec:
+    op: str
+    field: str
+    scope: dict[str, Any] = dc_field(default_factory=dict)
+    predicate: dict[str, Any] | None = None
+    n: int | None = None
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Reference:
+    kind: str                      # number | ids | verdict | boolean
+    value: float | None = None
+    ids: tuple[str, ...] = ()
+    verdict: str | None = None
+
+
+def _rows(spec: ReferenceSpec, gold: GoldLabels) -> np.ndarray:
+    unit_id = spec.scope.get("unit_id")
+    recursive = bool(spec.scope.get("recursive", True))
+    return gold.members(None if unit_id is None else int(unit_id), recursive)
+
+
+def _values(spec: ReferenceSpec, gold: GoldLabels, rows: np.ndarray) -> np.ndarray:
+    if spec.field == "is_head":
+        return gold.is_head[rows].astype(np.float64)
+    if spec.field == "unit_name":
+        raise ValueError("unit_name is not numeric; use op='lookup'")
+    return np.asarray(getattr(gold, spec.field), dtype=np.float64)[rows]
+
+
+def _filtered(spec: ReferenceSpec, gold: GoldLabels, rows: np.ndarray) -> np.ndarray:
+    if spec.predicate is None:
+        return rows
+    op = spec.predicate["op"]
+    if op not in _PREDICATES:
+        raise ValueError(f"unknown predicate {op!r}")
+    mask = _PREDICATES[op](_values(spec, gold, rows), float(spec.predicate["value"]))
+    return rows[np.asarray(mask, dtype=bool)]
+
+
+def _r(x: float) -> float:
+    return round(float(x), ROUND_DP)
+
+
+def evaluate(spec: ReferenceSpec, gold: GoldLabels) -> Reference:
+    """The correct answer to one generated question.
+
+    Raises rather than returning a sentinel on an unknown operation: a generator
+    that emits a spec this cannot evaluate must fail at generation time, not
+    turn into a question every agent answers wrongly.
+    """
+    if spec.op not in OPS:
+        raise ValueError(f"unknown op {spec.op!r}, expected one of {OPS}")
+
+    if spec.op in ("count", "share"):
+        rows = _rows(spec, gold)
+        hit = _filtered(spec, gold, rows)
+        if spec.op == "count":
+            return Reference(kind="number", value=float(len(hit)))
+        total = len(rows)
+        return Reference(kind="number",
+                         value=_r(len(hit) / total) if total else 0.0)
+
+    if spec.op in ("mean", "median"):
+        rows = _filtered(spec, gold, _rows(spec, gold))
+        if len(rows) == 0:
+            return Reference(kind="number", value=None)
+        vals = _values(spec, gold, rows)
+        agg = np.mean(vals) if spec.op == "mean" else np.median(vals)
+        return Reference(kind="number", value=_r(agg))
+
+    if spec.op == "top_n":
+        rows = _filtered(spec, gold, _rows(spec, gold))
+        vals = _values(spec, gold, rows)
+        # Stable sort so ties break by row order, which is snapshot order, which
+        # is deterministic. An unstable sort would make the reference depend on
+        # numpy's build.
+        order = rows[np.argsort(-vals, kind="stable")][: int(spec.n or 1)]
+        return Reference(kind="ids",
+                         ids=tuple(gold.person_id[int(r)] for r in order))
+
+    if spec.op == "lookup":
+        row = gold.index_of(spec.refs[0])
+        if row is None:
+            return Reference(kind="verdict", verdict=None)
+        if spec.field == "unit_name":
+            return Reference(kind="verdict",
+                             verdict=str(gold.tree.name[gold.unit_of[row]]))
+        return Reference(kind="number",
+                         value=_r(_values(spec, gold, np.array([row]))[0]))
+
+    if spec.op == "compare":
+        rows = [gold.index_of(r) for r in spec.refs]
+        if any(r is None for r in rows):
+            return Reference(kind="verdict", verdict=None)
+        arr = np.array(rows, dtype=np.int64)
+        winner = arr[int(np.argmax(_values(spec, gold, arr)))]
+        return Reference(kind="verdict", verdict=gold.person_id[int(winner)])
+
+    # exists
+    rows = _filtered(spec, gold, _rows(spec, gold))
+    return Reference(kind="boolean", value=float(len(rows) > 0))
+
+
+def matches(ref: Reference, *, value: float | None,
+            ids: list[str] | None, verdict: str | None) -> bool:
+    """Does a parsed agent answer agree with the reference?
+
+    Rankings compare order-sensitively. That is a real requirement rather than
+    strictness for its own sake: "name the three highest-potential people" has a
+    different correct answer from "name three high-potential people", and a
+    set comparison would score the second when the first was asked.
+    """
+    if ref.kind == "number":
+        if value is None or ref.value is None:
+            return value is None and ref.value is None
+        return _r(value) == _r(ref.value)
+    if ref.kind == "ids":
+        return tuple(ids or ()) == ref.ids
+    if ref.kind == "verdict":
+        return (verdict or None) == ref.verdict
+    if ref.kind == "boolean":
+        if value is None:
+            return False
+        return bool(value) == bool(ref.value)
+    raise ValueError(f"unknown reference kind {ref.kind!r}")
