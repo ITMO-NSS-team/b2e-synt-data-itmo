@@ -53,7 +53,7 @@ import random
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -648,7 +648,14 @@ def run(cfg: RunConfig, *, gold: GoldLabels | None = None) -> None:
 
             with ThreadPoolExecutor(max_workers=max(1, cfg.concurrency)) as pool:
                 futures = [pool.submit(_dispatch, arm, item) for arm, item in pending]
-                for fut in futures:
+                # as_completed, not submission order. Iterating `futures`
+                # directly blocks on futures[0], so one slow turn withholds
+                # EVERY row behind it — observed live: 53 requests served, 19
+                # turns finished, zero rows on disk, because the first turn of
+                # the epoch was still running. turns.jsonl is also the
+                # checkpoint, so that is not just delayed reporting: a crash
+                # would have discarded every completed turn in the epoch.
+                for fut in as_completed(futures):
                     row, calls = fut.result()
                     with write_lock:
                         with turns_path.open("a", encoding="utf-8") as fh:
