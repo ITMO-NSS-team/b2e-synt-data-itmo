@@ -20,6 +20,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import pytest                                                   # noqa: E402
+
 from sim.oracle.reference import Reference                      # noqa: E402
 from sim.research.evaluate import (CorrectnessResult, TraceFacts,   # noqa: E402
                                    score_correctness)
@@ -113,6 +115,45 @@ def test_no_data_is_correct_when_the_agent_declines_after_seeing_zero_rows():
                                reference=None, category="no_data", facts=empty_mart)
 
     assert result.correct is True
+
+
+def test_an_unknown_category_raises_rather_than_dropping_the_question():
+    """A silently shrinking denominator is a differential-dropout channel.
+
+    A typo'd or newly added category used to fall through to the deterministic
+    branch and, with no reference to compare against, come back
+    ``scored=False`` — dropping those questions out of every rate the report
+    computes. ``reference.evaluate`` raises on an unknown op for exactly this
+    reason; this branch now matches it.
+    """
+    with pytest.raises(ValueError, match="ambigous"):
+        score_correctness(answer_text=_answer("reason: уточните"),
+                          reference=None, category="ambigous", facts=EMPTY)
+
+
+def test_no_reference_on_an_answerable_question_is_still_unscored():
+    # The raise above must not swallow the legitimate case it sits next to: a
+    # known category whose reference could not be computed is unscored, not an
+    # error.
+    result = score_correctness(answer_text=_answer("value: 41\nrefused: false"),
+                               reference=None, category="answerable", facts=EMPTY)
+
+    assert result.scored is False
+    assert result.reason == "no_reference"
+
+
+def test_evaluate_does_not_redeclare_the_legacy_decline_categories():
+    """Two live scorers, one authoritative.
+
+    ``sim/research/metrics.py`` is the legacy trace-level scorer still wired
+    into the research API; ``evaluate.py`` is the RQ4 per-answer scorer. The
+    duplicated, unused ``DECLINE_CATEGORIES`` in this module made it look as
+    though the two shared a contract they do not.
+    """
+    import sim.research.evaluate as ev
+
+    assert not hasattr(ev, "DECLINE_CATEGORIES")
+    assert "metrics.py" in (ev.__doc__ or "")
 
 
 # --- field_errors: present-but-unreadable must not score as wrong -----------
@@ -303,9 +344,13 @@ def test_a_clean_trace_scores_full_api_validity():
 
 
 def test_each_defect_class_lowers_api_validity():
+    # `error_codes` is deliberately absent from every case here: `api_validity`
+    # never reads that field, and setting it alongside a 400 would make this
+    # test pass for a reason it does not check — the 4xx status is the only
+    # thing moving the number.
     clean = api_validity(_facts())
 
-    assert api_validity(_facts(http_statuses=(400, 200), error_codes=("unknown-column",))) < clean
+    assert api_validity(_facts(http_statuses=(400, 200))) < clean
     assert api_validity(_facts(repeated_calls=1)) < clean
     assert api_validity(_facts(pagination_walks=1)) < clean
     assert api_validity(_facts(columns_requested=(4, 400))) < clean

@@ -114,9 +114,24 @@ def evaluate(spec: ReferenceSpec, gold: GoldLabels) -> Reference:
     Raises rather than returning a sentinel on an unknown operation: a generator
     that emits a spec this cannot evaluate must fail at generation time, not
     turn into a question every agent answers wrongly.
+
+    ``field`` is checked here for the same reason ``op`` is, and against the
+    same closed set the module exports. It was previously checked nowhere: a
+    typo'd field reached ``getattr(gold, ...)`` and surfaced as an
+    ``AttributeError`` from numpy — a message naming neither the spec nor
+    ``FIELDS`` — and only on the paths that happen to read values, so a
+    predicate-free ``count`` swallowed it entirely.
+
+    ``refs`` is checked for length rather than indexed on faith. A
+    ``ReferenceSpec`` is round-tripped through JSON in the run record, so an
+    empty tuple is a shape this function genuinely receives, and a bare
+    ``IndexError`` from ``spec.refs[0]`` reads as a bug in this module rather
+    than as the malformed spec it is.
     """
     if spec.op not in OPS:
         raise ValueError(f"unknown op {spec.op!r}, expected one of {OPS}")
+    if spec.field not in FIELDS:
+        raise ValueError(f"unknown field {spec.field!r}, expected one of {FIELDS}")
 
     if spec.op in ("count", "share"):
         rows = _rows(spec, gold)
@@ -151,6 +166,8 @@ def evaluate(spec: ReferenceSpec, gold: GoldLabels) -> Reference:
                          ids=tuple(gold.person_id[int(r)] for r in order))
 
     if spec.op == "lookup":
+        if len(spec.refs) < 1:
+            raise ValueError("op='lookup' needs one entry in refs, got none")
         row = gold.index_of(spec.refs[0])
         if row is None:
             return Reference(kind="verdict", verdict=None)
@@ -161,6 +178,10 @@ def evaluate(spec: ReferenceSpec, gold: GoldLabels) -> Reference:
                          value=_r(_values(spec, gold, np.array([row]))[0]))
 
     if spec.op == "compare":
+        if len(spec.refs) < 2:
+            raise ValueError(
+                f"op='compare' needs at least two entries in refs, got "
+                f"{len(spec.refs)}")
         rows = [gold.index_of(r) for r in spec.refs]
         if any(r is None for r in rows):
             return Reference(kind="verdict", verdict=None)

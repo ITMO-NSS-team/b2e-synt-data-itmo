@@ -152,6 +152,42 @@ def test_unknown_op_raises_rather_than_returning_none(gold):
         ref.evaluate(spec, gold)
 
 
+def test_lookup_without_a_reference_raises_the_modules_own_error(gold):
+    """A spec rehydrated from JSON is why ``__post_init__`` validation exists.
+
+    An empty ``refs`` reaching ``spec.refs[0]`` raises a bare ``IndexError``,
+    which a caller cannot tell apart from a numpy indexing bug; the module's
+    deliberate ``ValueError`` names the spec that is malformed.
+    """
+    spec = ref.ReferenceSpec(op="lookup", field="grade_level", scope={},
+                             predicate=None, n=None, refs=())
+
+    with pytest.raises(ValueError, match="refs"):
+        ref.evaluate(spec, gold)
+
+
+def test_compare_with_fewer_than_two_references_raises(gold):
+    spec = ref.ReferenceSpec(op="compare", field="grade_level", scope={},
+                             predicate=None, n=None, refs=("only-one",))
+
+    with pytest.raises(ValueError, match="refs"):
+        ref.evaluate(spec, gold)
+
+
+def test_unknown_field_raises_instead_of_surfacing_as_an_attribute_error(gold):
+    """``FIELDS`` is exported as a closed set; nothing checked it.
+
+    A typo'd field reached ``getattr(gold, ...)`` and came back as an
+    ``AttributeError`` from numpy — a message that names neither the spec nor
+    the closed set it violated.
+    """
+    spec = ref.ReferenceSpec(op="count", field="grade_lvl", scope={},
+                             predicate={"op": ">=", "value": 12}, n=None, refs=())
+
+    with pytest.raises(ValueError, match="grade_lvl"):
+        ref.evaluate(spec, gold)
+
+
 def test_reference_module_does_not_import_the_query_engine():
     """The reference must not go through the projection the agent queries.
 

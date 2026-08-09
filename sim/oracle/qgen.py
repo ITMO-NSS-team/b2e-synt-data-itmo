@@ -22,8 +22,6 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
-import numpy as np
-
 from .labels import GoldLabels
 from .reference import ReferenceSpec
 
