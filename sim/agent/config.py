@@ -23,6 +23,7 @@ harness takes to read a config.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -129,7 +130,15 @@ MEMORY_STRATEGIES = (
     "current_mart",      # only the primary HR mart
     "hr_plus_external",  # HR mart plus the external talent-radar mirror
     "everything",        # including the stale _dep replica
+    "reflected",         # RQ4: a sim.reflection memory pack, pinned by version
 )
+
+#: A registry ref of the form ``name@N`` — never a floating head. Matched
+#: against ``memory_ref`` because a floating ``memory_isolated_i1`` would let
+#: the pack a running experiment reads change under it the moment reflection
+#: commits a new epoch, which destroys comparability between two turns that
+#: are supposed to be the same condition.
+_PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 
 
 @dataclass
@@ -162,6 +171,10 @@ class AgentConfig:
     budget_strategy: str = "ignore"
     context_strategy: str = "full"
     memory_strategy: str = "none"
+    #: Pinned ``name@N`` ref of a ``sim.reflection.memory.MemoryPack``. Only
+    #: meaningful — and only legal — when ``memory_strategy == "reflected"``;
+    #: see the refusals in ``__post_init__``.
+    memory_ref: str = ""
 
     # ---- loop control
     max_tool_iterations: int = 12
@@ -219,6 +232,28 @@ class AgentConfig:
         if self.memory_strategy not in MEMORY_STRATEGIES:
             raise ValueError(
                 f"memory_strategy {self.memory_strategy!r} not in {MEMORY_STRATEGIES}")
+        if self.memory_strategy == "reflected" and not self.memory_ref:
+            # Same argument as the code_execution and context_strategy
+            # refusals above: a declared-but-inert condition is worse than a
+            # crash. "reflected" with no ref would render an empty memory
+            # section and silently collapse into the "none" condition while
+            # the fingerprint kept claiming otherwise.
+            raise ValueError(
+                "memory_strategy='reflected' requires memory_ref to be set to "
+                "a pinned sim.reflection memory pack ref")
+        if self.memory_ref and self.memory_strategy != "reflected":
+            raise ValueError(
+                f"memory_ref is set ({self.memory_ref!r}) but "
+                f"memory_strategy={self.memory_strategy!r} is not 'reflected'; "
+                f"a ref that nothing reads is a condition nobody applied")
+        if self.memory_ref and not _PINNED_REF.match(self.memory_ref):
+            # A floating head (bare "memory_isolated_i1", no "@N") would let
+            # the pack a running experiment reads change the moment reflection
+            # commits the next epoch — two turns recorded under the same
+            # condition_id would then have been served different memory.
+            raise ValueError(
+                f"memory_ref {self.memory_ref!r} is not pinned to a version; "
+                f"expected the form 'name@N', e.g. 'memory_isolated_i1@3'")
         if self.max_output_tokens >= self.context_window_tokens:
             raise ValueError("max_output_tokens must be smaller than the context window")
         if not self.tool_subset:

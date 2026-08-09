@@ -211,12 +211,30 @@ def start_run(
     employee_id: str,
     metadata: dict[str, Any] | None = None,
     question: str | None = None,
+    memory_ref: str | None = None,
+    memory_digest: str | None = None,
+    memory_epoch: int | None = None,
+    memory_tokens: int | None = None,
+    run_arm: str | None = None,
+    run_epoch: int | None = None,
+    run_replication: int | None = None,
 ) -> Iterator[Span]:
     """Root AGENT span for one turn.
 
     Refuses to open without a complete fingerprint: a run recorded without one
     cannot be compared with any other run, so producing it is worse than
     failing — it looks like data.
+
+    The ``memory_*``/``run_*`` keywords are RQ4's addition, following the
+    ``b2e.code_execution`` precedent (``sim/agent/claude_code.py``): none of
+    them are a tenth fingerprint field, because ``memory_ref`` already travels
+    inside ``agent_config_version`` and would double-count the condition if it
+    were. They exist so a researcher can filter a trace store on the arm
+    directly, without resolving a config version first. All are optional and
+    unset by default — ``run_arm``/``run_epoch``/``run_replication`` name
+    concepts (which of several fleet instances, which reflection epoch) that
+    belong to the Plan C driver that assembles them; this call only accepts
+    the values, it does not invent them.
     """
     fingerprint = require_complete(fingerprint)
 
@@ -231,6 +249,20 @@ def start_run(
             set_attr(span, SpanAttributes.METADATA, metadata)
         if question is not None:
             set_io(span, input_value=question)
+        if memory_ref is not None:
+            span.set_attribute("b2e.memory.ref", memory_ref)
+        if memory_digest is not None:
+            span.set_attribute("b2e.memory.digest", memory_digest)
+        if memory_epoch is not None:
+            span.set_attribute("b2e.memory.epoch", int(memory_epoch))
+        if memory_tokens is not None:
+            span.set_attribute("b2e.memory.tokens", int(memory_tokens))
+        if run_arm is not None:
+            span.set_attribute("b2e.run.arm", run_arm)
+        if run_epoch is not None:
+            span.set_attribute("b2e.run.epoch", int(run_epoch))
+        if run_replication is not None:
+            span.set_attribute("b2e.run.replication", int(run_replication))
         try:
             yield span
         except Exception as exc:

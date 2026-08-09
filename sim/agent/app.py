@@ -353,7 +353,7 @@ def create_app(state: AgentState | None = None) -> FastAPI:
             session["config_ref"])
         system_prompt = render(prompt_template, {
             "employee_id": session["employee_id"],
-            "memory_block": _memory_block(config, session),
+            "memory_block": _memory_block(state, config, session),
             **config.prompt_variables,
         })
 
@@ -528,6 +528,7 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
     with telemetry.start_run(
         "b2e.turn", fingerprint=fingerprint, session_id=session_id,
         employee_id=session["employee_id"], metadata=metadata, question=question,
+        **_memory_telemetry(state, config),
     ) as root:
         trace_id = telemetry.current_trace_id()
         # Opens a TOOL span when the CLI announces a call and closes it when the
@@ -615,11 +616,19 @@ def _guard_for(experiment_id: str):
     return costguard.get(experiment_id)
 
 
-def _memory_block(config: AgentConfig, session: dict[str, Any]) -> str:
+def _memory_block(state: "AgentState", config: AgentConfig,
+                  session: dict[str, Any]) -> str:
     """RQ3's independent variable, rendered into the prompt.
 
     ``none`` returns empty so the template omits the whole section — an empty
     heading would itself be a hint that memory exists.
+
+    ``state`` is needed only by ``reflected`` (RQ4), which resolves
+    ``config.memory_ref`` through the registry rather than the RQ3 branches
+    below, which need nothing but the session. It is threaded through both
+    call sites rather than reached globally because a module-level registry
+    handle would make this function's behaviour depend on process state no
+    call site could see in its own arguments.
     """
     if config.memory_strategy == "none":
         return ""
@@ -628,9 +637,41 @@ def _memory_block(config: AgentConfig, session: dict[str, Any]) -> str:
     if config.memory_strategy == "hr_plus_external":
         return (f"Идентификатор сотрудника: {session['employee_id']}. "
                 f"Профиль может присутствовать во внешней системе под другим ключом.")
+    if config.memory_strategy == "reflected":
+        from sim.reflection.memory import load_pack
+
+        return load_pack(state.registry, config.memory_ref).rendered
     return (f"Идентификатор сотрудника: {session['employee_id']}. "
             f"Профиль может присутствовать во внешней системе под другим ключом, "
             f"а также в устаревшей реплике, покрывающей не всех сотрудников.")
+
+
+def _memory_telemetry(state: "AgentState", config: AgentConfig) -> dict[str, Any]:
+    """``b2e.memory.{ref,digest,epoch,tokens}`` for :func:`telemetry.start_run`.
+
+    Only ``reflected`` has anything to stamp: the RQ3 strategies are two
+    sentences of text with no registry-backed identity to point at. Loads the
+    pack a second time rather than sharing the one ``_memory_block`` already
+    read — a second SQLite read is cheap and keeps this function independent
+    of the prompt-rendering path, which returns only a string.
+
+    ``memory_tokens`` here is the *static* size of the rendered pack, not the
+    per-turn total the spec's efficiency metric wants (the prompt cost of the
+    memory text summed over every model call in the turn) — that number needs
+    the harness's own call count, which only the Plan C driver assembles.
+    """
+    if config.memory_strategy != "reflected":
+        return {}
+    from sim.agent.loop import estimate_tokens
+    from sim.reflection.memory import load_pack
+
+    pack = load_pack(state.registry, config.memory_ref)
+    return {
+        "memory_ref": config.memory_ref,
+        "memory_digest": pack.digest,
+        "memory_epoch": pack.epoch,
+        "memory_tokens": estimate_tokens([{"content": pack.rendered}]),
+    }
 
 
 def _load_basket_questions(basket_id: str | None) -> list[str]:
@@ -715,7 +756,7 @@ def _run_single(state: AgentState, employee_id: str, config_ref: str,
         fingerprint=fingerprint.as_dict(), metadata={"experiment_id": experiment_id})
     system_prompt = render(template, {
         "employee_id": employee_id,
-        "memory_block": _memory_block(config, {"employee_id": employee_id}),
+        "memory_block": _memory_block(state, config, {"employee_id": employee_id}),
         **config.prompt_variables,
     })
     started = time.perf_counter()
