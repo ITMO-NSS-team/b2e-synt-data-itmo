@@ -338,6 +338,18 @@ def score_correctness(*, answer_text: str, reference: Reference | None,
     if reference is None:
         return _unscored("no_reference")
 
+    if reference.kind == "verdict" and reference.verdict is None:
+        # `lookup`/`compare` return exactly this Reference when the named
+        # subject is absent from the snapshot (`sim/oracle/reference.py`).
+        # `matches()` can never agree with a `None` verdict — nothing a model
+        # writes equals "no such string" — so falling through to it would
+        # make declining just as unscoreable as answering, on a question
+        # whose one correct behaviour is to decline. Unreachable today
+        # because generated refs are always drawn from `gold.person_id`, but
+        # the fix is cheap and the alternative is a silent trap for the next
+        # basket that names an absent subject on purpose.
+        return CorrectnessResult(correct=bool(parsed.refused), scored=True, reason="")
+
     if reference.kind in _VALUE_KINDS and "value" in parsed.field_errors:
         return _unscored(parsed.field_errors["value"])
 

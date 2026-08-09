@@ -360,6 +360,33 @@ def test_an_unknown_category_raises_rather_than_dropping_the_question():
                           reference=None, category="ambigous", facts=EMPTY)
 
 
+def test_an_absent_subject_scores_correct_when_the_agent_declines():
+    """A `verdict=None` reference means the named person is not in the
+    snapshot (`lookup`/`compare` on an unresolvable `refs` entry, per
+    `sim/oracle/reference.py::evaluate`). `matches()` can never agree with it
+    — there is no string a `verdict` can equal `None` by being — so before
+    this fix `bool(ok and not parsed.refused)` was `False` regardless of
+    `parsed.refused`, and a question with no computable subject could not be
+    answered correctly even by the one behaviour that is actually correct
+    for it: declining.
+    """
+    result = score_correctness(
+        answer_text=_answer("refused: true\nreason: такого человека нет в снимке"),
+        reference=Reference(kind="verdict", verdict=None),
+        category="answerable", facts=EMPTY)
+
+    assert result == CorrectnessResult(correct=True, scored=True, reason="")
+
+
+def test_an_absent_subject_scores_incorrect_when_the_agent_answers_anyway():
+    result = score_correctness(
+        answer_text=_answer("verdict: кто-то\nrefused: false"),
+        reference=Reference(kind="verdict", verdict=None),
+        category="answerable", facts=EMPTY)
+
+    assert result == CorrectnessResult(correct=False, scored=True, reason="")
+
+
 def test_no_reference_on_an_answerable_question_is_still_unscored():
     # The raise above must not swallow the legitimate case it sits next to: a
     # known category whose reference could not be computed is unscored, not an
