@@ -152,6 +152,100 @@ def test_unknown_op_raises_rather_than_returning_none(gold):
         ref.evaluate(spec, gold)
 
 
+# --- what `matches` must accept, and what it must still reject --------------
+#
+# Four answer-format conventions the contract never stated cost 80 of the 180
+# deterministic questions. Each was a forced failure for a reasonable agent
+# and, worse, each was a one-memory-item win — a single learnable convention
+# flipping tens of questions at once, against an expected effect of a few
+# percentage points. The widenings below are paired: every one is followed by
+# the wrong answer that must still fail, because a matcher loose enough to
+# stop punishing format is one step from a matcher that stops measuring.
+
+def test_boolean_accepts_a_yes_or_no_written_into_verdict():
+    """«Ответь да или нет» is what the question says; the block calls `value`
+    «число». The boolean branch read only `value`, so both polarities failed."""
+    yes = ref.Reference(kind="boolean", value=1.0)
+    no = ref.Reference(kind="boolean", value=0.0)
+
+    assert ref.matches(yes, value=None, ids=None, verdict="да")
+    assert ref.matches(yes, value=None, ids=None, verdict="Да")
+    assert ref.matches(yes, value=None, ids=None, verdict="yes")
+    assert ref.matches(no, value=None, ids=None, verdict="нет")
+    assert ref.matches(no, value=None, ids=None, verdict="no")
+
+
+def test_boolean_still_rejects_the_opposite_answer_and_a_non_answer():
+    yes = ref.Reference(kind="boolean", value=1.0)
+
+    assert not ref.matches(yes, value=None, ids=None, verdict="нет")
+    assert not ref.matches(yes, value=None, ids=None, verdict="возможно")
+    assert not ref.matches(yes, value=None, ids=None, verdict=None)
+    assert ref.matches(yes, value=1.0, ids=None, verdict=None)   # unchanged
+
+
+def test_verdict_accepts_a_single_id_delivered_through_ids():
+    """The contract describes `ids` as «идентификаторы, о которых сделано
+    утверждение», which is exactly what a comparison asserts."""
+    r = ref.Reference(kind="verdict", verdict="p-42")
+
+    assert ref.matches(r, value=None, ids=["p-42"], verdict=None)
+
+
+def test_verdict_does_not_accept_a_list_of_candidates_or_a_contradiction():
+    r = ref.Reference(kind="verdict", verdict="p-42")
+
+    # Naming both people is not naming the winner.
+    assert not ref.matches(r, value=None, ids=["p-42", "p-7"], verdict=None)
+    # An explicit wrong verdict is not rescued by a right id beside it: that is
+    # hedging across two channels, not answering in the other one.
+    assert not ref.matches(r, value=None, ids=["p-42"], verdict="p-7")
+
+
+def test_verdict_compares_names_without_punctuation_or_case():
+    """Every other question class renders unit names inside guillemets, so the
+    model is shown that format 105 times before being marked wrong for it."""
+    r = ref.Reference(kind="verdict", verdict="Дирекция процессного офиса")
+
+    assert ref.matches(r, value=None, ids=None,
+                       verdict="«Дирекция процессного офиса»")
+    assert ref.matches(r, value=None, ids=None,
+                       verdict='  "дирекция процессного офиса" ')
+    assert ref.matches(r, value=None, ids=None,
+                       verdict="ДИРЕКЦИЯ ПРОЦЕССНОГО ОФИСА")
+
+
+def test_verdict_still_rejects_a_different_name():
+    r = ref.Reference(kind="verdict", verdict="Дирекция процессного офиса")
+
+    assert not ref.matches(r, value=None, ids=None,
+                           verdict="«Дирекция процессного офиса и рисков»")
+    assert not ref.matches(r, value=None, ids=None, verdict="«Дирекция»")
+
+
+def test_an_unresolvable_reference_is_not_matched_by_saying_nothing():
+    """`verdict=None` is the reference for a person who is not in the snapshot.
+
+    The old ``(verdict or None) == ref.verdict`` made two ``None``s agree, so
+    an answer that asserted nothing and did not decline scored correct on a
+    question whose correct behaviour is a refusal. Silence is not an answer;
+    the refusal is read from ``refused``, not from an empty field.
+    """
+    missing = ref.Reference(kind="verdict", verdict=None)
+
+    assert not ref.matches(missing, value=None, ids=None, verdict=None)
+    assert not ref.matches(missing, value=None, ids=[], verdict="")
+
+
+def test_widening_verdict_did_not_loosen_rankings_or_numbers():
+    ids_ref = ref.Reference(kind="ids", ids=("a", "b", "c"))
+    num_ref = ref.Reference(kind="number", value=41.2345)
+
+    assert not ref.matches(ids_ref, value=None, ids=["b", "a", "c"], verdict=None)
+    assert not ref.matches(ids_ref, value=None, ids=["A", "B", "C"], verdict=None)
+    assert not ref.matches(num_ref, value=41.2346, ids=None, verdict=None)
+
+
 def test_lookup_without_a_reference_raises_the_modules_own_error(gold):
     """A spec rehydrated from JSON is why ``__post_init__`` validation exists.
 

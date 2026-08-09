@@ -194,6 +194,33 @@ def evaluate(spec: ReferenceSpec, gold: GoldLabels) -> Reference:
     return Reference(kind="boolean", value=float(len(rows) > 0))
 
 
+#: Words a model may reasonably write into ``verdict`` for a yes/no question,
+#: whose text says «Ответь да или нет» while the answer contract calls ``value``
+#: «число». Deliberately kept here and not shared with
+#: ``sim/research/answer.py``'s ``refused`` vocabulary: that one reads a
+#: different field with a different meaning, and importing across would give
+#: this module a dependency on the research package it has no other reason to
+#: have.
+_BOOLEAN_WORDS: dict[str, bool] = {
+    "да": True, "yes": True, "true": True, "1": True,
+    "нет": False, "no": False, "false": False, "0": False,
+}
+
+#: Punctuation a rendered name arrives wrapped in. Every unit-scoped question
+#: class prints unit names inside guillemets, so a model answering
+#: ``«Дирекция процессного офиса»`` is copying the format it was shown 105
+#: times, not making a mistake.
+_WRAPPERS = " \t\n«»\"'“”„`"
+
+
+def _norm(text: str | None) -> str | None:
+    """A verdict reduced to what it asserts, dropping how it was punctuated."""
+    if text is None:
+        return None
+    stripped = text.strip().strip(_WRAPPERS).strip()
+    return stripped.casefold() or None
+
+
 def matches(ref: Reference, *, value: float | None,
             ids: list[str] | None, verdict: str | None) -> bool:
     """Does a parsed agent answer agree with the reference?
@@ -201,7 +228,19 @@ def matches(ref: Reference, *, value: float | None,
     Rankings compare order-sensitively. That is a real requirement rather than
     strictness for its own sake: "name the three highest-potential people" has a
     different correct answer from "name three high-potential people", and a
-    set comparison would score the second when the first was asked.
+    set comparison would score the second when the first was asked. Numbers
+    likewise stay exact at ``ROUND_DP``.
+
+    Everything this function is lenient about is *format*, never content, and
+    the distinction is the whole design. An answer-format convention the
+    contract does not state is not a hard question — it is one sentence of
+    learnable convention, and a single memory item that discovers it flips tens
+    of questions at once. Against an expected between-arm effect of a few
+    percentage points, the memory arms would show a spectacular learning curve
+    that measures nothing about reflection. So: a yes/no question may be
+    answered in the field the question told the model to use, a single named
+    winner may arrive through either channel that can carry an identifier, and
+    a name compares by what it names rather than by its quotation marks.
     """
     if ref.kind == "number":
         if value is None or ref.value is None:
@@ -210,9 +249,17 @@ def matches(ref: Reference, *, value: float | None,
     if ref.kind == "ids":
         return tuple(ids or ()) == ref.ids
     if ref.kind == "verdict":
-        return (verdict or None) == ref.verdict
+        said = _norm(verdict)
+        if said is None and ids is not None and len(ids) == 1:
+            # Exactly one, never a shortlist: naming both candidates is not
+            # naming the winner. Only when `verdict` is empty, so a model that
+            # states a wrong winner is not rescued by a right id beside it —
+            # that is hedging across two channels, not using the other one.
+            said = _norm(ids[0])
+        return said is not None and said == _norm(ref.verdict)
     if ref.kind == "boolean":
-        if value is None:
-            return False
-        return bool(value) == bool(ref.value)
+        if value is not None:
+            return bool(value) == bool(ref.value)
+        said = _BOOLEAN_WORDS.get(_norm(verdict) or "")
+        return said is not None and said == bool(ref.value)
     raise ValueError(f"unknown reference kind {ref.kind!r}")
