@@ -32,7 +32,14 @@ deploy/.env.bak-*
 *.env.bak
 
 # Runtime state: registries, session stores, spool. Reproducible, not source.
-var/
+# var/ was ignored while it held only rebuildable scratch. It now also holds a
+# run's results, which are NOT rebuildable — the agent is not deterministic on
+# this harness, so re-running does not reproduce them. Tracked deliberately,
+# credential-scanned before each commit.
+var/**/*.db-wal
+var/**/*.db-shm
+var/**/supervisor.log
+var/**/report-loop.log
 *.db
 *.db-wal
 *.db-shm
