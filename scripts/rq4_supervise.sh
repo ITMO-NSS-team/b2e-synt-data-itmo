@@ -6,6 +6,13 @@
 # this adds is nobody having to be awake to do that. It stops when the expected
 # row count is reached, or after too many consecutive restarts, because a driver
 # that dies instantly forever is a bug to look at rather than a thing to retry.
+#
+# The proxy must be passed explicitly. deploy/.env defines AGENT_HTTP_PROXY, and
+# it is docker-compose that maps it to HTTP_PROXY for the agent service — a
+# `docker run --env-file` gets the former and not the latter. The driver's
+# reflection step reads HTTP_PROXY, so without this the curator's `claude -p`
+# call goes out unproxied and the OAuth token is refused with
+# "403 Request not allowed", which stalls the run at the first epoch boundary.
 set -u
 
 RUN_ID="${RUN_ID:-rq4-2026-08-09}"
@@ -15,10 +22,13 @@ REPO=/home/mosyamac/b2e-synt-data
 TURNS="$REPO/var/rq4/$RUN_ID/turns.jsonl"
 LOG="$REPO/var/rq4/$RUN_ID/supervisor.log"
 
+PROXY=$(awk -F= '/^AGENT_HTTP_PROXY=/{sub(/^[^=]*=/,""); print; exit}' "$REPO/deploy/.env")
+NOPROXY="localhost,127.0.0.1,::1,b2e-agent,heimdall-emulator,phoenix,postgres,research-api,admin-ui"
+
 say() { echo "$(date -u +%FT%TZ) $*" >> "$LOG"; }
 
 restarts=0
-say "supervisor start run_id=$RUN_ID expected=$EXPECTED"
+say "supervisor start run_id=$RUN_ID expected=$EXPECTED proxy=${PROXY:+set}"
 
 while :; do
   rows=0
@@ -43,7 +53,9 @@ while :; do
   docker rm -f rq4-run >/dev/null 2>&1
   docker run -d --name rq4-run --network b2e-sim_internal \
     -v "$REPO":/app -v b2e-sim_registry_data:/app/registry \
-    --env-file "$REPO/deploy/.env" -w /app b2e-sim/agent:local \
+    --env-file "$REPO/deploy/.env" \
+    -e HTTP_PROXY="$PROXY" -e HTTPS_PROXY="$PROXY" -e NO_PROXY="$NOPROXY" \
+    -w /app b2e-sim/agent:local \
     python -u scripts/run_rq4.py --seed 20260809 --hr-employee-id 9877478 \
       --replications 1 --epochs 9 --concurrency 8 --turn-timeout-seconds 2400 \
       --skip-spans --run-id "$RUN_ID" >/dev/null 2>&1
