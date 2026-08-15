@@ -8,23 +8,32 @@
 # swap, so an OOM is a kill rather than a slowdown; without limits the kernel
 # picks the victim, and it picks badly.
 
-name: b2e-sim
+name: b2e-itmo
 
 x-python-image: &python-image
   build:
     context: ..
     dockerfile: deploy/Dockerfile
-  image: b2e-sim/python:local
+  image: b2e-itmo/python:local
 
 x-hardening: &hardening
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
   restart: unless-stopped
 
+# Subnets are pinned because this stack runs alongside the original b2e-sim one
+# on the same host. Docker would otherwise pick both gateways itself, and
+# proxy-relay below has to know its gateway address ahead of time — it binds to
+# it by literal address from RELAY_BIND. An auto-assigned subnet makes that
+# value a guess that silently breaks the agent's egress on the next `up`.
 networks:
   edge:            # proxy <-> public-facing services
+    ipam:
+      config: [{subnet: 172.30.0.0/16}]
   internal:        # service <-> service; no gateway to the outside
     internal: true
+    ipam:
+      config: [{subnet: 172.31.0.0/16}]
 
 volumes:
   pgdata:
@@ -42,9 +51,12 @@ services:
     image: caddy:2.10-alpine
     <<: *hardening
     cap_add: ["NET_BIND_SERVICE"]     # the only capability granted anywhere
+    # 80/443 belong to the original b2e-sim stack on this host. This one is
+    # published on 8080/8443 instead; inside the container Caddy still serves
+    # 80/443, so the Caddyfile is unchanged and PUBLIC_URL carries the port.
     ports:
-      - "${BIND_ADDRESS:-0.0.0.0}:443:443"
-      - "${BIND_ADDRESS:-0.0.0.0}:80:80"
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-8443}:443"
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-8080}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -174,7 +186,7 @@ services:
       # Carries the Claude Code CLI and the skill runner; the other services
       # stay on the smaller base image.
       target: agent
-    image: b2e-sim/agent:local
+    image: b2e-itmo/agent:local
     # The host reaches Anthropic through a local xray proxy. A container cannot
     # use the host's 127.0.0.1, so the proxy is addressed via the gateway.
     extra_hosts:
@@ -190,7 +202,7 @@ services:
       B2E_REGISTRY_DB: /app/registry/registry.db
       B2E_AGENT_DB: /app/var/agent.db
       PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
-      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-sim}
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
       # Read from the environment only. Never written to a file or a commit.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -235,6 +247,7 @@ services:
     mem_limit: 6g
     depends_on:
       heimdall-emulator: {condition: service_healthy}
+      registry-init: {condition: service_completed_successfully}
 
   # ----------------------------------------------------------- research API
   research-api:
@@ -245,7 +258,7 @@ services:
     environment:
       B2E_AGENT_URL: http://b2e-agent:8082
       PHOENIX_URL: http://phoenix:6006
-      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-sim}
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
       # Published under /research with the prefix stripped; same reason as the
       # agent above.
       B2E_ROOT_PATH: /research
@@ -271,7 +284,7 @@ services:
       # has no route to — so the trace explorer would fail in the deployment it
       # exists for while working fine on a laptop.
       PHOENIX_URL: http://phoenix:6006
-      PHOENIX_PROJECT: b2e-sim
+      PHOENIX_PROJECT: b2e-itmo
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
     volumes: [registry_data:/app/registry]
@@ -280,7 +293,9 @@ services:
     # renders. 192m was enough for a server-rendered page and is not enough for
     # this one.
     mem_limit: 384m
-    depends_on: [b2e-agent]
+    depends_on:
+      b2e-agent: {condition: service_started}
+      registry-init: {condition: service_completed_successfully}
 
   # ----------------------------------------------------------- skill sandbox
   # spool-init exists because named volumes are created root:root and uid 10001
@@ -289,6 +304,35 @@ services:
     image: busybox:1.36
     command: sh -c "mkdir -p /spool/new /spool/run /spool/out && chown -R 10001:10001 /spool && chmod 0770 /spool/new /spool/run /spool/out"
     volumes: [spool:/spool]
+    user: "0:0"
+    restart: "no"
+    networks: []
+
+  # Same problem as spool-init, and for the same reason: a named volume is
+  # created root:root, and the Dockerfile chowns /app/var and /spool but never
+  # /app/registry. On a stack whose volumes already exist this is invisible; on
+  # a FRESH one, admin-ui and b2e-agent both die at startup with
+  # "sqlite3.OperationalError: unable to open database file" and the proxy
+  # answers 502 for /admin and /agent. Found bringing this copy up from zero.
+  # It also has to CREATE the database, not just fix the ownership. b2e-agent
+  # mounts this volume read-only by design (the threat model requires that the
+  # agent uid cannot self-approve a skill), so it can neither create registry.db
+  # nor run the `PRAGMA journal_mode=WAL` its Registry does on open. Only
+  # admin-ui mounts it rw — and admin-ui `depends_on: b2e-agent`, so on a fresh
+  # stack the agent always loses the race and crash-loops. Doing the schema here
+  # breaks the ordering knot without relaxing the read-only mount.
+  registry-init:
+    <<: *python-image
+    # Exec form: the script is ONE argv element, so compose does not word-split
+    # it and the quotes around the Python snippet survive intact.
+    command:
+      - sh
+      - -c
+      - >-
+        python -c "from sim.registry import Registry; Registry('/app/registry/registry.db')"
+        && chown -R 10001:10001 /app/registry
+        && chmod 0770 /app/registry
+    volumes: [registry_data:/app/registry]
     user: "0:0"
     restart: "no"
     networks: []
