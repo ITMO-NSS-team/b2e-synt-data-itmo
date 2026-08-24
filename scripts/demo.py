@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Golden path against a running compose stack: question → answer → trace → feedback.
 
-Picks a manager identity from data-small so "how many people in my unit?" is
-in scope, opens a session on ``agent_config_openrouter``, and fails if the
-model never called Heimdall — a guessed number is not a working MVP.
+Picks a manager whose unit has a real team (not the first leaf head from
+``sample_identities``) so "how many people in my unit?" is in scope. Override
+with ``DEMO_EMPLOYEE`` or ``DEMO_PERSON_ID``. Opens a session on
+``agent_config_openrouter``, and fails if the model never called Heimdall — a
+guessed number is not a working MVP.
 
 Requires ``deploy/.env`` with RESEARCHER_PASSWORD and a live OpenRouter key
 already in the running agent. Spends free-tier tokens.
@@ -24,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 
 from sim.agent.shipped import OPENROUTER_CONFIG_REF
-from sim.emulator.identity import IdentityIndex
+from sim.emulator.identity import AccessDenied, IdentityIndex
 
 QUESTION = "Сколько сотрудников в моём подразделении?"
 OK, BAD = "  ok  ", " FAIL "
@@ -55,13 +57,65 @@ def load_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
-def pick_manager(data_dir: Path) -> dict:
+#: ``sample_identities(5)`` takes the first heads in array order. Those are
+#: often leaf units (one person, or a handful), so "how many in my unit?" is
+#: either 1 or a 403-shaped nothing. Prefer a mid-size subtree.
+_DEMO_TEAM_TARGET = 20
+_DEMO_TEAM_MIN = 8
+
+
+def _identity_dict(index: IdentityIndex, idx: int, scope) -> dict:
+    return {
+        "employee_id": index.employee_id[idx],
+        "person_id": index.person_id[idx],
+        "role": scope.role,
+        "unit_id": scope.unit_id,
+        "visible_people": len(scope.visible_uuids),
+    }
+
+
+def pick_manager(data_dir: Path, *, employee_id: str = "",
+                 person_id: str = "") -> dict:
     index = IdentityIndex(data_dir)
-    identities = index.sample_identities(5)
-    manager = next((i for i in identities if i["role"] == "manager"), None)
-    if manager is None:
-        raise SystemExit("no manager identity in the corpus; rebuild with make seed")
-    return manager
+    if employee_id or person_id:
+        if person_id:
+            try:
+                idx = next(i for i, pid in enumerate(index.person_id)
+                           if pid == person_id)
+            except StopIteration:
+                raise SystemExit(f"person_id {person_id} is not in {data_dir}")
+            employee_id = index.employee_id[idx]
+        try:
+            scope = index.scope_for(str(employee_id))
+        except AccessDenied as exc:
+            raise SystemExit(f"employee_id {employee_id} is not in {data_dir}: {exc}")
+        return {
+            "employee_id": scope.employee_id,
+            "person_id": scope.person_id,
+            "role": scope.role,
+            "unit_id": scope.unit_id,
+            "visible_people": len(scope.visible_uuids),
+        }
+
+    scored: list[tuple[int, int, dict]] = []
+    fallback: dict | None = None
+    fallback_n = -1
+    for idx, is_head in enumerate(index.is_head):
+        if not bool(is_head):
+            continue
+        ident = _identity_dict(index, int(idx),
+                               index.scope_for(index.employee_id[int(idx)]))
+        n = ident["visible_people"]
+        if n > fallback_n:
+            fallback, fallback_n = ident, n
+        if n >= _DEMO_TEAM_MIN:
+            scored.append((abs(n - _DEMO_TEAM_TARGET), -n, ident))
+    if scored:
+        scored.sort(key=lambda row: (row[0], row[1]))
+        return scored[0][2]
+    if fallback is None or fallback_n < 2:
+        raise SystemExit("no manager with a team in the corpus; rebuild with make seed")
+    return fallback
 
 
 def proxy_client(base: str, *, public_host: str, auth: tuple[str, str],
@@ -109,9 +163,14 @@ def main() -> int:
         auth=auth, timeout=timeout)
 
     step("1 · pick a manager identity")
-    manager = pick_manager(data_dir)
-    check("manager identity", True,
-          f"employee_id={manager['employee_id']} visible={manager['visible_people']}")
+    manager = pick_manager(
+        data_dir,
+        employee_id=env.get("DEMO_EMPLOYEE", ""),
+        person_id=env.get("DEMO_PERSON_ID", ""),
+    )
+    check("manager identity", manager["visible_people"] >= 2,
+          f"person_id={manager['person_id']} employee_id={manager['employee_id']} "
+          f"unit={manager['unit_id']} visible={manager['visible_people']}")
 
     step("2 · stack is reachable")
     try:
