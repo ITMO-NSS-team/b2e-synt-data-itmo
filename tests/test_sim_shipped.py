@@ -70,11 +70,16 @@ def test_bootstrap_never_overwrites_an_operator_edit(registry):
     assert body["temperature"] == 0.7
 
 
-def test_the_interactive_config_is_actually_conversational(registry):
+def test_the_openrouter_config_is_messages_api_and_capped(registry):
     bootstrap(registry)
-    _version, body = registry.load(INTERACTIVE_CONFIG_REF)
-    assert body["conversation_mode"] == "resume"
-    assert AgentConfig.from_dict(body).conversation_mode == "resume"
+    from sim.agent.config import DEFAULT_OPENROUTER_MODEL
+    from sim.agent.shipped import OPENROUTER_CONFIG_REF
+
+    _version, body = registry.load(OPENROUTER_CONFIG_REF)
+    config = AgentConfig.from_dict(body)
+    assert config.harness == "messages_api"
+    assert config.model_id == DEFAULT_OPENROUTER_MODEL
+    assert config.max_output_tokens == 4096
 
 
 # -------------------------------------------------------- read-only path
