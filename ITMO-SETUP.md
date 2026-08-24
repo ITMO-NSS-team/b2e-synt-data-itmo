@@ -110,12 +110,14 @@ Surfaces (HTTP Basic, user `researcher`):
 | Phoenix traces | `https://localhost:8443/phoenix/`    |
 
 The golden-path session uses shipped config `agent_config_openrouter`
-(`harness=messages_api`, model `stealth/ox-alpha`). That slug is hosted by
-Stealth. The laptop OpenRouter key's allowed providers must include Stealth
-(https://openrouter.ai/settings/privacy). Gemma 4 `:free` is Google AI Studio
-and will 404 on a Stealth+Darkbloom allow-list. Change `model_id` in
-`/admin/config` and save a new version if the slug is gone or will not call
-tools — `make demo` fails unless `heimdall_calls >= 1`.
+(`harness=messages_api`, model `stealth/ox-alpha`). Allow Stealth on the
+OpenRouter key (https://openrouter.ai/settings/privacy). Ox Alpha cannot
+disable reasoning and defaults to `effort=max`, which spends the whole
+`max_tokens` budget on thinking and returns an empty answer with no tool
+calls. The OpenRouter client therefore sends `reasoning.effort=low` and the
+shipped config uses `max_output_tokens=16384`. If the live registry still
+has the old 4096 cap, save the OpenRouter config in admin so head is `@2`
+with 16384. `make demo` fails unless `heimdall_calls >= 1`.
 
 Agent egress to OpenRouter goes through the campus tunnel
 `OPENROUTER_HTTP_PROXY=http://10.32.11.45:7890` (see `openrouter-proxy.md`).
