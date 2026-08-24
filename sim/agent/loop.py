@@ -167,29 +167,44 @@ def run_turn(
                 guard.record(tokens=response.total_tokens, usd=call_cost)
 
             uses = response.tool_uses()
-            text = response.text()
+            text = (response.text() or "").strip()
             messages.append({"role": "assistant", "content": response.content})
 
-            if not uses:
+            if uses:
+                results = []
+                for use in uses:
+                    tool_calls += 1
+                    name = use.get("name", "")
+                    arguments = use.get("input") or {}
+                    with telemetry.start_tool(name, parameters=arguments,
+                                              tool_call_id=use.get("id")) as span:
+                        payload = _dispatch_with_retry(
+                            tools, name, arguments, config, errors)
+                        telemetry.set_io(span, output_value=payload)
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": use.get("id"),
+                        "content": render_tool_result(payload),
+                    })
+                messages.append({"role": "user", "content": results})
+                continue
+
+            if text:
                 answer = text
                 stop_reason = response.stop_reason or "end_turn"
                 break
 
-            results = []
-            for use in uses:
-                tool_calls += 1
-                name = use.get("name", "")
-                arguments = use.get("input") or {}
-                with telemetry.start_tool(name, parameters=arguments,
-                                          tool_call_id=use.get("id")) as span:
-                    payload = _dispatch_with_retry(tools, name, arguments, config, errors)
-                    telemetry.set_io(span, output_value=payload)
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": use.get("id"),
-                    "content": render_tool_result(payload),
-                })
-            messages.append({"role": "user", "content": results})
+            # Empty content after a tool round is not a finished answer.
+            # Ask for a visible reply instead of returning answer:"".
+            errors.append("empty completion; requesting a visible answer")
+            messages.append({
+                "role": "user",
+                "content": (
+                    "По данным уже полученных результатов инструментов "
+                    "сформулируй итоговый ответ текстом. Если есть число — "
+                    "назови его явно."
+                ),
+            })
         else:
             stop_reason = "max_iterations"
             answer = answer or ("Не удалось собрать ответ за отведённое число "

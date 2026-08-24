@@ -216,7 +216,43 @@ def openai_finish_to_stop_reason(finish: str | None) -> str:
         return "tool_use"
     if finish == "length":
         return "max_tokens"
+    if finish in ("error", "network_error"):
+        return "error"
     return "end_turn"
+
+
+def _choice_finish(choice: dict[str, Any]) -> str | None:
+    raw = choice.get("finish_reason") or choice.get("native_finish_reason")
+    return str(raw) if raw else None
+
+
+def _is_empty_upstream_stop(
+    choice: dict[str, Any], message: dict[str, Any],
+    usage: dict[str, Any], content: list[dict[str, Any]],
+) -> bool:
+    """Stealth reports some upstream failures as HTTP 200 with no output.
+
+    Observed on ox-alpha after a tool round: ``finish_reason=stop``, empty
+    ``message``, ``prompt_tokens=0``, ``completion_tokens=0``, ~1s latency.
+    Treating that as ``end_turn`` made the demo return ``answer: ""`` after
+    Heimdall had already been called. Retry instead.
+    """
+    if content:
+        return False
+    if message.get("tool_calls") or _reasoning_text(message) or message.get(
+            "reasoning_details"):
+        return False
+    finish = _choice_finish(choice)
+    native = str(choice.get("native_finish_reason") or "")
+    if finish in ("error", "network_error") or native in ("error", "network_error"):
+        return True
+    prompt = int(usage.get("prompt_tokens") or 0)
+    completion = int(usage.get("completion_tokens") or 0)
+    return prompt == 0 and completion == 0
+
+
+def _empty_retry_wait(attempt: int) -> float:
+    return min(5.0 * (2 ** attempt), _MAX_RETRY_WAIT_S)
 
 
 def _error_object(body: Any) -> dict[str, Any]:
@@ -365,19 +401,41 @@ class OpenRouterClient:
                 raise RuntimeError(
                     f"OpenRouter {response.status_code}: {error}")
 
+            # Stealth sometimes wraps an upstream failure in HTTP 200 + error.
+            if isinstance(error, dict) and (error.get("message") or error.get("code")):
+                last_status, last_error = response.status_code, error
+                if attempt + 1 >= _max_attempts():
+                    break
+                self._sleep(_retry_after_seconds(response, body))
+                continue
+
             choices = body.get("choices") or []
             if not choices:
-                raise RuntimeError(f"OpenRouter returned no choices: {body}")
+                last_status, last_error = response.status_code, (
+                    "no choices in 200 response")
+                if attempt + 1 >= _max_attempts():
+                    break
+                self._sleep(_empty_retry_wait(attempt))
+                continue
             choice = choices[0]
             message = dict(choice.get("message") or {})
             if not message.get("reasoning") and choice.get("reasoning"):
                 message["reasoning"] = choice["reasoning"]
             content = openai_message_to_anthropic_content(message)
             usage = body.get("usage") or {}
+            if _is_empty_upstream_stop(choice, message, usage, content):
+                reason = (
+                    str(choice.get("native_finish_reason") or "")
+                    or _choice_finish(choice)
+                    or "upstream network_error")
+                last_status, last_error = 200, f"empty completion ({reason})"
+                if attempt + 1 >= _max_attempts():
+                    break
+                self._sleep(_empty_retry_wait(attempt))
+                continue
             return LLMResponse(
                 content=content,
-                stop_reason=openai_finish_to_stop_reason(
-                    choice.get("finish_reason")),
+                stop_reason=openai_finish_to_stop_reason(_choice_finish(choice)),
                 prompt_tokens=int(usage.get("prompt_tokens") or 0),
                 completion_tokens=int(usage.get("completion_tokens") or 0),
                 raw=body,
