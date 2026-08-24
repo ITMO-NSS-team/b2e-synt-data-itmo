@@ -29,6 +29,46 @@ def test_anthropic_tools_become_openai_functions():
     assert "schema" in converted[0]["function"]["parameters"]["properties"]
 
 
+def test_ox_alpha_requests_low_reasoning_effort(monkeypatch):
+    """Ox Alpha defaults to effort=max and cannot send none; low leaves budget
+    for tool_calls instead of burning max_tokens on hidden thinking."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.delenv("OPENROUTER_REASONING_EFFORT", raising=False)
+    client = OpenRouterClient()
+    fake = _FakeHttp(_OK_BODY)
+    client._http = fake
+    _complete(client)
+    assert fake.calls[0]["json"]["reasoning"] == {"effort": "low"}
+
+
+def test_reasoning_effort_env_overrides_ox_alpha_default(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setenv("OPENROUTER_REASONING_EFFORT", "high")
+    client = OpenRouterClient()
+    fake = _FakeHttp(_OK_BODY)
+    client._http = fake
+    _complete(client)
+    assert fake.calls[0]["json"]["reasoning"] == {"effort": "high"}
+
+
+def test_assistant_round_trip_keeps_reasoning_for_the_next_turn():
+    messages = [{
+        "role": "assistant",
+        "content": [
+            {"type": "reasoning", "text": "need list_models",
+             "details": [{"type": "reasoning.summary", "text": "need list_models"}]},
+            {"type": "tool_use", "id": "c1", "name": "list_models", "input": {}},
+        ],
+    }]
+    openai_messages = anthropic_messages_to_openai("", messages)
+    assistant = openai_messages[0]
+    assert assistant["reasoning"] == "need list_models"
+    assert assistant["reasoning_details"] == [
+        {"type": "reasoning.summary", "text": "need list_models"}]
+    assert assistant["tool_calls"][0]["id"] == "c1"
+    assert assistant["content"] is None
+
+
 def test_tool_use_round_trip_through_openai_shape():
     system = "you are the agent"
     messages = [
@@ -232,7 +272,7 @@ def test_shipped_openrouter_config_is_messages_api():
     config = AgentConfig.from_dict(body)
     assert config.harness == "messages_api"
     assert config.model_id == DEFAULT_OPENROUTER_MODEL
-    assert config.max_output_tokens == 4096
+    assert config.max_output_tokens == 16384
     assert config.conversation_mode == "stateless"
 
 

@@ -79,7 +79,7 @@ def test_the_openrouter_config_is_messages_api_and_capped(registry):
     config = AgentConfig.from_dict(body)
     assert config.harness == "messages_api"
     assert config.model_id == DEFAULT_OPENROUTER_MODEL
-    assert config.max_output_tokens == 4096
+    assert config.max_output_tokens == 16384
 
 
 # -------------------------------------------------------- read-only path
