@@ -84,6 +84,38 @@ def test_a_rest_span_is_reshaped_into_what_the_viewer_reads():
     assert span["attributes"]["b2e"]["llm"]["ttft_ms"] == 1386
 
 
+def test_json_string_output_messages_do_not_crash_the_explorer():
+    """Phoenix 19 stores list-valued OTel attributes as JSON strings. Iterating
+    the string as messages used to raise AttributeError on each character."""
+    span = traceview.normalise_rest_span({
+        "context": {"span_id": "l1", "trace_id": "t1"},
+        "parent_id": "r", "name": "llm.messages.create", "span_kind": "LLM",
+        "start_time": "2026-08-21T13:27:50+00:00",
+        "end_time": "2026-08-21T13:29:07+00:00",
+        "attributes": {
+            "llm.output_messages": json.dumps([
+                {"type": "text", "text": "уточните подразделение"},
+            ]),
+            "llm.input_messages": json.dumps([
+                {"role": "user", "content": "Сколько сотрудников?"},
+            ]),
+        },
+    })
+    messages = span["attributes"]["llm"]["output_messages"]
+    assert isinstance(messages, list)
+    assert messages[0]["text"] == "уточните подразделение"
+    summary = traceview.reasoning_summary([span])
+    assert summary["llm_spans"] == 1
+    assert summary["spans_with_reasoning"] == 0
+
+
+def test_openinference_reasoning_blocks_still_extract():
+    span = _span("LLM", "llm.messages.create", "l1", "i1", {
+        "llm": {"output_messages": [{"message": {"contents": [
+            {"message_content": {"type": "reasoning", "text": "думаю"}}]}}]}})
+    assert traceview.reasoning_summary([span])["reasoning_texts"] == ["думаю"]
+
+
 # -------------------------------------------------------------- analysis
 
 

@@ -206,9 +206,11 @@ services:
       # Read from the environment only. Never written to a file or a commit.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
       # claude_code (default) drives a headless `claude -p` session, which is
       # what the subscription token is scoped to. messages_api keeps the
-      # deterministic loop for replay and CI.
+      # deterministic loop for replay, CI, and the OpenRouter laptop path.
       B2E_HARNESS: ${B2E_HARNESS:-claude_code}
       B2E_CLAUDE_BIN: claude
       B2E_SKILL_RUNNER: /opt/skills/run

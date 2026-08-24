@@ -71,6 +71,7 @@ def main() -> int:
     from sim.agent.llm import LLMResponse, ScriptedClient
     from sim.emulator.app import create_app as create_emulator
     from sim.emulator.config import EmulatorConfig
+    from sim.fingerprint import FINGERPRINT_FIELDS
 
     workdir = Path(os.environ.get("SMOKE_VAR", "var/smoke"))
     workdir.mkdir(parents=True, exist_ok=True)
@@ -107,6 +108,12 @@ def main() -> int:
     state = AgentState()
     # Scripted so the smoke test is hermetic and free. The request-shaping,
     # tool dispatch, permission enforcement and tracing are all real.
+    # The shipped default harness is claude_code; that path ignores
+    # state.client and needs a live credential. Force the in-process loop.
+    scripted_config = AgentConfig(harness="messages_api").as_dict()
+    state.registry.commit(
+        "agent_config", "agent", scripted_config,
+        actor="smoke", note="hermetic: messages_api + ScriptedClient")
     question = "Сколько сотрудников в моём подразделении?"
     state.client = ScriptedClient([
         LLMResponse(content=[{"type": "tool_use", "id": "t1", "name": "mcp_query",
@@ -132,7 +139,7 @@ def main() -> int:
     condition_a = session["condition_id"]
     check("session opened", bool(session.get("session_id")),
           f"session={session['session_id']}")
-    check("fingerprint complete", len(fingerprint_a) == 8,
+    check("fingerprint complete", set(fingerprint_a) == set(FINGERPRINT_FIELDS),
           json.dumps(fingerprint_a, ensure_ascii=False))
 
     reply_a = httpx.post(f"{agent_url}/sessions/{session['session_id']}/messages",

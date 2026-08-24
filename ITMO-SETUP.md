@@ -16,17 +16,16 @@ Everything is behind one Caddy proxy with HTTP Basic. Nothing is unauthenticated
 | admin UI       | `https://<host>:8443/admin/`         |
 | Phoenix traces | `https://<host>:8443/phoenix/`       |
 
-The edge user is `researcher`. Read the generated passwords with:
+The edge user is `researcher`. For a laptop stand the plaintext is also in
+`RESEARCHER_PASSWORD` so `make demo` can authenticate. On a shared host, keep
+only the bcrypt hash and issue a password with `make hash-password`.
 
 ```sh
-grep -E '^(ADMIN_USER|ADMIN_PASSWORD)=' deploy/.env
+grep -E '^(ADMIN_USER|ADMIN_PASSWORD|RESEARCHER_PASSWORD)=' deploy/.env
 ```
 
-The `researcher` plaintext is **not** stored — only its bcrypt hash is, in
-`BASIC_AUTH_HASH`. Re-issue it with `make hash-password` if it is lost.
-
 TLS is Caddy's internal CA (no DNS name for this host), so browsers warn. That
-is expected, not a misconfiguration.
+is expected, not a misconfiguration. `curl` needs `-k`.
 
 ## Deltas from the original stack
 
@@ -79,18 +78,57 @@ is unchanged.
 **These fixes are worth porting back to the original repo** — it cannot currently
 be redeployed from clean volumes.
 
-## Running it
+## Running it on a laptop (OpenRouter, no Claude Code)
+
+This is the path that does not need a Claude Code OAuth token, an xray proxy, or
+Telegram. Give Docker Desktop about 10 GB of RAM. Ports 8080 and 8443 must be
+free.
 
 ```sh
-make up PROFILE=telegram   # or: docker compose -f deploy/docker-compose.yml \
-                           #       --env-file deploy/.env --profile telegram up -d
+cp deploy/.env.example deploy/.env
+# fill ADMIN_PASSWORD, POSTGRES_PASSWORD, RESEARCHER_PASSWORD
+# BASIC_AUTH_HASH: make hash-password  (double every $ in the bcrypt string)
+# ADMIN_BASIC:     scripts/make_admin_basic.sh
+# OPENROUTER_API_KEY from https://openrouter.ai/keys — never paste it in a chat
+# then:  B2E_LLM_MODE=live   LLM_PROVIDER=openrouter
+
+make seed          # 3 000 people, ~25 s; not in git
+make up            # no PROFILE — skip telegram and relay
 make ps
-make logs
-make test                  # 724 tests, replay mode, spends nothing
+make test          # replay, spends nothing
+make demo          # one manager question through OpenRouter; spends free-tier tokens
 ```
 
-`make up` does not start the relay. The agent needs it to reach Anthropic, so
-bring the stack up with both profiles:
+Surfaces (HTTP Basic, user `researcher`):
+
+| Surface        | URL                                  |
+|----------------|--------------------------------------|
+| landing        | `https://localhost:8443/`            |
+| research API   | `https://localhost:8443/research/docs` |
+| agent API      | `https://localhost:8443/agent/docs`  |
+| admin UI       | `https://localhost:8443/admin/`      |
+| Phoenix traces | `https://localhost:8443/phoenix/`    |
+
+The golden-path session uses shipped config `agent_config_openrouter`
+(`harness=messages_api`, model `stealth/ox-alpha`). That slug is hosted by
+Stealth. The laptop OpenRouter key's allowed providers must include Stealth
+(https://openrouter.ai/settings/privacy). Gemma 4 `:free` is Google AI Studio
+and will 404 on a Stealth+Darkbloom allow-list. Change `model_id` in
+`/admin/config` and save a new version if the slug is gone or will not call
+tools — `make demo` fails unless `heimdall_calls >= 1`.
+
+Agent egress is direct. Leave `AGENT_HTTP_PROXY` empty. The original VPS needed
+a host proxy on `:10809` and the `relay` profile; a laptop does not.
+
+## Running it with Telegram / Claude Code (original path)
+
+```sh
+make up PROFILE=telegram
+```
+
+`make up` does not start the relay. If this host reaches Anthropic only through
+a local xray proxy, bring the stack up with both profiles and set
+`AGENT_HTTP_PROXY`:
 
 ```sh
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env \
