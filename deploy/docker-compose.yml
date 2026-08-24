@@ -21,6 +21,14 @@ x-hardening: &hardening
   cap_drop: ["ALL"]
   restart: unless-stopped
 
+# Docker Root Dir is NFS (/var/essdata/docker). Docker bind-mounts
+# /etc/resolv.conf from that tree; a non-root open() gets EACCES even though
+# the mode is 644 (access() still succeeds). Caddy runs as root, so the proxy
+# is fine. Phoenix and the Python services are not — they cannot resolve
+# `postgres` / `phoenix` / `heimdall-emulator`. Overlay a local-disk copy.
+# `make up` writes /tmp/b2e-resolv.conf; do not let compose create a directory.
+x-resolv: &resolv-overlay /tmp/b2e-resolv.conf:/etc/resolv.conf:ro
+
 # Subnets are pinned because this stack runs alongside the original b2e-sim one
 # on the same host. Docker would otherwise pick both gateways itself, and
 # proxy-relay below has to know its gateway address ahead of time — it binds to
@@ -115,7 +123,14 @@ services:
       PHOENIX_SQL_DATABASE_URL: postgresql://phoenix:${POSTGRES_PASSWORD}@postgres:5432/phoenix
       PHOENIX_WORKING_DIR: /phoenix
       PHOENIX_ENABLE_AUTH: "false"     # auth is enforced at the proxy
-    volumes: [phoenix_data:/phoenix]
+      # Caddy publishes this at /phoenix/ and strips the prefix (handle_path).
+      # Without the root path, the SPA asks the browser for /assets/… which hits
+      # the catch-all and the page is blank. Internal OTLP stays at /v1/traces.
+      PHOENIX_HOST_ROOT_PATH: /phoenix
+      PHOENIX_ROOT_URL: ${PUBLIC_URL}/phoenix
+    volumes:
+      - *resolv-overlay
+      - phoenix_data:/phoenix
     networks: [edge, internal]
     # Measured at ~500 MiB idle with a handful of spans, which was 78% of an
     # earlier 640m limit. On a box with zero swap that margin is too thin: an
@@ -141,6 +156,7 @@ services:
       HEIMDALL_HR_EMPLOYEE_IDS: ${HR_EMPLOYEE_IDS:-}
       HEIMDALL_QUERY_BUDGET_BYTES: ${QUERY_BUDGET_BYTES:-4294967296}
     volumes:
+      - *resolv-overlay
       - ${DATA_DIR:-../data-small}:/data/snapshot:ro
       - ${DATA_DIR_NOTRAPS:-../data-small}:/data/snapshot-notraps:ro
       - ../heimdall-skills:/app/heimdall-skills:ro
@@ -207,6 +223,7 @@ services:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_HTTP_PROXY: ${OPENROUTER_HTTP_PROXY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       # claude_code (default) drives a headless `claude -p` session, which is
       # what the subscription token is scoped to. messages_api keeps the
@@ -227,10 +244,17 @@ services:
       # Egress to Anthropic goes through the host's proxy. NO_PROXY must list
       # every internal name, or Heimdall and Phoenix calls would be tunnelled
       # out to the internet and fail.
-      HTTP_PROXY: ${AGENT_HTTP_PROXY:-http://host.docker.internal:10809}
-      HTTPS_PROXY: ${AGENT_HTTP_PROXY:-http://host.docker.internal:10809}
+      # Egress to Anthropic/OpenRouter. Empty AGENT_HTTP_PROXY (laptop default)
+      # is direct egress. The VPS default used to be host.docker.internal:10809,
+      # which compose treated as set-if-empty and broke every laptop OpenRouter
+      # call: the agent tried a proxy that does not exist, and
+      # host.docker.internal lives only in NFS-mounted /etc/hosts the non-root
+      # uid cannot read.
+      HTTP_PROXY: ${AGENT_HTTP_PROXY:-}
+      HTTPS_PROXY: ${AGENT_HTTP_PROXY:-}
       NO_PROXY: localhost,127.0.0.1,::1,heimdall-emulator,phoenix,postgres,research-api,admin-ui,host.docker.internal
     volumes:
+      - *resolv-overlay
       # The approval store is READ-ONLY here. The threat model says the agent
       # uid cannot write it; mounting it rw made that false, and in the
       # code-execution arm one UPDATE self-approves every draft.
@@ -264,6 +288,8 @@ services:
       # Published under /research with the prefix stripped; same reason as the
       # agent above.
       B2E_ROOT_PATH: /research
+    volumes:
+      - *resolv-overlay
     networks: [edge, internal]
     mem_limit: 256m
     depends_on: [b2e-agent, phoenix]
@@ -289,7 +315,9 @@ services:
       PHOENIX_PROJECT: b2e-itmo
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
-    volumes: [registry_data:/app/registry]
+    volumes:
+      - *resolv-overlay
+      - registry_data:/app/registry
     networks: [edge, internal]
     # The explorer assembles a hundred turns of spans in memory before it
     # renders. 192m was enough for a server-rendered page and is not enough for
@@ -373,8 +401,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       B2E_AGENT_URL: http://b2e-agent:8082
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
-      TELEGRAM_DEFAULT_EMPLOYEE: ${TELEGRAM_DEFAULT_EMPLOYEE:?set TELEGRAM_DEFAULT_EMPLOYEE in .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEFAULT_EMPLOYEE: ${TELEGRAM_DEFAULT_EMPLOYEE:-}
       # A chat is a conversation: this config ships with conversation_mode=
       # "resume", so consecutive messages share one Claude Code session.
       # Point it at `agent_config` to get the stateless batch behaviour instead.
@@ -382,6 +410,8 @@ services:
       HTTP_PROXY: ${AGENT_HTTP_PROXY:-http://172.20.0.1:10810}
       HTTPS_PROXY: ${AGENT_HTTP_PROXY:-http://172.20.0.1:10810}
       NO_PROXY: localhost,127.0.0.1,::1,b2e-agent,heimdall-emulator,phoenix
+    volumes:
+      - *resolv-overlay
     networks: [edge, internal]
     mem_limit: 128m
     # NOTE: profile "telegram" means `make up` does NOT start this. Use

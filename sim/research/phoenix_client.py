@@ -89,6 +89,10 @@ class PhoenixClient:
             listing = self._client.get(
                 f"/v1/projects/{self.project}/traces",
                 params={"limit": limit, "sort": "start_time", "order": "desc"})
+            # 404 = the project has not been created yet (no span has landed).
+            # That is "no traces", not "Phoenix is down".
+            if listing.status_code == 404:
+                return []
             if listing.status_code != 200:
                 raise PhoenixUnavailable(
                     f"Phoenix returned {listing.status_code} listing traces; "

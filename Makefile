@@ -53,6 +53,8 @@ clean:
 
 up:  ## поднять весь стек одной командой; PROFILE=telegram добавит бота
 	@test -f deploy/.env || { echo "нет deploy/.env — скопируйте deploy/.env.example"; exit 1; }
+	@printf 'nameserver 127.0.0.11\noptions ndots:0\n' > /tmp/b2e-resolv.conf
+	@chmod 644 /tmp/b2e-resolv.conf
 	$(COMPOSE) $(if $(PROFILE),--profile $(PROFILE),) up -d --build
 	@echo "стек поднят; проверка сквозного пути: make smoke"
 
