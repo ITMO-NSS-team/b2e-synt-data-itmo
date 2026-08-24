@@ -21,7 +21,7 @@ x-hardening: &hardening
   cap_drop: ["ALL"]
   restart: unless-stopped
 
-# Docker Root Dir is NFS (/var/essdata/docker). Docker bind-mounts
+# Docker Root Dir is NFS. Docker bind-mounts
 # /etc/resolv.conf from that tree; a non-root open() gets EACCES even though
 # the mode is 644 (access() still succeeds). Caddy runs as root, so the proxy
 # is fine. Phoenix and the Python services are not — they cannot resolve
@@ -255,6 +255,9 @@ services:
       NO_PROXY: localhost,127.0.0.1,::1,heimdall-emulator,phoenix,postgres,research-api,admin-ui,host.docker.internal
     volumes:
       - *resolv-overlay
+      # Host tree, not the image COPY: OpenRouter proxy and other sim/ edits
+      # must apply without rebuilding the Node/Claude layer.
+      - ../sim:/app/sim:ro
       # The approval store is READ-ONLY here. The threat model says the agent
       # uid cannot write it; mounting it rw made that false, and in the
       # code-execution arm one UPDATE self-approves every draft.
