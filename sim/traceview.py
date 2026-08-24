@@ -50,6 +50,11 @@ def unflatten(flat: dict[str, Any]) -> dict[str, Any]:
     A node is turned into a list only when *every* key under it is an integer.
     Anything else stays an object, so an attribute that happens to be named
     ``0`` beside a named sibling does not silently reorder the tree.
+
+    Phoenix 19 (and OTel generally) cannot store a list as an attribute value,
+    so the REST API returns ``llm.output_messages`` as a JSON *string*. Decode
+    those leaves here; otherwise the explorer iterates the string as characters
+    and dies with ``'str' object has no attribute 'get'``.
     """
     root: dict[str, Any] = {}
     for key, value in (flat or {}).items():
@@ -61,8 +66,21 @@ def unflatten(flat: dict[str, Any]) -> dict[str, Any]:
                 nxt = {}
                 node[part] = nxt
             node = nxt
-        node[parts[-1]] = value
+        node[parts[-1]] = _maybe_json(value)
     return _listify(root)
+
+
+def _maybe_json(value: Any) -> Any:
+    """Decode a JSON array/object that OTel stored as a scalar string."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or text[0] not in "[{":
+        return value
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return value
 
 
 def _listify(node: Any) -> Any:
@@ -162,9 +180,30 @@ def enrich(trace: dict[str, Any]) -> dict[str, Any]:
 
 def _reasoning_of(span: dict[str, Any]) -> list[str]:
     out = []
-    for message in attr(span, "llm", "output_messages") or []:
-        for item in ((message or {}).get("message") or {}).get("contents") or []:
-            content = (item or {}).get("message_content") or {}
+    messages = attr(span, "llm", "output_messages")
+    if isinstance(messages, str):
+        messages = _maybe_json(messages)
+    if not isinstance(messages, list):
+        return []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        # messages_api / OpenRouter: content blocks stored as-is.
+        if message.get("type") == "reasoning" and message.get("text"):
+            out.append(message["text"])
+            continue
+        inner = message.get("message")
+        if not isinstance(inner, dict):
+            continue
+        contents = inner.get("contents")
+        if not isinstance(contents, list):
+            continue
+        for item in contents:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("message_content")
+            if not isinstance(content, dict):
+                content = item
             if content.get("type") == "reasoning" and content.get("text"):
                 out.append(content["text"])
     return out
