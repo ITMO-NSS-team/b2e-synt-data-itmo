@@ -117,8 +117,11 @@ and will 404 on a Stealth+Darkbloom allow-list. Change `model_id` in
 `/admin/config` and save a new version if the slug is gone or will not call
 tools — `make demo` fails unless `heimdall_calls >= 1`.
 
-Agent egress is direct. Leave `AGENT_HTTP_PROXY` empty. The original VPS needed
-a host proxy on `:10809` and the `relay` profile; a laptop does not.
+Agent egress to OpenRouter goes through the campus tunnel
+`OPENROUTER_HTTP_PROXY=http://10.32.11.45:7890` (see `openrouter-proxy.md`).
+Only the OpenRouter HTTP client uses it; Heimdall and Phoenix stay direct.
+Leave `AGENT_HTTP_PROXY` empty unless this host reaches Anthropic only through
+a local xray on `:10809`.
 
 ## Running it with Telegram / Claude Code (original path)
 
