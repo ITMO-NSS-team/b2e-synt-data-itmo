@@ -29,13 +29,18 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from sim.agent.config import AgentConfig
+from sim.agent.config import AgentConfig, DEFAULT_OPENROUTER_MODEL
 from sim.agent.prompt import DEFAULT_SYSTEM_PROMPT
 
 #: Registry ref of the shipped conversational config. One name, imported by the
 #: bootstrap, the agent and the Telegram bridge, so the three cannot drift onto
 #: three different strings.
 INTERACTIVE_CONFIG_REF = "agent_config_interactive"
+
+#: Registry ref of the shipped OpenRouter / messages_api config used by the
+#: laptop golden path. Separate from ``agent_config`` so the original Claude
+#: Code experiment arm keeps its condition_id.
+OPENROUTER_CONFIG_REF = "agent_config_openrouter"
 
 
 def shipped_configs() -> dict[str, tuple[str, dict[str, Any], str]]:
@@ -53,6 +58,15 @@ def shipped_configs() -> dict[str, tuple[str, dict[str, Any], str]]:
         INTERACTIVE_CONFIG_REF: (
             "agent", AgentConfig(conversation_mode="resume").as_dict(),
             "shipped default, resumable sessions"),
+        OPENROUTER_CONFIG_REF: (
+            "agent",
+            AgentConfig(
+                harness="messages_api",
+                model_id=DEFAULT_OPENROUTER_MODEL,
+                max_output_tokens=4096,
+            ).as_dict(),
+            "laptop golden path: OpenRouter via messages_api",
+        ),
         "skill_registry": ("skills", {"active": []}, "empty registry"),
     }
 
