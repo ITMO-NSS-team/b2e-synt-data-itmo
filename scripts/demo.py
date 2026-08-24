@@ -17,6 +17,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -63,6 +64,29 @@ def pick_manager(data_dir: Path) -> dict:
     return manager
 
 
+def proxy_client(base: str, *, public_host: str, auth: tuple[str, str],
+                 timeout: float) -> httpx.Client:
+    """Talk to the edge proxy without needing working container DNS.
+
+    Caddy's site block is ``PUBLIC_HOST`` (localhost). Connecting to
+    ``https://127.0.0.1`` with that Host empty-200s. Resolving ``localhost``
+    fails in a non-root container on this host because Docker bind-mounts
+    ``/etc/hosts`` from NFS. Connect by loopback IP, send the name Caddy
+    expects, and stay on HTTP/1.1 so that Host header is not ignored.
+    """
+    parsed = urlparse(base)
+    hostname = parsed.hostname or public_host or "localhost"
+    header_host = public_host or hostname
+    if hostname in ("localhost", "127.0.0.1", "::1"):
+        netloc = f"127.0.0.1:{parsed.port}" if parsed.port else "127.0.0.1"
+        connect = urlunparse(parsed._replace(netloc=netloc))
+    else:
+        connect = base
+    return httpx.Client(
+        base_url=connect, auth=auth, verify=False, timeout=timeout,
+        trust_env=False, http2=False, headers={"Host": header_host})
+
+
 def main() -> int:
     env = {**load_dotenv(Path("deploy/.env")), **os.environ}
     base = env.get("PUBLIC_URL", "https://localhost:8443").rstrip("/")
@@ -80,8 +104,9 @@ def main() -> int:
         return 2
 
     auth = ("researcher", password)
-    client = httpx.Client(base_url=base, auth=auth, verify=False, timeout=timeout,
-                          trust_env=False)
+    client = proxy_client(
+        base, public_host=env.get("PUBLIC_HOST", "localhost"),
+        auth=auth, timeout=timeout)
 
     step("1 · pick a manager identity")
     manager = pick_manager(data_dir)
@@ -106,8 +131,10 @@ def main() -> int:
         "config_ref": config_ref,
         "metadata": {"role": manager["role"]},
     })
-    if session.status_code >= 400:
-        check("session opened", False, session.text[:300])
+    if session.status_code >= 400 or not session.content:
+        check("session opened", False,
+              session.text[:300] or f"empty {session.status_code} from {base} "
+              "(Caddy matches PUBLIC_HOST=localhost; 127.0.0.1 is a different Host)")
         return 1
     body = session.json()
     session_id = body.get("session_id")

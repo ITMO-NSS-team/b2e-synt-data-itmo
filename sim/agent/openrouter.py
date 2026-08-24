@@ -33,6 +33,19 @@ _MAX_RETRY_WAIT_S = 35.0
 _DEFAULT_MAX_ATTEMPTS = 4
 
 
+def _openrouter_proxy() -> str | None:
+    """Proxy only this client's OpenRouter calls, never the whole agent.
+
+    ``OPENROUTER_HTTP_PROXY`` is the campus tunnel (``openrouter-proxy.md``).
+    Falling back to ``HTTPS_PROXY`` keeps the old VPS AGENT_HTTP_PROXY path.
+    Empty means direct egress. The ITMO proxy must not see Heimdall/Phoenix.
+    """
+    return (os.environ.get("OPENROUTER_HTTP_PROXY")
+            or os.environ.get("HTTPS_PROXY")
+            or os.environ.get("HTTP_PROXY")
+            or None)
+
+
 def anthropic_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Anthropic ``{name, description, input_schema}`` → OpenAI ``tools``."""
     converted: list[dict[str, Any]] = []
@@ -251,8 +264,7 @@ class OpenRouterClient:
             raise RuntimeError(
                 "no credentials: set OPENROUTER_API_KEY. "
                 "The key is read from the environment only.")
-        proxy = (os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-                 or None)
+        proxy = _openrouter_proxy()
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
