@@ -224,6 +224,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_HTTP_PROXY: ${OPENROUTER_HTTP_PROXY:-}
+      # Ox Alpha cannot disable reasoning (effort=none 400s) and defaults to
+      # max, which eats max_tokens. sim/agent/openrouter.py already sends low
+      # for stealth/*; this env is the operator override (low|high|max|omit).
+      OPENROUTER_REASONING_EFFORT: ${OPENROUTER_REASONING_EFFORT:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       # claude_code (default) drives a headless `claude -p` session, which is
       # what the subscription token is scoped to. messages_api keeps the

@@ -63,7 +63,7 @@ def shipped_configs() -> dict[str, tuple[str, dict[str, Any], str]]:
             AgentConfig(
                 harness="messages_api",
                 model_id=DEFAULT_OPENROUTER_MODEL,
-                max_output_tokens=4096,
+                max_output_tokens=16384,
             ).as_dict(),
             "laptop golden path: OpenRouter via messages_api",
         ),

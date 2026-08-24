@@ -114,6 +114,11 @@ def anthropic_messages_to_openai(
 
 def _assistant_blocks_to_openai(blocks: list[dict[str, Any]]) -> dict[str, Any]:
     text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    reasoning = "\n".join(
+        b.get("text", "") for b in blocks
+        if b.get("type") == "reasoning" and b.get("text"))
+    details = next((b.get("details") for b in blocks
+                    if b.get("type") == "reasoning" and b.get("details")), None)
     tool_calls = []
     for block in blocks:
         if block.get("type") != "tool_use":
@@ -128,8 +133,14 @@ def _assistant_blocks_to_openai(blocks: list[dict[str, Any]]) -> dict[str, Any]:
             },
         })
     message: dict[str, Any] = {"role": "assistant", "content": text}
+    if reasoning:
+        message["reasoning"] = reasoning
+    if details:
+        message["reasoning_details"] = details
     if tool_calls:
         message["tool_calls"] = tool_calls
+        if not text:
+            message["content"] = None
     return message
 
 
@@ -155,7 +166,10 @@ def openai_message_to_anthropic_content(message: dict[str, Any]) -> list[dict[st
                 blocks.append({"type": "text", "text": part})
     reasoning = _reasoning_text(message)
     if reasoning:
-        blocks.append({"type": "reasoning", "text": reasoning})
+        block: dict[str, Any] = {"type": "reasoning", "text": reasoning}
+        if message.get("reasoning_details"):
+            block["details"] = message["reasoning_details"]
+        blocks.append(block)
     for call in message.get("tool_calls") or []:
         function = call.get("function") or {}
         blocks.append({
@@ -252,6 +266,24 @@ def _max_attempts() -> int:
         return _DEFAULT_MAX_ATTEMPTS
 
 
+def _reasoning_request(model: str) -> dict[str, Any] | None:
+    """Ox Alpha cannot disable reasoning and defaults to ``effort=max``.
+
+    That spends the whole ``max_tokens`` budget on hidden thinking, so the
+    response arrives with empty ``content``, no ``tool_calls``, and
+    ``answer: ""``. ``low`` is the minimum the endpoint accepts. Override with
+    ``OPENROUTER_REASONING_EFFORT`` (``low`` / ``high`` / ``max`` / ``omit``).
+    """
+    raw = (os.environ.get("OPENROUTER_REASONING_EFFORT") or "").strip().lower()
+    if raw in ("omit", "off", "none"):
+        return None
+    if raw in ("low", "high", "max"):
+        return {"effort": raw}
+    if model.startswith("stealth/") or "ox-alpha" in model:
+        return {"effort": "low"}
+    return None
+
+
 class OpenRouterClient:
     """Live calls against OpenRouter's OpenAI-compatible Chat Completions API."""
 
@@ -288,6 +320,9 @@ class OpenRouterClient:
         if tools:
             payload["tools"] = anthropic_tools_to_openai(tools)
             payload["tool_choice"] = "auto"
+        reasoning = _reasoning_request(model)
+        if reasoning:
+            payload["reasoning"] = reasoning
 
         ignored = list(_env_ignore_providers())
         last_error: Any = None

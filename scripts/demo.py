@@ -160,8 +160,10 @@ def main() -> int:
           f"tool_calls={stats.get('tool_calls')} "
           f"tokens={stats.get('total_tokens')}")
     if int(stats.get("heimdall_calls") or 0) < 1:
-        print("The free model answered without tools. In /admin/config set "
-              "model_id to a :free slug that supports tool calling, save as a "
+        print("The model answered without tools. stealth/ox-alpha needs "
+              "reasoning.effort=low (sent automatically) and enough "
+              "max_output_tokens for a tool call after thinking. In /admin/config "
+              "raise max_output_tokens (shipped default is 16384), save as a "
               "new version, and rerun with DEMO_CONFIG_REF=agent_config_openrouter@N.")
 
     step("4 · pull the trace")
