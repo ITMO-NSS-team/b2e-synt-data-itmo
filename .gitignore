@@ -50,3 +50,7 @@ cassettes/
 
 # Traps-off corpus, same policy as the traps-on one: rebuilt from seed.
 data-small-notraps/
+
+# Understand-Anything directory
+.ua/
+

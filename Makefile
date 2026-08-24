@@ -12,7 +12,7 @@ PROFILE ?=
 
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
-        rebuild sim-test
+        rebuild sim-test demo
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -20,7 +20,7 @@ help:
 setup:  ## окружение и зависимости
 	python3 -m venv .venv
 	.venv/bin/pip install -q -U pip
-	.venv/bin/pip install -q numpy pyyaml fastapi "uvicorn[standard]" pytest
+	.venv/bin/pip install -q numpy pyyaml fastapi "uvicorn[standard]" pytest httpx
 
 catalog:  ## каталог витрин из спецификации OpenAPI (OPENAPI=путь)
 	$(PY) -m b2e.cli catalog --openapi $(OPENAPI) --overlay catalog --out catalog/snapshot.json
@@ -75,6 +75,9 @@ seed-traps-off:  ## корпус без каверз — обязателен д
 
 smoke:  ## сквозной путь: вопрос → ответ → трасса → обратная связь → сравнение
 	$(PY) scripts/smoke.py
+
+demo:  ## golden path against a running stack (OpenRouter, spends free-tier tokens)
+	$(PY) scripts/demo.py
 
 check-docs:  ## выполнить каждый пример из heimdall-skills против живого эмулятора
 	$(PY) scripts/check_skill_docs.py --url $(HEIMDALL_URL)
