@@ -22,7 +22,7 @@
 	default_sni {$DEFAULT_SNI}
 }
 
-{$PUBLIC_HOST} {
+{$PUBLIC_HOST}, localhost {
 	# TLS mode is env-driven because this host has no DNS name: it is reachable
 	# on a public IPv6 address and a NATed private IPv4. ACME cannot issue for a
 	# bare IP, so TLS_MODE=internal makes Caddy mint its own certificate.
