@@ -30,7 +30,8 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 #: Free-model shared pools 429 often. Sleep at most this long per retry so a
 #: turn stays inside the HTTP client timeout rather than hanging the worker.
 _MAX_RETRY_WAIT_S = 35.0
-_DEFAULT_MAX_ATTEMPTS = 4
+_DEFAULT_MAX_ATTEMPTS = 6
+_SHARED_POOL_RETRY_FLOOR_S = 15.0
 
 
 def _openrouter_proxy() -> str | None:
@@ -286,7 +287,12 @@ def _retry_after_seconds(response: Any, body: Any) -> float:
         wait = float(raw)
     except (TypeError, ValueError):
         wait = 5.0
-    return min(max(wait, 1.0), _MAX_RETRY_WAIT_S)
+    wait = min(max(wait, 1.0), _MAX_RETRY_WAIT_S)
+    metadata = _error_object(body).get("metadata") or {}
+    if isinstance(metadata, dict) and (
+            metadata.get("limit_source") == "upstream_provider_shared_pool"):
+        wait = max(wait, _SHARED_POOL_RETRY_FLOOR_S)
+    return wait
 
 
 def _env_ignore_providers() -> list[str]:
