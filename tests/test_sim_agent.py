@@ -115,6 +115,21 @@ def test_tool_subset_controls_the_exposed_surface():
     assert len(tool_schemas(("mcp_query", "list_models"))) == 2
 
 
+def test_messages_api_mcp_query_exposes_metrics_and_id_types():
+    """OpenRouter never sees the MCP bridge schemas. Without metrics here the
+    model cannot send fact_count and falls back to asking the user whether an
+    org mart exists."""
+    query = next(t for t in tool_schemas(AgentConfig().tool_subset)
+                 if t["name"] == "mcp_query")
+    assert "metrics" in query["input_schema"]["properties"]
+    text = query["description"]
+    assert "fact_count" in text
+    assert "employee_id" in text and "UUID" in text
+    listed = next(t for t in tool_schemas(AgentConfig().tool_subset)
+                  if t["name"] == "list_models")
+    assert "employee_actual" in listed["description"]
+
+
 def test_no_tool_accepts_executable_code():
     """The no-code-execution premise is a property of the tool surface.
 

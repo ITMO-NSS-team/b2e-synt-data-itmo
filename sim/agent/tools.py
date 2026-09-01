@@ -49,13 +49,27 @@ def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
     all_tools: dict[str, dict[str, Any]] = {
         ENDPOINT_LIST_MODELS: {
             "name": "list_models",
-            "description": "Список витрин (моделей), доступных в текущем канале.",
+            "description": (
+                "Список витрин каталога: схема, модель, описание, признак "
+                "истории, число колонок и метрик. Не спрашивай пользователя, "
+                "есть ли витрина — вызови этот инструмент. Это каталог, не ACL: "
+                "схемы anagent и recruitment и модель "
+                "dm_special.talent_radar_people отвечают 403, если роль не hr. "
+                "Оргструктура и численность подразделения для руководителя и "
+                "сотрудника — dm_core.employee_actual; сервер сам ограничит "
+                "строки видимым поддеревом."
+            ),
             "input_schema": {"type": "object", "properties": {}, "required": []},
         },
         ENDPOINT_DESCRIBE: {
             "name": "describe_model",
-            "description": ("Описание витрины: колонки, типы, метрики. "
-                            "Дорого по токенам — вызывай точечно."),
+            "description": (
+                "Точные имена колонок, метрик и параметрических членов одной "
+                "витрины. Имена берутся ТОЛЬКО отсюда: сервер сверяет каждое с "
+                "каталогом и отклоняет незнакомое. columns и metrics — разные "
+                "списки: колонку нельзя запросить в metrics, метрику — в "
+                "columns. Дорого по токенам — вызывай точечно."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -67,7 +81,14 @@ def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
         },
         ENDPOINT_DOCS: {
             "name": "get_docs",
-            "description": "Документация по теме.",
+            "description": (
+                "Справочник по контракту канала. Дешевле, чем describe_model, "
+                "когда нужно понять правило, а не перечень колонок. Темы: "
+                "getting_started, rules, rows, aggregate, limits, filters, "
+                "history, param_metrics, top_n, compare_people, errors. "
+                "Численность — get_docs('aggregate') и метрика fact_count, "
+                "не подсчёт строк страницы."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {"topic": {"type": "string"}},
@@ -77,27 +98,96 @@ def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
         ENDPOINT_QUERY: {
             "name": "mcp_query",
             "description": (
-                "Запрос к витрине. Тело валидируется строго: "
-                "additionalProperties=false, лишнее поле отвергает весь запрос. "
-                "condition_like требует pattern, а не value."
+                "Запрос к витрине. Режим выводится из структуры тела: metrics "
+                "или param_metrics — агрегат, только columns — плоские строки. "
+                "Лишнее поле отклоняет всё тело. Идентификаторы: число в "
+                "системном промпте — employee_id (табельный номер, integer). "
+                "person_id — UUID. Фильтр person_id по табельному номеру даёт "
+                "filter-value-invalid. Чтобы посчитать людей — не вычитывай "
+                "строки, а запроси metrics: [\"fact_count\"] к "
+                "dm_core.employee_actual; без группировки вернётся одна строка "
+                "итога по видимому поддереву. len(data) — размер страницы "
+                "(лимит 100, потолок 1000), не численность."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "schema": {"type": "string"},
-                    "logic_model": {"type": "string"},
-                    "columns": {"type": "array", "items": {"type": "string"}},
-                    "filters": {"type": "object"},
-                    "order_by": {"type": "array", "items": {"type": "object"}},
-                    "limit": {"type": "integer"},
-                    "offset": {"type": "integer"},
+                    "schema": {
+                        "type": "string",
+                        "description": "Схема витрины, напр. dm_core",
+                    },
+                    "logic_model": {
+                        "type": "string",
+                        "description": "Имя витрины, напр. employee_actual",
+                    },
+                    "columns": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": (
+                            "Имена колонок из describe_model. В агрегате это "
+                            "ключи группировки; без них — одна строка итога."
+                        ),
+                    },
+                    "metrics": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": (
+                            "Имена метрик из describe_model. Включает режим "
+                            "агрегата. Для подсчёта людей обычно fact_count."
+                        ),
+                    },
+                    "filters": {
+                        "type": "object",
+                        "description": (
+                            "Дерево фильтров: узлы and/or/not и листья "
+                            "condition. Грамматика — get_docs('filters')."
+                        ),
+                    },
+                    "order_by": {
+                        "type": "array", "items": {"type": "object"},
+                        "description": (
+                            "[{field, kind: column|metric, direction: "
+                            "asc|desc}]. Нужен для устойчивой пагинации."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            "Строк на страницу. По умолчанию 100, потолок "
+                            "1000; выше — молча ужимается."
+                        ),
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": (
+                            "Сдвиг следующей страницы, пока has_next_page. "
+                            "Только вместе с order_by."
+                        ),
+                    },
+                    "time_dimensions": {
+                        "type": "array", "items": {"type": "object"},
+                        "description": "Включает режим истории (SCD2).",
+                    },
+                    "limit_by": {
+                        "type": "object",
+                        "description": "{limit, by: [колонки]} — N строк на группу.",
+                    },
+                    "param_metrics": {
+                        "type": "array", "items": {"type": "object"},
+                        "description": "[{name, args}] для метрик с parameters.",
+                    },
+                    "param_columns": {
+                        "type": "array", "items": {"type": "object"},
+                        "description": "[{name, args}] для параметрических колонок.",
+                    },
                 },
                 "required": ["schema", "logic_model"],
             },
         },
         ENDPOINT_FIND_SKILLS: {
             "name": "find_skills",
-            "description": "Поиск готовых скиллов (рецептов и справок) по запросу.",
+            "description": (
+                "Найти рецепт или справочный приём под задачу. Значение «*» "
+                "вернёт всё. Сначала ищи рецепт, list_models — запасной путь."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {"query": {"type": "string"},
@@ -107,7 +197,10 @@ def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
         },
         ENDPOINT_GET_SKILL: {
             "name": "get_skill",
-            "description": "Полное описание скилла по имени.",
+            "description": (
+                "Взять скилл целиком: готовый запрос, что подставлять и "
+                "чего делать нельзя. Рецепт исполняется как есть."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
@@ -116,9 +209,10 @@ def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
         },
         ENDPOINT_OVERVIEW: {
             "name": "get_overview",
-            "description": ("Обзор каталога скиллов: домены, активные скиллы, "
-                            "грамматика фильтров. Начинай отсюда, если не знаешь, "
-                            "что вообще есть."),
+            "description": (
+                "Обзор каталога: домены, активные скиллы, грамматика "
+                "фильтров. Начинай отсюда, если не знаешь, что вообще есть."
+            ),
             "input_schema": {"type": "object", "properties": {}, "required": []},
         },
     }
@@ -173,6 +267,7 @@ class HeimdallTools:
             "mcp_query": self.mcp_query,
             "find_skills": self.find_skills,
             "get_skill": self.get_skill,
+            "get_overview": self.get_overview,
         }
         handler = handlers.get(name)
         if handler is None:
@@ -239,6 +334,9 @@ class HeimdallTools:
 
     def get_skill(self, name: str) -> dict[str, Any]:
         return self._call("GET", f"/api/v2/mcp/skills/{name}/", ENDPOINT_GET_SKILL)
+
+    def get_overview(self) -> dict[str, Any]:
+        return self._call("GET", "/api/v2/mcp/overview/", ENDPOINT_OVERVIEW)
 
 
 def render_tool_result(payload: Any, *, max_chars: int = 60_000) -> str:
