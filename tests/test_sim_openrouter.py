@@ -158,7 +158,8 @@ def test_free_model_projects_zero_cost():
         prompt_tokens=1000, completion_tokens=1000)
     assert response.cost_usd(DEFAULT_OPENROUTER_MODEL) == 0.0
     assert response.cost_usd("qwen/qwen3-8b:free") == 0.0
-    assert response.cost_usd("stealth/ox-alpha") == 0.0
+    assert response.cost_usd("minimax/minimax-m3:free") == 0.0
+    assert response.cost_usd("z-ai/glm-5.2:free") == 0.0
     assert response.cost_usd("claude-haiku-4-5-20251001") > 0
 
 
@@ -215,9 +216,9 @@ _OK_BODY = {
 }
 
 
-def _complete(client):
+def _complete(client, model=DEFAULT_OPENROUTER_MODEL):
     return client.complete(
-        model=DEFAULT_OPENROUTER_MODEL, system="sys",
+        model=model, system="sys",
         messages=[{"role": "user", "content": "сколько?"}],
         tools=[], temperature=0.0, max_tokens=64)
 
@@ -241,6 +242,7 @@ def test_openrouter_client_complete_uses_translated_payload(monkeypatch):
     assert sent["model"] == DEFAULT_OPENROUTER_MODEL
     assert sent["messages"][0]["role"] == "system"
     assert sent["tools"][0]["function"]["name"] == "mcp_query"
+    assert "reasoning" not in sent
     assert response.text() == "В подразделении 21 человек."
     assert response.stop_reason == "end_turn"
     assert response.tool_uses() == []

@@ -30,7 +30,7 @@ from typing import Any
 #: Default model under test.
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
-DEFAULT_OPENROUTER_MODEL = "stealth/ox-alpha"
+DEFAULT_OPENROUTER_MODEL = "minimax/minimax-m3:free"
 
 #: Strategies for the live remaining-token-budget signal that Haiku 4.5 returns
 #: after each tool call. Whether the agent *uses* it is a research variable, so

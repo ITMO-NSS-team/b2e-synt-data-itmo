@@ -42,9 +42,8 @@ DEFAULT_PRICE = (1.00, 5.00)
 
 
 def _is_free_openrouter_model(model: str) -> bool:
-    """OpenRouter's $0 slugs: ``:free``, the free router, and stealth previews."""
-    return (model.endswith(":free") or model == "openrouter/free"
-            or model.startswith("stealth/"))
+    """OpenRouter's $0 slugs: ``:free`` and the free router."""
+    return model.endswith(":free") or model == "openrouter/free"
 
 
 class ReplayMiss(RuntimeError):
