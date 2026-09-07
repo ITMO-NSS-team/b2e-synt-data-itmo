@@ -25,12 +25,13 @@ class PhoenixUnavailable(RuntimeError):
 
 class PhoenixClient:
     def __init__(self, base_url: str, *, project: str = "b2e-sim",
-                 timeout: float = 30.0) -> None:
+                 timeout: float = 30.0,
+                 client: httpx.Client | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.project = project
         # trust_env=False: internal calls must not traverse an ambient proxy.
-        self._client = httpx.Client(base_url=self.base_url, timeout=timeout,
-                                    trust_env=False)
+        self._client = client or httpx.Client(
+            base_url=self.base_url, timeout=timeout, trust_env=False)
 
     def close(self) -> None:
         self._client.close()
