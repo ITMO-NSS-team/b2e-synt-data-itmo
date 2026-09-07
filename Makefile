@@ -1,5 +1,5 @@
 PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
-export PYTHONPATH := .
+export PYTHONPATH := .:skill-factory
 
 OPENAPI ?= Heimdall_openapi.json
 HEIMDALL_URL ?= http://127.0.0.1:8081
@@ -7,12 +7,13 @@ DATA    ?= data
 SEED    ?= 20260801
 N       ?= 300000
 
-COMPOSE := docker compose -f deploy/docker-compose.yml --env-file deploy/.env
+DOCKER ?= docker
+COMPOSE := $(DOCKER) compose -f deploy/docker-compose.yml --env-file deploy/.env
 PROFILE ?=
 
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
-        rebuild sim-test demo
+        rebuild sim-test demo eval-skills eval-deps pin-eval-configs
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -92,3 +93,36 @@ openapi:  ## выгрузить OpenAPI b2e-agent и research-api в docs/openap
 
 rebuild:  ## пересобрать образы без кэша
 	$(COMPOSE) build --no-cache
+
+CATALOG ?= heimdall
+LOGGING ?= both
+CASE ?= 001-answerable
+IGNORE_SNAPSHOT ?= false
+PYTHON_IMAGE ?= b2e-itmo/python:local
+EVAL_PYTHONPATH := /app:/app/skill-factory:/app/var/eval-site
+
+ifeq ($(CASE),all)
+EVAL_CASE := case_ids=null
+else
+EVAL_CASE := case_ids=[$(CASE)]
+endif
+
+eval-deps:  ## hydra-core + mlflow for the eval driver (not the agent image)
+	@mkdir -p var/eval-site
+	$(DOCKER) run --rm --user root -v $(CURDIR):/app -w /app $(PYTHON_IMAGE) \
+		pip install -q --target /app/var/eval-site -r deploy/requirements-eval.txt
+
+pin-eval-configs:  ## append-only clone of agent_config_openrouter → skills on/off
+	$(COMPOSE) up -d --no-deps admin-ui
+	$(COMPOSE) exec -T admin-ui python -m sim.skill_eval.pin
+
+eval-skills: pin-eval-configs eval-deps  ## Hydra skill-eval; CATALOG=none|heimdall|factory
+	@test -f deploy/.env || { echo "нет deploy/.env"; exit 1; }
+	$(DOCKER) run --rm --network host --user root \
+		-v $(CURDIR):/app -w /app \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-e PYTHONPATH=$(EVAL_PYTHONPATH) \
+		$(PYTHON_IMAGE) \
+		python -m sim.skill_eval \
+			catalog=$(CATALOG) logging=$(LOGGING) \
+			$(EVAL_CASE) ignore_snapshot=$(IGNORE_SNAPSHOT)

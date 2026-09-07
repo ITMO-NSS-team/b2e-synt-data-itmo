@@ -1,0 +1,12 @@
+_target_: sim.skill_eval.scoring.ScorerRegistry
+scorers:
+  answerable:
+    _target_: sim.skill_eval.scoring.AnswerableScorer
+  access_control:
+    _target_: sim.skill_eval.scoring.AccessControlScorer
+  no_data:
+    _target_: sim.skill_eval.scoring.NoDataScorer
+  missing_skill:
+    _target_: sim.skill_eval.scoring.MissingSkillScorer
+  out_of_scope:
+    _target_: sim.skill_eval.scoring.OutOfScopeScorer

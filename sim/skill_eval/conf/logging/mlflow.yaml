@@ -1,0 +1,14 @@
+_target_: sim.skill_eval.loggers.CompositeLogger
+loggers:
+  - _target_: sim.skill_eval.loggers.JsonlLogger
+    path: ${results_dir}/skill-eval-${eval_id}.jsonl
+  - _target_: sim.skill_eval.loggers.MLflowLogger
+    tracking_uri: ${mlflow_tracking_uri}
+    experiment: skill-eval
+    eval_id: ${eval_id}
+    jsonl_path: ${results_dir}/skill-eval-${eval_id}.jsonl
+    params:
+      catalog: ${catalog._target_}
+      factory: ${factory._target_}
+      case_ids: ${case_ids}
+      ignore_snapshot: ${ignore_snapshot}

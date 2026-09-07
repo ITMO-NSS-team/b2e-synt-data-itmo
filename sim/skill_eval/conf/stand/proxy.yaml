@@ -1,0 +1,5 @@
+_target_: sim.skill_eval.stand.StandClient
+public_url: https://localhost:8443
+public_host: localhost
+env_file: deploy/.env
+timeout: 180.0

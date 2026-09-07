@@ -1,0 +1,9 @@
+_target_: sim.skill_eval.install.BindMountRestartInstaller
+skills_root: heimdall-skills
+overlay_dirname: _factory
+compose_file: deploy/docker-compose.yml
+env_file: deploy/.env
+service: heimdall-emulator
+project: b2e-itmo
+cleanup_after: true
+use_sudo: false
