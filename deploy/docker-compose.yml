@@ -323,6 +323,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
     volumes:
       - *resolv-overlay
+      - ../sim:/app/sim:ro
       - registry_data:/app/registry
     networks: [edge, internal]
     # The explorer assembles a hundred turns of spans in memory before it

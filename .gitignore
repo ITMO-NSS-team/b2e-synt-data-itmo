@@ -53,4 +53,18 @@ data-small-notraps/
 
 # Understand-Anything directory
 .ua/
+*.md
+*.txt
 
+# Backups
+*backup*
+*.tar.gz
+*.sha256
+*.jsonl
+
+# Heimdall skills
+heimdall-skills/
+
+var/mlruns/
+var/eval-site/
+results/hydra/
