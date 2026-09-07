@@ -1,0 +1,3 @@
+_target_: factory.echo.EchoGoldFactory
+catalog_roots:
+  - heimdall-skills

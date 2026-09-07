@@ -1,0 +1,23 @@
+defaults:
+  - catalog: heimdall
+  - logging: both
+  - factory: echo_gold
+  - installer: bind_mount
+  - scorers: default
+  - stand: proxy
+  - _self_
+
+eval_id: ${now:%Y%m%d-%H%M%S}
+cases_path: benchmark-60-cases.jsonl
+case_ids:
+  - 001-answerable
+results_dir: results
+mlflow_tracking_uri: var/mlruns
+ignore_snapshot: false
+phoenix_project: b2e-itmo
+
+hydra:
+  run:
+    dir: results/hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

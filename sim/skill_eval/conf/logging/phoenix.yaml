@@ -1,0 +1,6 @@
+_target_: sim.skill_eval.loggers.CompositeLogger
+loggers:
+  - _target_: sim.skill_eval.loggers.JsonlLogger
+    path: ${results_dir}/skill-eval-${eval_id}.jsonl
+  - _target_: sim.skill_eval.loggers.PhoenixLogger
+    project: ${phoenix_project}

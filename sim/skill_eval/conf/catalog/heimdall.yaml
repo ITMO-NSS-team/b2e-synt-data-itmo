@@ -1,0 +1,2 @@
+_target_: sim.skill_eval.catalog.HeimdallCatalog
+config_ref: agent_config_benchmark_skills_on
