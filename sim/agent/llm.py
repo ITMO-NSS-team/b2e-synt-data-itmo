@@ -240,7 +240,29 @@ class ScriptedClient:
         return self._responses.pop(0)
 
 
+class UnavailableClient:
+    """Placeholder when the messages_api path has no provider wired.
+
+    Claude Code / Z.ai uses the CLI subprocess, not this client. Boot must
+    still succeed in live mode without Anthropic credentials.
+    """
+
+    mode = "live"
+
+    def __init__(self, reason: str) -> None:
+        self._reason = reason
+
+    def complete(self, **kwargs: Any) -> LLMResponse:
+        raise RuntimeError(self._reason)
+
+
 def _live_client() -> LLMClient:
+    from sim.agent.provider import is_zai
+
+    if is_zai():
+        return UnavailableClient(
+            "messages_api live calls are not wired for LLM_PROVIDER=zai; "
+            "use harness=claude_code (Z.ai Anthropic-compatible endpoint)")
     return AnthropicClient()
 
 

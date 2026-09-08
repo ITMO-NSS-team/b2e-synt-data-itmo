@@ -146,7 +146,7 @@ def main() -> int:
     base = env.get("PUBLIC_URL", "https://localhost:8443").rstrip("/")
     password = env.get("RESEARCHER_PASSWORD", "")
     config_ref = env.get("DEMO_CONFIG_REF", DEFAULT_DEMO_CONFIG_REF)
-    timeout = float(env.get("DEMO_TIMEOUT", "180"))
+    timeout = float(env.get("DEMO_TIMEOUT", "600"))
     data_dir = Path(env.get("DEMO_DATA", "data-small"))
 
     if not password:
