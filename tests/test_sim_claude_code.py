@@ -214,6 +214,7 @@ def test_two_employees_get_different_mcp_configs(harness):
 def test_child_env_is_an_allowlist_not_a_denylist(harness, monkeypatch):
     """Built by allowlist so a newly-added parent secret does not leak by
     default — a deny-list is wrong until someone remembers to update it."""
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-TESTONLY")
     monkeypatch.setenv("POSTGRES_PASSWORD", "should-not-propagate")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "should-not-propagate")
@@ -224,6 +225,7 @@ def test_child_env_is_an_allowlist_not_a_denylist(harness, monkeypatch):
 
 
 def test_child_env_refuses_without_a_credential(harness, monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="no model credential"):
