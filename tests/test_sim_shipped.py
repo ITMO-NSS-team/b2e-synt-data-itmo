@@ -70,15 +70,13 @@ def test_bootstrap_never_overwrites_an_operator_edit(registry):
     assert body["temperature"] == 0.7
 
 
-def test_the_openrouter_config_is_messages_api_and_capped(registry):
+def test_messages_api_shipped_config_is_capped(registry):
     bootstrap(registry)
-    from sim.agent.config import DEFAULT_OPENROUTER_MODEL
-    from sim.agent.shipped import OPENROUTER_CONFIG_REF
+    from sim.agent.shipped import MESSAGES_API_CONFIG_REF
 
-    _version, body = registry.load(OPENROUTER_CONFIG_REF)
+    _version, body = registry.load(MESSAGES_API_CONFIG_REF)
     config = AgentConfig.from_dict(body)
     assert config.harness == "messages_api"
-    assert config.model_id == DEFAULT_OPENROUTER_MODEL
     assert config.max_output_tokens == 16384
 
 

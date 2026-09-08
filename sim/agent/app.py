@@ -118,6 +118,8 @@ class AgentState:
             self.harness_status = f"unavailable: {claude_bin} not on PATH"
             return None
 
+        from sim.agent.provider import turn_timeout_seconds
+
         proxy = {k: env[k] for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
                  if env.get(k)}
         self.harness_status = f"ready ({claude_bin}), proxy={'yes' if proxy else 'no'}"
@@ -128,13 +130,9 @@ class AgentState:
             runner_path=env.get("B2E_SKILL_RUNNER", "/opt/skills/run"),
             claude_bin=claude_bin,
             proxy=proxy,
-            # Both live on the agent's writable volume, so a conversation
-            # survives a container rebuild. The CLI files session transcripts
-            # per (HOME, project dir); a resumable session needs both to be the
-            # same on the next turn as they were on this one.
             session_root=env.get("B2E_SESSION_ROOT", "var/sessions"),
             claude_home=env.get("B2E_CLAUDE_HOME") or None,
-            timeout_seconds=int(env.get("B2E_TURN_TIMEOUT", "600")),
+            timeout_seconds=turn_timeout_seconds(),
         )
 
     def _configure_tracing(self) -> str:

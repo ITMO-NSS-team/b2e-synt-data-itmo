@@ -116,9 +116,8 @@ def test_tool_subset_controls_the_exposed_surface():
 
 
 def test_messages_api_mcp_query_exposes_metrics_and_id_types():
-    """OpenRouter never sees the MCP bridge schemas. Without metrics here the
-    model cannot send fact_count and falls back to asking the user whether an
-    org mart exists."""
+    """Without metrics in the schema the model cannot send fact_count and falls
+    back to asking the user whether an org mart exists."""
     query = next(t for t in tool_schemas(AgentConfig().tool_subset)
                  if t["name"] == "mcp_query")
     assert "metrics" in query["input_schema"]["properties"]

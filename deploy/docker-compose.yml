@@ -220,18 +220,21 @@ services:
       PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
       # Read from the environment only. Never written to a file or a commit.
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      B2E_HARNESS: ${B2E_HARNESS:-claude_code}
+      B2E_MODEL: ${B2E_MODEL:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}
+      ANTHROPIC_DEFAULT_SONNET_MODEL: ${ANTHROPIC_DEFAULT_SONNET_MODEL:-}
+      ANTHROPIC_DEFAULT_OPUS_MODEL: ${ANTHROPIC_DEFAULT_OPUS_MODEL:-}
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: ${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-}
+      API_TIMEOUT_MS: ${API_TIMEOUT_MS:-}
+      ZAI_OPENAI_BASE_URL: ${ZAI_OPENAI_BASE_URL:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_HTTP_PROXY: ${OPENROUTER_HTTP_PROXY:-}
-      # Optional override (low|high|max|omit). Auto-sent as low only for
-      # stealth/* / ox-alpha; the default :free slug omits it.
-      OPENROUTER_REASONING_EFFORT: ${OPENROUTER_REASONING_EFFORT:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-}
-      # claude_code (default) drives a headless `claude -p` session, which is
-      # what the subscription token is scoped to. messages_api keeps the
-      # deterministic loop for replay, CI, and the OpenRouter laptop path.
-      B2E_HARNESS: ${B2E_HARNESS:-claude_code}
       B2E_CLAUDE_BIN: claude
       B2E_SKILL_RUNNER: /opt/skills/run
       B2E_MCP_BRIDGE: /app/heimdall/bridge.py
@@ -244,22 +247,17 @@ services:
       # FastAPI needs to be told, or the Swagger page it serves asks the browser
       # for /openapi.json — an absolute URL that never reaches this app.
       B2E_ROOT_PATH: /agent
-      # Egress to Anthropic goes through the host's proxy. NO_PROXY must list
-      # every internal name, or Heimdall and Phoenix calls would be tunnelled
-      # out to the internet and fail.
-      # Egress to Anthropic/OpenRouter. Empty AGENT_HTTP_PROXY (laptop default)
+      # Egress to Anthropic / Z.AI. Empty AGENT_HTTP_PROXY (laptop default)
       # is direct egress. The VPS default used to be host.docker.internal:10809,
-      # which compose treated as set-if-empty and broke every laptop OpenRouter
-      # call: the agent tried a proxy that does not exist, and
-      # host.docker.internal lives only in NFS-mounted /etc/hosts the non-root
-      # uid cannot read.
+      # which compose treated as set-if-empty and broke laptop runs when the
+      # proxy did not exist.
       HTTP_PROXY: ${AGENT_HTTP_PROXY:-}
       HTTPS_PROXY: ${AGENT_HTTP_PROXY:-}
       NO_PROXY: localhost,127.0.0.1,::1,heimdall-emulator,phoenix,postgres,research-api,admin-ui,host.docker.internal
     volumes:
       - *resolv-overlay
-      # Host tree, not the image COPY: OpenRouter proxy and other sim/ edits
-      # must apply without rebuilding the Node/Claude layer.
+      # Host tree, not the image COPY: sim/ edits apply without rebuilding the
+      # Node/Claude layer.
       - ../sim:/app/sim:ro
       # The approval store is READ-ONLY here. The threat model says the agent
       # uid cannot write it; mounting it rw made that false, and in the
@@ -321,6 +319,20 @@ services:
       PHOENIX_PROJECT: b2e-itmo
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      # Bootstrap seeds model_id / harness from these on a fresh registry.
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      B2E_HARNESS: ${B2E_HARNESS:-claude_code}
+      B2E_MODEL: ${B2E_MODEL:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}
+      ANTHROPIC_DEFAULT_SONNET_MODEL: ${ANTHROPIC_DEFAULT_SONNET_MODEL:-}
+      ANTHROPIC_DEFAULT_OPUS_MODEL: ${ANTHROPIC_DEFAULT_OPUS_MODEL:-}
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: ${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-}
+      API_TIMEOUT_MS: ${API_TIMEOUT_MS:-}
+      ZAI_OPENAI_BASE_URL: ${ZAI_OPENAI_BASE_URL:-}
     volumes:
       - *resolv-overlay
       - ../sim:/app/sim:ro

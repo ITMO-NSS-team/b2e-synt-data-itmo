@@ -79,7 +79,7 @@ seed-traps-off:  ## корпус без каверз — обязателен д
 smoke:  ## сквозной путь: вопрос → ответ → трасса → обратная связь → сравнение
 	$(PY) scripts/smoke.py
 
-demo:  ## golden path against a running stack (OpenRouter, spends free-tier tokens)
+demo:  ## golden path against a running stack (Claude Code / Z.ai, spends plan quota)
 	$(PY) scripts/demo.py
 
 check-docs:  ## выполнить каждый пример из heimdall-skills против живого эмулятора
@@ -112,7 +112,7 @@ eval-deps:  ## hydra-core + mlflow for the eval driver (not the agent image)
 	$(DOCKER) run --rm --user root -v $(CURDIR):/app -w /app $(PYTHON_IMAGE) \
 		pip install -q --target /app/var/eval-site -r deploy/requirements-eval.txt
 
-pin-eval-configs:  ## append-only clone of agent_config_openrouter → skills on/off
+pin-eval-configs:  ## append-only clone of agent_config → skills on/off
 	$(COMPOSE) up -d --no-deps admin-ui
 	$(COMPOSE) exec -T admin-ui python -m sim.skill_eval.pin
 

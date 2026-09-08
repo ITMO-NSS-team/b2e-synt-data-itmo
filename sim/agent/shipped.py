@@ -29,18 +29,27 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from sim.agent.config import AgentConfig, DEFAULT_OPENROUTER_MODEL
+from sim.agent.config import AgentConfig
 from sim.agent.prompt import DEFAULT_SYSTEM_PROMPT
+from sim.agent.provider import env_harness, env_model_id
 
 #: Registry ref of the shipped conversational config. One name, imported by the
 #: bootstrap, the agent and the Telegram bridge, so the three cannot drift onto
 #: three different strings.
 INTERACTIVE_CONFIG_REF = "agent_config_interactive"
 
-#: Registry ref of the shipped OpenRouter / messages_api config used by the
-#: laptop golden path. Separate from ``agent_config`` so the original Claude
-#: Code experiment arm keeps its condition_id.
-OPENROUTER_CONFIG_REF = "agent_config_openrouter"
+MESSAGES_API_CONFIG_REF = "agent_config_messages_api"
+
+
+def _seed_agent_kwargs(**overrides: Any) -> dict[str, Any]:
+    kwargs = dict(overrides)
+    model = env_model_id()
+    if model:
+        kwargs["model_id"] = model
+    harness = env_harness()
+    if harness:
+        kwargs["harness"] = harness
+    return kwargs
 
 
 def shipped_configs() -> dict[str, tuple[str, dict[str, Any], str]]:
@@ -49,24 +58,19 @@ def shipped_configs() -> dict[str, tuple[str, dict[str, Any], str]]:
         "system_prompt": (
             "prompt", {"template": DEFAULT_SYSTEM_PROMPT}, "shipped default"),
         "agent_config": (
-            "agent", AgentConfig().as_dict(), "shipped default"),
-        # Differs from `agent_config` in exactly one field. The Telegram bridge
-        # opens sessions against it, so a researcher gets a conversation while
-        # batch arms keep stateless turns — and because the two are separate
-        # refs, the fingerprint gives them separate condition_ids rather than
-        # blurring one condition into the other.
+            "agent", AgentConfig(**_seed_agent_kwargs()).as_dict(),
+            "shipped default"),
         INTERACTIVE_CONFIG_REF: (
-            "agent", AgentConfig(conversation_mode="resume").as_dict(),
+            "agent",
+            AgentConfig(**_seed_agent_kwargs(conversation_mode="resume")).as_dict(),
             "shipped default, resumable sessions"),
-        OPENROUTER_CONFIG_REF: (
+        MESSAGES_API_CONFIG_REF: (
             "agent",
             AgentConfig(
                 harness="messages_api",
-                model_id=DEFAULT_OPENROUTER_MODEL,
                 max_output_tokens=16384,
             ).as_dict(),
-            "laptop golden path: OpenRouter via messages_api",
-        ),
+            "messages_api golden path"),
         "skill_registry": ("skills", {"active": []}, "empty registry"),
     }
 
@@ -117,8 +121,6 @@ def bootstrap_if_writable(registry) -> str:
     try:
         created = bootstrap(registry)
     except sqlite3.OperationalError:
-        # Read-only: expected in the container. Say what is missing rather than
-        # pretending the call succeeded.
         _missing, status = audit(registry)
         return status
     _missing, status = audit(registry)

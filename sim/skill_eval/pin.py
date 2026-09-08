@@ -5,7 +5,7 @@ from sim.registry import Registry
 
 ON_REF = "agent_config_benchmark_skills_on"
 OFF_REF = "agent_config_benchmark_skills_off"
-SOURCE_REF = "agent_config_openrouter"
+SOURCE_REF = "agent_config"
 
 
 def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
