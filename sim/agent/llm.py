@@ -3,7 +3,6 @@
 Implementations behind one interface:
 
 ``AnthropicClient``   real calls against Anthropic, OAuth token or API key
-``OpenRouterClient``  real calls against OpenRouter's OpenAI-compatible API
 ``RecordingClient``   a real client that also writes a cassette
 ``ReplayClient``      serves cassettes; makes no network call and spends nothing
 
@@ -41,11 +40,6 @@ PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 DEFAULT_PRICE = (1.00, 5.00)
 
 
-def _is_free_openrouter_model(model: str) -> bool:
-    """OpenRouter's $0 slugs: ``:free`` and the free router."""
-    return model.endswith(":free") or model == "openrouter/free"
-
-
 class ReplayMiss(RuntimeError):
     """No cassette for this request. Never falls back to a live call."""
 
@@ -73,7 +67,7 @@ class LLMResponse:
         return [b for b in self.content if b.get("type") == "tool_use"]
 
     def cost_usd(self, model: str) -> float:
-        if _is_free_openrouter_model(model):
+        if model.startswith("glm-"):
             prompt_rate, completion_rate = (0.0, 0.0)
         else:
             prompt_rate, completion_rate = PRICES_USD_PER_MTOK.get(model, DEFAULT_PRICE)
@@ -247,17 +241,6 @@ class ScriptedClient:
 
 
 def _live_client() -> LLMClient:
-    """Pick the live provider from the environment.
-
-    OpenRouter wins when ``LLM_PROVIDER=openrouter`` or when an OpenRouter key
-    is set and the provider is not forced to Anthropic. Anthropic remains the
-    fallback so an existing VPS ``.env`` keeps working.
-    """
-    provider = (os.environ.get("LLM_PROVIDER") or "").strip().lower()
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY") or ""
-    if provider == "openrouter" or (openrouter_key and provider != "anthropic"):
-        from sim.agent.openrouter import OpenRouterClient
-        return OpenRouterClient()
     return AnthropicClient()
 
 

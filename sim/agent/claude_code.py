@@ -563,18 +563,8 @@ class ClaudeCodeHarness:
         return Path(self.session_root) / safe
 
     def child_env(self) -> dict[str, str]:
-        """Environment for the CLI: the token, the proxy, and nothing else.
-
-        Built by allowlist rather than by copying and deleting. A deny-list is
-        wrong by default — every new secret the parent gains would leak until
-        someone remembered to add it.
-        """
-        token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not token and not api_key:
-            raise RuntimeError(
-                "no model credential: set CLAUDE_CODE_OAUTH_TOKEN (from "
-                "`claude setup-token`) or ANTHROPIC_API_KEY")
+        """Environment for the CLI: credentials, Z.ai overrides, proxy — allowlist only."""
+        from sim.agent.provider import is_zai, zai_child_env
 
         home = self.claude_home or os.environ.get("HOME", "/tmp")
         Path(home).mkdir(parents=True, exist_ok=True)
@@ -584,10 +574,19 @@ class ClaudeCodeHarness:
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
         }
-        if token:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        elif api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
+        if is_zai():
+            env.update(zai_child_env())
+        else:
+            token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not token and not api_key:
+                raise RuntimeError(
+                    "no model credential: set CLAUDE_CODE_OAUTH_TOKEN (from "
+                    "`claude setup-token`) or ANTHROPIC_API_KEY")
+            if token:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+            elif api_key:
+                env["ANTHROPIC_API_KEY"] = api_key
         env.update(self.proxy)
         return env
 
