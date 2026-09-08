@@ -4,11 +4,11 @@
 Picks a manager whose unit has a real team (not the first leaf head from
 ``sample_identities``) so "how many people in my unit?" is in scope. Override
 with ``DEMO_EMPLOYEE`` or ``DEMO_PERSON_ID``. Opens a session on
-``agent_config_openrouter``, and fails if the model never called Heimdall — a
-guessed number is not a working MVP.
+``agent_config`` (Claude Code / Z.ai by default), and fails if the model never
+called Heimdall — a guessed number is not a working MVP.
 
-Requires ``deploy/.env`` with RESEARCHER_PASSWORD and a live OpenRouter key
-already in the running agent. Spends free-tier tokens.
+Requires ``deploy/.env`` with RESEARCHER_PASSWORD and a live provider key
+already in the running agent.
 
     make seed && make up && make demo
 """
@@ -25,12 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from sim.agent.shipped import OPENROUTER_CONFIG_REF
 from sim.emulator.identity import AccessDenied, IdentityIndex
 
 QUESTION = "Сколько сотрудников в моём подразделении?"
 OK, BAD = "  ok  ", " FAIL "
 _failures: list[str] = []
+DEFAULT_DEMO_CONFIG_REF = "agent_config"
 
 
 def step(title: str) -> None:
@@ -145,7 +145,7 @@ def main() -> int:
     env = {**load_dotenv(Path("deploy/.env")), **os.environ}
     base = env.get("PUBLIC_URL", "https://localhost:8443").rstrip("/")
     password = env.get("RESEARCHER_PASSWORD", "")
-    config_ref = env.get("DEMO_CONFIG_REF", OPENROUTER_CONFIG_REF)
+    config_ref = env.get("DEMO_CONFIG_REF", DEFAULT_DEMO_CONFIG_REF)
     timeout = float(env.get("DEMO_TIMEOUT", "180"))
     data_dir = Path(env.get("DEMO_DATA", "data-small"))
 
@@ -199,9 +199,9 @@ def main() -> int:
     session_id = body.get("session_id")
     check("session opened", bool(session_id),
           f"session={session_id} config={config_ref}")
-    check("fingerprint names the OpenRouter config",
+    check("fingerprint names the demo config",
           (body.get("fingerprint") or {}).get("agent_config_version", "").startswith(
-              OPENROUTER_CONFIG_REF) or config_ref != OPENROUTER_CONFIG_REF,
+              config_ref.split("@")[0]),
           json.dumps(body.get("fingerprint"), ensure_ascii=False)[:200])
 
     reply = client.post(f"/agent/sessions/{session_id}/messages",
@@ -219,9 +219,9 @@ def main() -> int:
           f"tool_calls={stats.get('tool_calls')} "
           f"tokens={stats.get('total_tokens')}")
     if int(stats.get("heimdall_calls") or 0) < 1:
-        print("The model answered without tools. In /admin/config set model_id "
-              "to a :free slug that supports tool calling, save as a new "
-              "version, and rerun with DEMO_CONFIG_REF=agent_config_openrouter@N.")
+        print("The model answered without tools. Check B2E_MODEL / Z.ai credentials "
+              "in deploy/.env, or set a working model_id in /admin/config and rerun "
+              "with DEMO_CONFIG_REF=agent_config@N.")
 
     step("4 · pull the trace")
     trace = None
