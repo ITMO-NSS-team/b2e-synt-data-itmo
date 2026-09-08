@@ -202,7 +202,7 @@ def main() -> int:
     check("fingerprint names the demo config",
           (body.get("fingerprint") or {}).get("agent_config_version", "").startswith(
               config_ref.split("@")[0]),
-          json.dumps(body.get("fingerprint"), ensure_ascii=False)[:200])
+          json.dumps(body.get("fingerprint"), ensure_ascii=False))
 
     reply = client.post(f"/agent/sessions/{session_id}/messages",
                         json={"content": QUESTION})
