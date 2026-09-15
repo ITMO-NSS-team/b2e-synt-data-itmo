@@ -9,7 +9,11 @@ description = "Синтетический HR-корпус в форме API Heim
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["numpy>=1.24", "pyyaml>=6.0"]
+dependencies = [
+    "numpy>=1.24",
+    "pytest>=9.1.1",
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 serve = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
@@ -23,6 +27,7 @@ packages = ["b2e", "b2e.gen", "heimdall", "heimdall.catalog", "heimdall.engine",
             "heimdall.skills", "heimdall.store"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
