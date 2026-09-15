@@ -66,6 +66,9 @@ data-small-notraps/
 
 # Heimdall skills
 heimdall-skills/
+# Content-addressed runtime copies of the same catalog. Rebuilt from the source
+# catalog and recorded by hash in each benchmark mode configuration.
+benchmarking/catalog-snapshots/
 
 var/mlruns/
 var/eval-site/

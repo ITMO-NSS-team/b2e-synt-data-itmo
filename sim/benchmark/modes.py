@@ -8,6 +8,7 @@ import re
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Iterator
 
 from heimdall.skills.registry import EXTENSIONS, Registry
 from sim.fingerprint import VALID_LATENCY_PROFILES
@@ -70,9 +71,32 @@ class ModeConfig:
     generated_skills_hash: str | None
     generated_skill_names: tuple[str, ...]
     common: CommonConditions
+    skills_enabled: bool = True
+    is_mock: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ModeConfigs:
+    skills_disabled: ModeConfig
+    heimdall_skills: ModeConfig
+    generated_skill: ModeConfig
+
+    def __post_init__(self) -> None:
+        for mode, expected in (
+            (self.skills_disabled, BenchmarkMode.SKILLS_DISABLED),
+            (self.heimdall_skills, BenchmarkMode.HEIMDALL_SKILLS),
+            (self.generated_skill, BenchmarkMode.GENERATED_SKILL),
+        ):
+            if mode.name != expected.value:
+                raise ValueError("mode key/name mismatch")
+
+    def __iter__(self) -> Iterator[ModeConfig]:
+        yield self.skills_disabled
+        yield self.heimdall_skills
+        yield self.generated_skill
 
 
 def _skill_files(root: Path) -> list[Path]:
@@ -110,57 +134,81 @@ def _loaded_registry(root: Path) -> Registry:
 def build_modes(
     common: CommonConditions,
     base_catalog_path: str | Path,
-    generated_skills_path: str | Path,
-) -> dict[str, ModeConfig]:
-    """Pin Heimdall's standard catalog and the additive generated overlay."""
+    generated_skills_path: str | Path | None = None,
+    *,
+    snapshots_root: str | Path | None = None,
+) -> ModeConfigs:
+    """Pin a standard snapshot. Until generated skills exist, that mode is a mock."""
     base = Path(base_catalog_path).resolve()
-    generated = Path(generated_skills_path).resolve()
+    if snapshots_root is not None:
+        from .catalog_snapshots import snapshot_catalog
+        base = snapshot_catalog(base, snapshots_root)
     standard = _loaded_registry(base)
-    overlay = _loaded_registry(generated)
     if not _skill_files(base):
         raise ValueError("standard catalog is empty")
-    if not _skill_files(generated):
-        raise ValueError("generated_skill mode requires at least one generated skill")
-    names = tuple(overlay.active())
-    if len(names) != len(overlay.all_names()):
-        raise ValueError("generated skills must be active")
-    collisions = set(standard.all_names()) & set(overlay.all_names())
-    if collisions:
-        raise ValueError(f"generated skill names collide with Heimdall: {sorted(collisions)}")
     base_hash = catalog_hash(base)
-    generated_hash = catalog_hash(generated)
-    combined = hashlib.sha256((base_hash + generated_hash).encode("ascii")).hexdigest()
-    return {
-        BenchmarkMode.SKILLS_DISABLED.value: ModeConfig(
-            BenchmarkMode.SKILLS_DISABLED.value, DATA_TOOLS, None, None, None, None, (), common),
-        BenchmarkMode.HEIMDALL_SKILLS.value: ModeConfig(
+    generated_path: str | None = None
+    generated_hash: str | None = None
+    combined_path = str(base)
+    combined_hash = base_hash
+    names: tuple[str, ...] = ()
+    is_mock = generated_skills_path is None
+    if generated_skills_path is not None:
+        if snapshots_root is None:
+            raise ValueError("generated skills require snapshots_root for a combined catalog")
+        generated = Path(generated_skills_path).resolve()
+        overlay = _loaded_registry(generated)
+        if not _skill_files(generated):
+            raise ValueError("generated_skill mode requires at least one generated skill")
+        names = tuple(overlay.active())
+        if len(names) != len(overlay.all_names()):
+            raise ValueError("generated skills must be active")
+        collisions = set(standard.all_names()) & set(overlay.all_names())
+        if collisions:
+            raise ValueError(f"generated skill names collide with Heimdall: {sorted(collisions)}")
+        generated_path = str(generated)
+        generated_hash = catalog_hash(generated)
+        from .catalog_snapshots import compose_catalog
+        combined = compose_catalog(base, generated, snapshots_root)
+        combined_path = str(combined)
+        combined_hash = catalog_hash(combined)
+    return ModeConfigs(
+        skills_disabled=ModeConfig(
+            BenchmarkMode.SKILLS_DISABLED.value, DATA_TOOLS, None, None, None, None, (), common,
+            skills_enabled=False),
+        heimdall_skills=ModeConfig(
             BenchmarkMode.HEIMDALL_SKILLS.value, SKILL_TOOLS, str(base), base_hash, None, None, (), common),
-        BenchmarkMode.GENERATED_SKILL.value: ModeConfig(
-            BenchmarkMode.GENERATED_SKILL.value, SKILL_TOOLS, str(base), "sha256:" + combined,
-            str(generated), generated_hash, names, common),
-    }
+        generated_skill=ModeConfig(
+            BenchmarkMode.GENERATED_SKILL.value, SKILL_TOOLS, combined_path, combined_hash,
+            generated_path, generated_hash, names, common, is_mock=is_mock),
+    )
 
 
-def write_mode_config(modes: dict[str, ModeConfig], output: str | Path) -> Path:
+def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
     """Persist all experiment variables explicitly for subsequent preflight."""
-    expected = {mode.value for mode in BenchmarkMode}
-    if set(modes) != expected:
-        raise ValueError(f"mode config requires exactly {sorted(expected)}")
-    if any(key != mode.name for key, mode in modes.items()):
-        raise ValueError("mode key/name mismatch")
-    if len({mode.common for mode in modes.values()}) != 1:
+    if len({mode.common for mode in modes}) != 1:
         raise ValueError("all modes must share identical common conditions")
-    disabled = modes[BenchmarkMode.SKILLS_DISABLED]
-    standard = modes[BenchmarkMode.HEIMDALL_SKILLS]
-    generated = modes[BenchmarkMode.GENERATED_SKILL]
-    if disabled.tool_subset != DATA_TOOLS or any(
-        mode.tool_subset != SKILL_TOOLS for mode in (standard, generated)
+    if modes.skills_disabled.tool_subset != DATA_TOOLS or any(
+        mode.tool_subset != SKILL_TOOLS
+        for mode in (modes.heimdall_skills, modes.generated_skill)
     ):
         raise ValueError("mode tool subsets do not match benchmark contract")
-    if generated.catalog_path != standard.catalog_path:
-        raise ValueError("generated mode must extend the standard Heimdall catalog")
+    if (
+        modes.skills_disabled.skills_enabled
+        or modes.heimdall_skills.skills_enabled is not True
+        or modes.generated_skill.skills_enabled is not True
+    ):
+        raise ValueError("skill channel flags do not match benchmark modes")
+    generated = modes.generated_skill
+    if generated.is_mock and (generated.generated_skills_path is not None or generated.generated_skill_names):
+        raise ValueError("mock generated mode must not contain generated skills")
+    if not generated.is_mock and not generated.generated_skill_names:
+        raise ValueError("generated mode requires target skills")
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"schema_version": "1.0", "modes": {key: modes[key].as_dict() for key in sorted(modes)}}
+    payload = {
+        "schema_version": "1.0",
+        "modes": {mode.name: mode.as_dict() for mode in sorted(modes, key=lambda item: item.name)},
+    }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
