@@ -24,5 +24,5 @@ def catalog_hash(root: str | Path) -> str:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", nargs="?", default=str(Path(__file__).resolve().parents[1] / "heimdall-skills"))
+    parser.add_argument("root", nargs="?", default=str(Path(__file__).resolve().parents[2] / "heimdall-skills"))
     print(catalog_hash(parser.parse_args().root))
