@@ -24,6 +24,15 @@ DEFAULT_MODES = (
 
 @dataclass(frozen=True, slots=True)
 class PreparedBenchmark:
+    """Validated matrix ready to check or run.
+
+    Attributes:
+        cases: Ready cases selected from the CLI path.
+        live: Secret-free stand manifest from ``live_config``.
+        selected_modes: Arms requested on the command line.
+        activator: Pinned-config activator bound to the live refs.
+        checked: Preflight result per ``(case_id, mode)``.
+    """
     cases: list[BenchmarkCase]
     live: dict[str, Any]
     selected_modes: dict[str, ModeConfig]
@@ -37,7 +46,19 @@ def load_cases_path(
     schema_path: str | Path | None = None,
     limit: int | None = None,
 ) -> list[BenchmarkCase]:
-    """Accept a case directory, one authorial JSON, or a derived JSONL suite."""
+    """Accept a case directory, one authorial JSON, or a derived JSONL suite.
+
+    Args:
+        source: Directory of ``*.json``, a single case file, or a ``.jsonl`` suite.
+        schema_path: Optional authorial schema override.
+        limit: If set, keep only the first N ready cases after sort.
+
+    Returns:
+        Ready cases in deterministic order.
+
+    Raises:
+        ValueError: If the path kind is unknown or contains no ready cases.
+    """
     path = Path(source)
     if path.is_dir():
         cases = load_suite(path, on_draft="skip", schema_path=schema_path)
@@ -82,6 +103,17 @@ def _load_jsonl(
 
 
 def load_live_config(path: str | Path) -> dict[str, Any]:
+    """Load and validate a secret-free stand manifest.
+
+    Args:
+        path: JSON written by ``python -m sim.benchmark.live_config``.
+
+    Returns:
+        Manifest with refs, configs, prompt versions and emulator condition.
+
+    Raises:
+        ValueError: If required fields are missing or the schema version differs.
+    """
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     required = {
         "schema_version", "refs", "configs", "prompt_versions",
@@ -98,6 +130,17 @@ def load_live_config(path: str | Path) -> dict[str, Any]:
 
 
 def common_conditions(payload: dict[str, Any]) -> CommonConditions:
+    """Derive shared conditions from pinned skills-on/off configs.
+
+    Args:
+        payload: Validated live-stand manifest.
+
+    Returns:
+        CommonConditions copied into every mode.
+
+    Raises:
+        ValueError: If skills-on/off configs disagree on model, prompt or code policy.
+    """
     refs = payload["refs"]
     configs = payload["configs"]
     prompts = payload["prompt_versions"]
@@ -128,6 +171,18 @@ def common_conditions(payload: dict[str, Any]) -> CommonConditions:
 
 
 def select_modes(all_modes: Iterable[ModeConfig], names: str) -> dict[str, ModeConfig]:
+    """Pick a named subset of arms, refusing a still-mock generated mode.
+
+    Args:
+        all_modes: Modes produced by ``build_modes``.
+        names: Comma-separated mode names.
+
+    Returns:
+        Ordered mapping of requested name to config.
+
+    Raises:
+        ValueError: If a name is unknown, duplicated, or generated_skill is a mock.
+    """
     requested = [item.strip() for item in names.split(",") if item.strip()]
     if not requested:
         raise ValueError("at least one benchmark mode is required")
@@ -147,7 +202,17 @@ def select_modes(all_modes: Iterable[ModeConfig], names: str) -> dict[str, ModeC
 
 
 def prepare(args: argparse.Namespace) -> PreparedBenchmark:
-    """Validate the complete selected matrix without creating agent sessions."""
+    """Validate the complete selected matrix without creating agent sessions.
+
+    Args:
+        args: Parsed CLI namespace (paths, modes, schema).
+
+    Returns:
+        Cases, live manifest, selected modes, activator and preflight results.
+
+    Raises:
+        ValueError: If cases, stand config or preflight disagree.
+    """
     cases = load_cases_path(
         args.cases, schema_path=args.schema, limit=args.limit,
     )
@@ -222,7 +287,14 @@ def _manifest(
 
 
 def check(args: argparse.Namespace) -> ResultWriter:
-    """Run all preflight checks and persist a report; never call an agent."""
+    """Run all preflight checks and persist a report; never call an agent.
+
+    Args:
+        args: Parsed CLI namespace.
+
+    Returns:
+        Writer whose directory contains ``run-manifest.json`` and ``preflight.json``.
+    """
     prepared = prepare(args)
     eval_id = _eval_id(args, "check")
     writer = ResultWriter(args.results, eval_id)
@@ -249,6 +321,14 @@ def check(args: argparse.Namespace) -> ResultWriter:
 
 
 def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
+    """Execute the prepared matrix against the Compose stand.
+
+    Args:
+        args: Parsed CLI namespace including timeout and repetitions.
+
+    Returns:
+        Pair of run results and the writer that stored them.
+    """
     prepared = prepare(args)
     eval_id = _eval_id(args, "benchmark")
     writer = ResultWriter(args.results, eval_id)
@@ -270,6 +350,11 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
 
 
 def parser() -> argparse.ArgumentParser:
+    """Build the host-side benchmark CLI.
+
+    Returns:
+        Parser for ``python -m sim.benchmark.cli``.
+    """
     result = argparse.ArgumentParser(
         description="Run ready benchmark cases against the local Compose stand."
     )
@@ -294,6 +379,15 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for check-only or live smoke runs.
+
+    Args:
+        argv: Optional argument vector; ``None`` uses ``sys.argv``.
+
+    Returns:
+        ``0`` on a clean check or fully completed runs; ``2`` if preflight
+        failed, a turn did not complete, or a response carried an error.
+    """
     try:
         args = parser().parse_args(argv)
         if args.repetitions < 1:

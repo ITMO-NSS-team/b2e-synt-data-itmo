@@ -1,8 +1,11 @@
-"""Input contracts for the skill benchmark.
+"""Public package surface for the skill benchmark.
 
 Submodules are imported on attribute access so ``python -m sim.benchmark.live_config``
 inside the admin-ui image does not pull jsonschema. That package is on the host
 and in deploy/requirements.txt, but older images may not have it yet.
+
+Attributes:
+    __all__: Names re-exported from submodules on first access.
 """
 from __future__ import annotations
 
@@ -64,6 +67,17 @@ _EXPORTS = {
 
 
 def __getattr__(name: str) -> Any:
+    """Load a public export on first access.
+
+    Args:
+        name: Attribute listed in ``__all__``.
+
+    Returns:
+        The object exported by the owning submodule.
+
+    Raises:
+        AttributeError: If ``name`` is not a public export.
+    """
     module_name = _EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

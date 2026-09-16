@@ -19,6 +19,13 @@ _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 
 
 class BenchmarkMode(str, Enum):
+    """Named experiment arms that share ``CommonConditions``.
+
+    Attributes:
+        SKILLS_DISABLED: Base Heimdall tools only; no skill catalog.
+        HEIMDALL_SKILLS: Standard Heimdall skills plus ``find_skills``/``get_skill``.
+        GENERATED_SKILL: Combined catalog with generated skills; may still be a mock.
+    """
     SKILLS_DISABLED = "skills_disabled"
     HEIMDALL_SKILLS = "heimdall_skills"
     GENERATED_SKILL = "generated_skill"
@@ -26,6 +33,18 @@ class BenchmarkMode(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class CommonConditions:
+    """Shared experimental conditions across all benchmark modes.
+
+    Attributes:
+        model_id: Model identifier under test.
+        temperature: Sampling temperature; must be finite.
+        prompt_registry_version: Pinned prompt ref, e.g. ``system_prompt@1``.
+        snapshot_id: Data corpus id that every case must match.
+        traps_enabled: Whether the emulator injects trap records.
+        latency_profile: Named emulator latency profile.
+        hr_employee_ids: Extra HR-scope employee ids; stored sorted.
+        code_execution: Must stay ``forbidden`` for this benchmark.
+    """
     model_id: str
     temperature: float
     prompt_registry_version: str
@@ -63,6 +82,20 @@ class CommonConditions:
 
 @dataclass(frozen=True, slots=True)
 class ModeConfig:
+    """Complete configuration of one named benchmark arm.
+
+    Attributes:
+        name: Mode name; must match ``BenchmarkMode``.
+        tool_subset: Tools the agent may call in this arm.
+        catalog_path: Snapshot path, or ``None`` when skills are disabled.
+        catalog_hash: Content hash of that snapshot, or ``None``.
+        generated_skills_path: Overlay catalog for generated skills, if any.
+        generated_skills_hash: Content hash of the overlay, if any.
+        generated_skill_names: Active generated skill names.
+        common: Shared conditions copied into every arm.
+        skills_enabled: Whether ``find_skills``/``get_skill`` are in the subset.
+        is_mock: True when generated skills were not supplied.
+    """
     name: str
     tool_subset: tuple[str, ...]
     catalog_path: str | None
@@ -75,11 +108,23 @@ class ModeConfig:
     is_mock: bool = False
 
     def as_dict(self) -> dict:
+        """Serialize this mode for manifests and preflight reports.
+
+        Returns:
+            JSON-ready mapping of every field, including nested ``common``.
+        """
         return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
 class ModeConfigs:
+    """The three standard arms of one experiment.
+
+    Attributes:
+        skills_disabled: Baseline without skills.
+        heimdall_skills: Standard Heimdall catalog.
+        generated_skill: Combined catalog, possibly still a mock.
+    """
     skills_disabled: ModeConfig
     heimdall_skills: ModeConfig
     generated_skill: ModeConfig
@@ -94,6 +139,7 @@ class ModeConfigs:
                 raise ValueError("mode key/name mismatch")
 
     def __iter__(self) -> Iterator[ModeConfig]:
+        """Yield the three arms in fixed order: disabled, Heimdall, generated."""
         yield self.skills_disabled
         yield self.heimdall_skills
         yield self.generated_skill
@@ -109,7 +155,14 @@ def _skill_files(root: Path) -> list[Path]:
 
 
 def catalog_hash(root: str | Path) -> str:
-    """Hash exact relative paths and bytes of skill files, not unrelated docs."""
+    """Hash exact relative paths and bytes of skill files, not unrelated docs.
+
+    Args:
+        root: Skill catalog directory.
+
+    Returns:
+        Canonical ``sha256:<hex>`` digest of skill files in sorted order.
+    """
     base = Path(root).resolve()
     digest = hashlib.sha256()
     for path in _skill_files(base):
@@ -138,7 +191,21 @@ def build_modes(
     *,
     snapshots_root: str | Path | None = None,
 ) -> ModeConfigs:
-    """Pin a standard snapshot. Until generated skills exist, that mode is a mock."""
+    """Pin a standard snapshot. Until generated skills exist, that mode is a mock.
+
+    Args:
+        common: Shared model, prompt, snapshot and emulator conditions.
+        base_catalog_path: Live Heimdall skill catalog to snapshot.
+        generated_skills_path: Optional overlay of generated skills.
+        snapshots_root: Directory for content-addressed catalog copies.
+            Required when ``generated_skills_path`` is set.
+
+    Returns:
+        Three mode configs sharing ``common``.
+
+    Raises:
+        ValueError: If a catalog is empty, invalid, or name-collides.
+    """
     base = Path(base_catalog_path).resolve()
     if snapshots_root is not None:
         from .catalog_snapshots import snapshot_catalog
@@ -185,7 +252,18 @@ def build_modes(
 
 
 def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
-    """Persist all experiment variables explicitly for subsequent preflight."""
+    """Persist all experiment variables explicitly for subsequent preflight.
+
+    Args:
+        modes: The three arms; they must share identical ``common`` conditions.
+        output: Destination JSON path.
+
+    Returns:
+        Path written.
+
+    Raises:
+        ValueError: If tool subsets, skill flags or generated-mode fields drift.
+    """
     if len({mode.common for mode in modes}) != 1:
         raise ValueError("all modes must share identical common conditions")
     if modes.skills_disabled.tool_subset != DATA_TOOLS or any(

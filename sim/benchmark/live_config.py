@@ -21,7 +21,16 @@ def pin_live_configs(
     registry: Registry, *, model_id: str | None = None,
     base_pinner: Callable[[Registry], dict[str, str]] = pin,
 ) -> dict[str, str]:
-    """Pin the benchmark arms, optionally overriding only their model."""
+    """Pin the benchmark arms, optionally overriding only their model.
+
+    Args:
+        registry: Writable agent/prompt/skill registry.
+        model_id: If set, rewrite ``model_id`` on each pinned arm.
+        base_pinner: Creates skills-on/off configs; defaults to ``skill_eval.pin``.
+
+    Returns:
+        Mapping ``skills_on`` / ``skills_off`` to pinned ``name@N`` refs.
+    """
     refs = base_pinner(registry)
     selected_model = (model_id or "").strip()
     if not selected_model:
@@ -48,7 +57,20 @@ def capture_live_config(
     *,
     pinner: Callable[[Registry], dict[str, str]] = pin,
 ) -> dict[str, Any]:
-    """Pin skills-on/off configs and return a secret-free experiment manifest."""
+    """Pin skills-on/off configs and return a secret-free experiment manifest.
+
+    Args:
+        registry: Writable registry inside admin-ui.
+        emulator_config: ``/control/config`` payload from the emulator.
+        pinner: Returns skills-on/off refs; defaults to ``pin``.
+
+    Returns:
+        Manifest with refs, config bodies, prompt versions, skill hash and
+        emulator condition. Secrets are never included.
+
+    Raises:
+        ValueError: If a pinned config is malformed or emulator fields are missing.
+    """
     pinned = pinner(registry)
     refs = {
         BenchmarkMode.SKILLS_DISABLED.value: pinned["skills_off"],
@@ -83,7 +105,18 @@ def capture_live_config(
 
 
 def fetch_json(url: str, *, opener: Callable[..., Any] | None = None) -> dict[str, Any]:
-    """Read one internal JSON endpoint; dependency injection keeps tests offline."""
+    """Read one internal JSON endpoint; dependency injection keeps tests offline.
+
+    Args:
+        url: Absolute URL, typically the emulator control config.
+        opener: Optional ``urlopen``-compatible callable.
+
+    Returns:
+        Parsed JSON object.
+
+    Raises:
+        ValueError: If the body is not a JSON object.
+    """
     if opener is None:
         from urllib.request import urlopen
 
@@ -96,6 +129,10 @@ def fetch_json(url: str, *, opener: Callable[..., Any] | None = None) -> dict[st
 
 
 def main() -> None:
+    """Print the live-stand manifest as JSON to stdout.
+
+    Reads ``B2E_REGISTRY_DB``, ``HEIMDALL_URL`` and optional ``B2E_BENCH_MODEL``.
+    """
     registry_path = os.environ.get("B2E_REGISTRY_DB", "/app/registry/registry.db")
     emulator_url = os.environ.get("HEIMDALL_URL", "http://heimdall-emulator:8081")
     registry = Registry(registry_path)

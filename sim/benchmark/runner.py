@@ -20,6 +20,16 @@ from sim.fingerprint import RunFingerprint
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkRunner:
+    """Run the selected matrix: preflight, one isolated turn, score, write.
+
+    Attributes:
+        eval_id: Prefix for run ids and the results directory name.
+        preflight: Checks one case × mode; must not start an LLM session.
+        activator: Swaps live agent config around each turn.
+        executor: Opens a fresh stand session per sample.
+        writer: Optional sink for responses, scores, traces and summary.
+        scorer_version: Label stored on every score record.
+    """
     eval_id: str
     preflight: Callable[[BenchmarkCase, ModeConfig], PreflightResult]
     activator: ModeActivator
@@ -34,6 +44,19 @@ class BenchmarkRunner:
         *,
         repetitions: int = 1,
     ) -> list[RunResult]:
+        """Execute every case × mode × repetition in a fixed order.
+
+        Args:
+            cases: Ready cases.
+            modes: ``ModeConfigs``, a name→config mapping, or an iterable of configs.
+            repetitions: Independent repeats per cell; must be ``>= 1``.
+
+        Returns:
+            One ``RunResult`` per cell, including skipped preflight statuses.
+
+        Raises:
+            ValueError: If ``repetitions`` is invalid or mode names collide.
+        """
         if repetitions < 1:
             raise ValueError("repetitions must be >= 1")
         selected_modes = _mode_list(modes)
@@ -52,6 +75,17 @@ class BenchmarkRunner:
     def run_one(
         self, case: BenchmarkCase, mode: ModeConfig, repetition: int,
     ) -> RunResult:
+        """Run, skip or fail a single matrix cell.
+
+        Args:
+            case: Authorial case.
+            mode: Arm to activate.
+            repetition: 1-based repeat index.
+
+        Returns:
+            Result with a preflight skip status, ``completed``,
+            ``normalization_pending`` or ``execution_failed``.
+        """
         run_id = f"{self.eval_id}-{case.case_id}-{mode.name}-{repetition:02d}"
         group_id = f"{self.eval_id}-{case.case_id}-{repetition:02d}"
         checked = self.preflight(case, mode)
@@ -161,7 +195,16 @@ def _mode_list(
 def _fingerprint_error(
     checked: PreflightResult, turn: AgentTurn,
 ) -> str | None:
-    """Refuse results produced under conditions other than preflight approved."""
+    """Refuse results produced under conditions other than preflight approved.
+
+    Args:
+        checked: Preflight result that issued the expected fingerprint.
+        turn: Live stand turn.
+
+    Returns:
+        Error string if fingerprints differ or are missing; ``None`` if the
+        turn already failed or fingerprints match.
+    """
     if turn.error:
         return None
     if checked.fingerprint is None:

@@ -19,6 +19,12 @@ _REFUSAL_OUTCOMES = frozenset({"access_control", "missing_skill", "out_of_scope"
 
 @dataclass(frozen=True, slots=True)
 class NormalizedAnswer:
+    """Result of deterministic JSON extraction from a model answer.
+
+    Attributes:
+        value: Object matching the public response schema, or ``None``.
+        error: Why extraction or schema validation failed, or ``None``.
+    """
     value: dict[str, Any] | None
     error: str | None
 
@@ -30,6 +36,14 @@ def normalize_answer(answer: str, response_contract: dict[str, Any]) -> Normaliz
     JSON answer, a fenced JSON object, or the first decodable object embedded
     in prose. An unstructured answer is retained raw but receives no fabricated
     normalized value.
+
+    Args:
+        answer: Raw final text from the agent turn.
+        response_contract: Public contract used to expand the response schema.
+
+    Returns:
+        Parsed object when a candidate matches the schema; otherwise
+        ``value=None`` and a human-readable ``error``.
     """
     validator = Draft202012Validator(response_schema(response_contract))
     parsed: list[dict[str, Any]] = []
@@ -56,7 +70,18 @@ def calculate_metrics(
     normalized: NormalizedAnswer,
     observations: dict[str, Any],
 ) -> dict[str, Any]:
-    """Score one completed run. Aggregate rates are means of these 0/1 values."""
+    """Score one completed run. Aggregate rates are means of these 0/1 values.
+
+    Args:
+        case: Ready authorial case with gold and comparison rules.
+        mode: Arm that produced the turn.
+        normalized: Extracted JSON, or an extraction failure.
+        observations: Trace-derived call counts, errors and timings.
+
+    Returns:
+        Metric map. Accuracy fields are ``0``, ``1`` or ``None`` when the
+        answer could not be normalized or the metric does not apply.
+    """
     actual = normalized.value
     evaluation = case.raw["evaluation_contract"]
     expected_outcome = evaluation["expected_outcome"]
@@ -108,7 +133,16 @@ def _observed_outcome(
     actual: dict[str, Any],
     observations: dict[str, Any],
 ) -> str | None:
-    """Infer the outcome from result and trace without asking the agent to label it."""
+    """Infer the outcome from result and trace without asking the agent to label it.
+
+    Args:
+        category: Authorial case category.
+        actual: Normalized ``{result, message}`` object.
+        observations: Trace facts used for refusal categories.
+
+    Returns:
+        Outcome label, or ``None`` when the traces do not support a label.
+    """
     if actual.get("result") is not None:
         return "answer"
     message = actual.get("message")

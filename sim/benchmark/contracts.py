@@ -17,7 +17,15 @@ PROMPT_RENDERER_VERSION = "benchmark-response-prompt@1"
 
 
 def validate_response_contract(contract: Any) -> None:
-    """Validate the compact, public contract stored in a BenchmarkCase."""
+    """Validate the compact public contract stored in a BenchmarkCase.
+
+    Args:
+        contract: Object with ``protocol_version`` and ``result_schema``.
+
+    Raises:
+        ValueError: If the contract shape or JSON Schema is invalid, or if
+            ``result_schema`` accepts ``null`` (reserved for non-answer outcomes).
+    """
     if not isinstance(contract, dict):
         raise ValueError("response_contract must be an object")
     if set(contract) != {"protocol_version", "result_schema"}:
@@ -42,7 +50,14 @@ def validate_response_contract(contract: Any) -> None:
 
 
 def response_schema(contract: dict[str, Any]) -> dict[str, Any]:
-    """Expand a compact contract into the complete agent response schema."""
+    """Expand a compact contract into the complete agent response schema.
+
+    Args:
+        contract: Validated public response contract.
+
+    Returns:
+        Draft 2020-12 schema requiring ``result`` and ``message``.
+    """
     validate_response_contract(contract)
     result_schema = contract["result_schema"]
     return {
@@ -58,7 +73,14 @@ def response_schema(contract: dict[str, Any]) -> dict[str, Any]:
 
 
 def response_contract_hash(contract: dict[str, Any]) -> str:
-    """Content hash recorded with every rendered request."""
+    """Content hash recorded with every rendered request.
+
+    Args:
+        contract: Public response contract as stored on the case.
+
+    Returns:
+        Canonical ``sha256:<hex>`` digest of the sorted JSON payload.
+    """
     payload = json.dumps(
         contract, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
@@ -66,7 +88,18 @@ def response_contract_hash(contract: dict[str, Any]) -> str:
 
 
 def render_agent_query(query: str, contract: dict[str, Any]) -> str:
-    """Render the exact user message sent to the agent without gold leakage."""
+    """Render the exact user message sent to the agent without gold leakage.
+
+    Args:
+        query: Original business question from the case.
+        contract: Public response contract; evaluation gold is not used.
+
+    Returns:
+        User text with the JSON Schema the agent must satisfy.
+
+    Raises:
+        ValueError: If ``query`` is empty or the contract is invalid.
+    """
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
     schema = response_schema(contract)

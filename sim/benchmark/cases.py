@@ -42,7 +42,15 @@ def _case_schema(schema_path: str) -> _CaseSchema:
 
 
 def resolve_schema_path(schema_path: str | Path | None = None) -> Path:
-    """Use the published case schema unless a caller supplies another file."""
+    """Resolve the authorial case schema path.
+
+    Args:
+        schema_path: Optional schema file. Relative paths are resolved from CWD.
+            ``None`` uses ``DEFAULT_SCHEMA_PATH``.
+
+    Returns:
+        Absolute path of the schema that ``validate_case`` will load.
+    """
     path = Path(schema_path) if schema_path is not None else DEFAULT_SCHEMA_PATH
     if not path.is_absolute():
         path = Path.cwd() / path
@@ -96,7 +104,18 @@ def _validate_evaluation_contract(contract: Any) -> None:
 
 
 def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
-    """Validate the current v3.0 authorial shape; draft may be incomplete."""
+    """Validate the current v3.0 authorial shape.
+
+    Draft cases may omit actor and gold fields. Ready cases must pass
+    ``require_ready`` as well.
+
+    Args:
+        raw: Parsed JSON object for one case.
+        schema_path: Optional override for the published v3 schema.
+
+    Raises:
+        ValueError: If required fields, enums, or nested contracts are invalid.
+    """
     schema = _case_schema(str(resolve_schema_path(schema_path)))
     if not isinstance(raw, dict):
         raise ValueError("case must be a JSON object")
@@ -134,7 +153,15 @@ def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
 
 
 def require_ready(raw: dict[str, Any]) -> None:
-    """Refuse incomplete cases; never fill actor or gold by guessing."""
+    """Refuse incomplete cases; never fill actor or gold by guessing.
+
+    Args:
+        raw: Already structurally validated case object.
+
+    Raises:
+        ValueError: If status is draft, required ready fields are missing, or
+            gold violates the public response contract.
+    """
     if raw["status"] != "ready":
         raise ValueError(f"{raw['case_id']}: draft case is not runnable")
     if (
@@ -177,22 +204,48 @@ def require_ready(raw: dict[str, Any]) -> None:
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkCase:
+    """Validated authorial case loaded from a JSON file.
+
+    Attributes:
+        source_path: Absolute path of the source case file.
+        raw: Parsed case object after schema validation.
+    """
+
     source_path: Path
     raw: dict[str, Any]
 
     @property
     def case_id(self) -> str:
+        """Stable identifier from the authorial JSON."""
         return self.raw["case_id"]
 
     @property
     def status(self) -> str:
+        """Authorial status: ``draft`` or ``ready``."""
         return self.raw["status"]
 
     def require_ready(self) -> None:
+        """Raise if this case is not runnable.
+
+        Raises:
+            ValueError: If actor, contracts or gold are incomplete.
+        """
         require_ready(self.raw)
 
 
 def load_case(path: str | Path, *, schema_path: str | Path | None = None) -> BenchmarkCase:
+    """Load and validate one authorial JSON case.
+
+    Args:
+        path: Path to a ``.json`` case file.
+        schema_path: Optional override for the published v3 schema.
+
+    Returns:
+        Validated case wrapper. Draft files are allowed.
+
+    Raises:
+        ValueError: If the file is not a valid v3 case.
+    """
     source = Path(path).resolve()
     raw = json.loads(source.read_text(encoding="utf-8"))
     validate_case(raw, schema_path=schema_path)
@@ -206,7 +259,20 @@ def load_suite(
     on_draft: str = "skip",
     schema_path: str | Path | None = None,
 ) -> list[BenchmarkCase]:
-    """Select separate JSON cases in deterministic order, without writes."""
+    """Load ready cases from a directory in deterministic order.
+
+    Args:
+        cases_dir: Directory of authorial ``*.json`` files.
+        case_ids: If set, only these ids are returned; unknown ids fail.
+        on_draft: ``skip`` drops drafts, ``error`` refuses them.
+        schema_path: Optional override for the published v3 schema.
+
+    Returns:
+        Ready cases sorted by ``case_id``. Source files are never rewritten.
+
+    Raises:
+        ValueError: If the directory, ids, drafts or case bodies are invalid.
+    """
     if on_draft not in {"skip", "error"}:
         raise ValueError("on_draft must be skip or error")
     root = Path(cases_dir)
@@ -239,7 +305,19 @@ def write_suite_jsonl(
     *,
     schema_path: str | Path | None = None,
 ) -> Path:
-    """Create a derived JSONL suite; source case files stay untouched."""
+    """Write a derived JSONL suite; source case files stay untouched.
+
+    Args:
+        cases: Validated cases to serialize, one JSON object per line.
+        output: Destination ``.jsonl`` path. Must not overwrite a source case.
+        schema_path: Optional override used to re-validate before write.
+
+    Returns:
+        Absolute path of the written suite.
+
+    Raises:
+        ValueError: If the destination is unsafe or the suite has duplicate ids.
+    """
     selected = list(cases)
     destination = Path(output).resolve()
     if destination in {case.source_path for case in selected}:

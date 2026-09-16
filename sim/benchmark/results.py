@@ -9,6 +9,20 @@ from typing import Any, Iterable
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
+    """One matrix cell after preflight, execution and scoring.
+
+    Attributes:
+        run_id: Unique id ``{eval_id}-{case_id}-{mode}-{repetition}``.
+        comparison_group_id: Shared id for the same case × repetition across modes.
+        case_id: Authorial case id.
+        mode: Arm name.
+        repetition: 1-based repeat index.
+        status: ``completed``, ``normalization_pending``, ``execution_failed``,
+            or a preflight skip status.
+        response: Raw stand payload plus case snapshot; ``None`` if skipped.
+        score: Metrics and normalized answer; ``None`` if skipped.
+        trace: Span tree written beside the response, if any.
+    """
     run_id: str
     comparison_group_id: str
     case_id: str
@@ -24,6 +38,15 @@ class ResultWriter:
     """Write each raw response once; scores stay independently reproducible."""
 
     def __init__(self, results_root: str | Path, eval_id: str) -> None:
+        """Create an empty evaluation directory.
+
+        Args:
+            results_root: Parent directory for all evaluations.
+            eval_id: Subdirectory name; must not already contain files.
+
+        Raises:
+            ValueError: If ``results_root/eval_id`` already has content.
+        """
         self.root = Path(results_root).resolve() / eval_id
         if self.root.exists() and any(self.root.iterdir()):
             raise ValueError(f"evaluation output already exists: {self.root}")
@@ -33,6 +56,11 @@ class ResultWriter:
         self.traces.mkdir(parents=True, exist_ok=True)
 
     def write(self, result: RunResult) -> None:
+        """Append one response and score; write the trace file once.
+
+        Args:
+            result: Finished or skipped matrix cell.
+        """
         response = dict(result.response or {})
         if result.trace is not None:
             trace_path = self.traces / f"{result.run_id}.json"
@@ -52,7 +80,17 @@ class ResultWriter:
             _append_jsonl(self.scores_path, result.score)
 
     def write_manifest(self, manifest: dict[str, Any]) -> Path:
-        """Persist the exact requested and live conditions before any run."""
+        """Persist the exact requested and live conditions before any run.
+
+        Args:
+            manifest: Secret-free experiment description.
+
+        Returns:
+            Path of ``run-manifest.json``.
+
+        Raises:
+            ValueError: If a manifest was already written in this directory.
+        """
         path = self.root / "run-manifest.json"
         if path.exists():
             raise ValueError(f"run manifest already exists: {path}")
@@ -60,6 +98,14 @@ class ResultWriter:
         return path
 
     def write_summary(self, results: Iterable[RunResult]) -> Path:
+        """Write aggregate per-mode metrics and pairwise deltas.
+
+        Args:
+            results: All cells from this evaluation.
+
+        Returns:
+            Path of ``summary.json``.
+        """
         summary = summarize_results(results)
         path = self.root / "summary.json"
         path.write_text(_json(summary) + "\n", encoding="utf-8")
@@ -67,6 +113,16 @@ class ResultWriter:
 
 
 def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
+    """Aggregate completed runs by mode and compare overlapping arms.
+
+    Args:
+        results: Cells from one evaluation, including skips.
+
+    Returns:
+        Mapping with ``n_runs``, skip counts, ``by_mode`` means and
+        ``comparisons`` (delta / relative change). Only ``completed`` rows
+        with a score enter the means.
+    """
     rows = list(results)
     complete = [row for row in rows if row.status == "completed" and row.score]
     modes = sorted({row.mode for row in rows})

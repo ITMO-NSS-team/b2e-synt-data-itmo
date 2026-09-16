@@ -16,6 +16,14 @@ _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 
 @dataclass(frozen=True, slots=True)
 class AgentRequest:
+    """Isolated turn request. Gold never appears here.
+
+    Attributes:
+        query: Rendered user message, including the public response schema.
+        employee_id: Runtime actor for Heimdall scope.
+        config_ref: Pinned agent config, e.g. ``agent_config_benchmark_skills_on@2``.
+        metadata: Non-secret run labels copied into the stand session.
+    """
     query: str
     employee_id: str
     config_ref: str
@@ -24,6 +32,17 @@ class AgentRequest:
 
 @dataclass(frozen=True, slots=True)
 class AgentTurn:
+    """Raw outcome of one stand session.
+
+    Attributes:
+        answer: Final model text.
+        stats: Duration, token and tool counters from the stand client.
+        trace: Phoenix-style span tree, if retrieved.
+        error: Transport or missing-trace error; ``None`` on a finished turn.
+        session_id: Stand session id.
+        trace_id: Root trace id, when present.
+        fingerprint: Live experiment fingerprint reported by the agent.
+    """
     answer: str
     stats: dict[str, Any] = field(default_factory=dict)
     trace: dict[str, Any] | None = None
@@ -35,6 +54,12 @@ class AgentTurn:
 
 @dataclass(frozen=True, slots=True)
 class ActivatedMode:
+    """Pinned config actually used for a mode after activation checks.
+
+    Attributes:
+        config_ref: Registry ref the agent will load.
+        catalog_hash: Skill catalog hash for this arm, or ``None``.
+    """
     config_ref: str
     catalog_hash: str | None
 
@@ -42,13 +67,40 @@ class ActivatedMode:
 class SessionExecutor(Protocol):
     """An implementation must open a fresh session for every call."""
 
-    def execute(self, request: AgentRequest) -> AgentTurn: ...
+    def execute(self, request: AgentRequest) -> AgentTurn:
+        """Run one isolated turn.
+
+        Args:
+            request: Query, actor and pinned config for this sample.
+
+        Returns:
+            Answer, stats and optional trace. Transport failures may set
+            ``error`` instead of raising.
+        """
+        ...
 
 
 class ModeActivator(Protocol):
-    def activate(self, mode: ModeConfig) -> ActivatedMode: ...
+    """Swap live agent config (and catalog, if needed) around a turn."""
 
-    def deactivate(self, mode: ModeConfig) -> None: ...
+    def activate(self, mode: ModeConfig) -> ActivatedMode:
+        """Make ``mode`` the live agent configuration.
+
+        Args:
+            mode: Arm to enable.
+
+        Returns:
+            Pinned ref and catalog hash actually in force.
+        """
+        ...
+
+    def deactivate(self, mode: ModeConfig) -> None:
+        """Undo activation. No-op is allowed when the stand is already isolated.
+
+        Args:
+            mode: Arm that was activated.
+        """
+        ...
 
 
 class PinnedConfigActivator:
@@ -64,10 +116,29 @@ class PinnedConfigActivator:
         config_refs: Mapping[str, str],
         config_reader: Callable[[str], dict[str, Any]] | None = None,
     ) -> None:
+        """Bind mode names to already-pinned registry refs.
+
+        Args:
+            config_refs: Mapping from mode name to pinned ``name@N`` ref.
+            config_reader: Loads the live agent body for a ref; required on
+                ``activate`` so tool subset and model can be verified.
+        """
         self._refs = dict(config_refs)
         self._config_reader = config_reader
 
     def activate(self, mode: ModeConfig) -> ActivatedMode:
+        """Verify the pinned live config matches ``mode``.
+
+        Args:
+            mode: Arm to enable.
+
+        Returns:
+            The pinned ref and catalog hash.
+
+        Raises:
+            ValueError: If the ref is missing, tools/model drift, or a
+                non-mock generated mode needs a catalog-mounting activator.
+        """
         ref = self._refs.get(mode.name)
         if not ref or not _PINNED_REF.fullmatch(ref):
             raise ValueError(f"{mode.name}: pinned config_ref is required")
@@ -92,6 +163,11 @@ class PinnedConfigActivator:
         return ActivatedMode(ref, mode.catalog_hash)
 
     def deactivate(self, mode: ModeConfig) -> None:
+        """No-op: pinned configs do not need teardown.
+
+        Args:
+            mode: Arm that was activated; unused.
+        """
         del mode
 
 
@@ -103,10 +179,23 @@ class StandSessionExecutor:
     """
 
     def __init__(self, **stand_options: Any) -> None:
+        """Create the HTTP adapter lazily.
+
+        Args:
+            **stand_options: Keyword arguments for ``sim.skill_eval.stand.StandClient``.
+        """
         from sim.skill_eval.stand import StandClient
         self._stand = StandClient(**stand_options)
 
     def execute(self, request: AgentRequest) -> AgentTurn:
+        """Open a stand session, run one question, map the eval turn back.
+
+        Args:
+            request: Isolated query with no gold fields.
+
+        Returns:
+            Agent turn including trace when the stand can fetch it.
+        """
         from sim.skill_eval.types import EvalCase, SessionSpec
 
         case = EvalCase(
@@ -153,7 +242,15 @@ class StandSessionExecutor:
 
 
 def trace_observations(turn: AgentTurn) -> dict[str, Any]:
-    """Extract routing, call, error and timing facts from a full trace."""
+    """Extract routing, call, error and timing facts from a full trace.
+
+    Args:
+        turn: Completed or failed session, including optional span tree.
+
+    Returns:
+        Observation dict consumed by ``calculate_metrics``: skill names,
+        call counts, HTTP statuses, error codes and timings.
+    """
     spans = list(_span_dicts(turn.trace))
     found: set[str] = set()
     loaded: set[str] = set()

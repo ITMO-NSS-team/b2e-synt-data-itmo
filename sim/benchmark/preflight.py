@@ -23,6 +23,14 @@ _PINNED_VERSION = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 
 @dataclass(frozen=True, slots=True)
 class PreflightResult:
+    """Outcome of checking one case against one mode before any LLM call.
+
+    Attributes:
+        case_id: Authorial case id.
+        mode: Benchmark arm name.
+        status: ``ready``, ``draft_skipped`` or ``mock_skipped``.
+        fingerprint: Experiment fingerprint when status is ``ready``.
+    """
     case_id: str
     mode: str
     status: str  # ready | draft_skipped | mock_skipped
@@ -43,7 +51,18 @@ def _check_query(body: dict, catalog: Catalog, label: str) -> None:
 
 
 def validate_skill_catalog(root: str | Path, model_catalog: Catalog) -> Registry:
-    """Check loading, kind, declared models and all executable query examples."""
+    """Check loading, kind, declared models and all executable query examples.
+
+    Args:
+        root: Skill catalog or content-addressed snapshot directory.
+        model_catalog: Compiled Heimdall model catalog used to compile queries.
+
+    Returns:
+        Loaded skill registry after every recipe and JSON example compiles.
+
+    Raises:
+        ValueError: If a snapshot was mutated or a skill/query is invalid.
+    """
     root = Path(root)
     if (root / "snapshot-manifest.json").exists():
         verify_snapshot(root)
@@ -89,7 +108,24 @@ def preflight_case(
     identity_factory: Callable[..., IdentityIndex] = IdentityIndex,
     schema_path: str | Path | None = None,
 ) -> PreflightResult:
-    """Validate a case x mode. Draft and mock are non-errors but non-runnable."""
+    """Validate a case × mode pair. Draft and mock are non-errors but non-runnable.
+
+    Args:
+        case: Authorial case; draft status is reported, not raised.
+        mode: Arm to check against the case snapshot and catalogs.
+        snapshot_root: Host path of the data corpus (manifest + people).
+        standard_catalog_path: Content-addressed standard skill snapshot.
+        model_catalog_path: Path to ``catalog/snapshot.json``.
+        agent_config_version: Pinned agent config ref used in the fingerprint.
+        identity_factory: Builds ``IdentityIndex``; injectable for tests.
+        schema_path: Optional authorial case schema override.
+
+    Returns:
+        ``ready`` with a fingerprint, or a skip status.
+
+    Raises:
+        ValueError: If a ready case cannot run under this mode or snapshot.
+    """
     validate_case(case.raw, schema_path=schema_path)
     if case.status == "draft":
         return PreflightResult(case.case_id, mode.name, "draft_skipped")
@@ -158,7 +194,16 @@ def preflight_suite(
     modes: ModeConfigs,
     **kwargs: object,
 ) -> list[PreflightResult]:
-    """Deterministic batch check; no LLM and no modification of authorial files."""
+    """Deterministic batch check; no LLM and no modification of authorial files.
+
+    Args:
+        cases: Cases to check, typically already loaded as ready.
+        modes: The three standard arms, or a subset via iteration.
+        **kwargs: Forwarded to ``preflight_case``.
+
+    Returns:
+        One result per case × mode, in case-then-mode order.
+    """
     return [
         preflight_case(case, mode, **kwargs)
         for case in cases

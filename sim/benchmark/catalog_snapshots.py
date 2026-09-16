@@ -41,7 +41,17 @@ def _install(files: dict[Path, Path], snapshots_root: str | Path) -> Path:
 
 
 def verify_snapshot(path: str | Path) -> str:
-    """Refuse changes to a previously pinned snapshot."""
+    """Refuse changes to a previously pinned snapshot.
+
+    Args:
+        path: Snapshot directory containing ``snapshot-manifest.json``.
+
+    Returns:
+        Catalog hash recorded in the manifest.
+
+    Raises:
+        ValueError: If files or bytes no longer match the manifest.
+    """
     root = Path(path)
     manifest = json.loads((root / "snapshot-manifest.json").read_text(encoding="utf-8"))
     actual_files = sorted(p.relative_to(root).as_posix() for p in _skill_files(root))
@@ -53,7 +63,15 @@ def verify_snapshot(path: str | Path) -> str:
 
 
 def snapshot_catalog(source: str | Path, snapshots_root: str | Path) -> Path:
-    """Create or reuse an immutable-by-hash copy; never edit the live catalog."""
+    """Create or reuse an immutable-by-hash copy; never edit the live catalog.
+
+    Args:
+        source: Live skill catalog directory.
+        snapshots_root: Parent directory for content-addressed copies.
+
+    Returns:
+        Snapshot directory named by the catalog hash (without ``sha256:``).
+    """
     source = Path(source).resolve()
     _loaded_registry(source)
     files = {p.relative_to(source): p for p in _skill_files(source)}
@@ -65,7 +83,19 @@ def compose_catalog(
     generated_source: str | Path,
     snapshots_root: str | Path,
 ) -> Path:
-    """Future non-mock mode: copy standard and add generated files atomically."""
+    """Copy the standard snapshot and add generated files atomically.
+
+    Args:
+        standard_snapshot: Already pinned standard catalog snapshot.
+        generated_source: Overlay catalog of generated skills.
+        snapshots_root: Parent directory for the combined snapshot.
+
+    Returns:
+        Combined snapshot directory.
+
+    Raises:
+        ValueError: If skill names or relative paths collide.
+    """
     standard = Path(standard_snapshot).resolve()
     generated = Path(generated_source).resolve()
     verify_snapshot(standard)
