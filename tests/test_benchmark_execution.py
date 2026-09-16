@@ -1,0 +1,99 @@
+"""Unit tests for mode activation and trace-derived observations."""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from sim.benchmark.execution import (
+    AgentTurn, PinnedConfigActivator, trace_observations,
+)
+from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
+
+
+def mode(name: str = "heimdall_skills", *, mock: bool = False) -> ModeConfig:
+    common = CommonConditions(
+        "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
+    )
+    enabled = name != BenchmarkMode.SKILLS_DISABLED
+    generated_names = (
+        ("generated_headcount",)
+        if not mock and name == BenchmarkMode.GENERATED_SKILL else ()
+    )
+    return ModeConfig(
+        name, SKILL_TOOLS if enabled else DATA_TOOLS, None, None, None, None,
+        generated_names, common, skills_enabled=enabled, is_mock=mock,
+    )
+
+
+def _agent_config(tools: tuple[str, ...]) -> dict:
+    return {
+        "model_id": "model",
+        "temperature": 0.0,
+        "tool_subset": list(tools),
+        "code_execution": "forbidden",
+        "conversation_mode": "stateless",
+    }
+
+
+def test_pinned_activator_rejects_floating_refs_and_real_generated_mode() -> None:
+    with pytest.raises(ValueError, match="pinned config_ref"):
+        PinnedConfigActivator({"heimdall_skills": "agent"}).activate(mode())
+    with pytest.raises(ValueError, match="config_reader"):
+        PinnedConfigActivator({"heimdall_skills": "agent@1"}).activate(mode())
+    with pytest.raises(ValueError, match="tool_subset differs"):
+        PinnedConfigActivator(
+            {"skills_disabled": "agent@1"},
+            config_reader=lambda _ref: _agent_config(SKILL_TOOLS),
+        ).activate(mode("skills_disabled"))
+    with pytest.raises(ValueError, match="catalog-mounting"):
+        PinnedConfigActivator(
+            {"generated_skill": "agent@1"},
+            config_reader=lambda _ref: _agent_config(SKILL_TOOLS),
+        ).activate(mode("generated_skill"))
+
+
+def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
+    trace = {"tree": [{
+        "name": "agent.turn",
+        "attributes": {
+            "b2e.turn.duration_ms": 40,
+            "b2e.turn.tool_time_ms": 12,
+        },
+        "children": [
+            {
+                "name": "mcp__heimdall__find_skills",
+                "attributes": {
+                    "tool.name": "mcp__heimdall__find_skills",
+                    "output.value": json.dumps({
+                        "results": [{"name": "generated_headcount"}]
+                    }),
+                },
+            },
+            {
+                "name": "mcp__heimdall__get_skill",
+                "attributes": {
+                    "tool.name": "mcp__heimdall__get_skill",
+                    "input.value": json.dumps({"name": "generated_headcount"}),
+                },
+            },
+            {
+                "name": "heimdall.mcp_query",
+                "status": {"status_code": "ERROR"},
+                "attributes": {
+                    "b2e.heimdall.endpoint": "mcp_query",
+                    "b2e.http.status": 400,
+                },
+            },
+        ],
+    }]}
+    observed = trace_observations(AgentTurn(
+        "", {"tool_calls": 3, "heimdall_calls": 3, "total_tokens": 99,
+             "latency_ms": 55}, trace,
+    ))
+    assert observed["found_skills"] == ["generated_headcount"]
+    assert observed["loaded_skills"] == ["generated_headcount"]
+    assert observed["mcp_query_calls"] == 1
+    assert observed["failed_tool_calls"] == 1
+    assert observed["agent_duration_ms"] == 40
+    assert observed["tool_time_ms"] == 12

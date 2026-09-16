@@ -1,0 +1,302 @@
+"""One isolated agent turn and trace-derived observations.
+
+No gold fields enter this module's request contract.
+"""
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Any, Callable, Mapping, Protocol
+
+from .modes import BenchmarkMode, ModeConfig, catalog_hash
+
+_PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRequest:
+    query: str
+    employee_id: str
+    config_ref: str
+    metadata: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTurn:
+    answer: str
+    stats: dict[str, Any] = field(default_factory=dict)
+    trace: dict[str, Any] | None = None
+    error: str | None = None
+    session_id: str | None = None
+    trace_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActivatedMode:
+    config_ref: str
+    catalog_hash: str | None
+
+
+class SessionExecutor(Protocol):
+    """An implementation must open a fresh session for every call."""
+
+    def execute(self, request: AgentRequest) -> AgentTurn: ...
+
+
+class ModeActivator(Protocol):
+    def activate(self, mode: ModeConfig) -> ActivatedMode: ...
+
+    def deactivate(self, mode: ModeConfig) -> None: ...
+
+
+class PinnedConfigActivator:
+    """Use already-created pinned agent configs.
+
+    This is sufficient for skills_disabled and heimdall_skills, which share
+    the same mounted standard catalog. A future non-mock generated mode needs a
+    deployment-specific activator that mounts its combined catalog first.
+    """
+
+    def __init__(
+        self,
+        config_refs: Mapping[str, str],
+        config_reader: Callable[[str], dict[str, Any]] | None = None,
+    ) -> None:
+        self._refs = dict(config_refs)
+        self._config_reader = config_reader
+
+    def activate(self, mode: ModeConfig) -> ActivatedMode:
+        ref = self._refs.get(mode.name)
+        if not ref or not _PINNED_REF.fullmatch(ref):
+            raise ValueError(f"{mode.name}: pinned config_ref is required")
+        if self._config_reader is None:
+            raise ValueError(f"{mode.name}: config_reader is required to verify actual agent tools")
+        config = self._config_reader(ref)
+        if tuple(config.get("tool_subset") or ()) != mode.tool_subset:
+            raise ValueError(f"{mode.name}: live agent tool_subset differs from mode")
+        if (
+            config.get("model_id") != mode.common.model_id
+            or config.get("temperature") != mode.common.temperature
+            or config.get("code_execution") != mode.common.code_execution
+            or config.get("conversation_mode") != "stateless"
+        ):
+            raise ValueError(f"{mode.name}: live agent behavior differs from mode")
+        if mode.name == BenchmarkMode.GENERATED_SKILL and not mode.is_mock:
+            raise ValueError("generated_skill requires a catalog-mounting ModeActivator")
+        if mode.catalog_path is not None:
+            actual = catalog_hash(mode.catalog_path)
+            if actual != mode.catalog_hash:
+                raise ValueError(f"{mode.name}: catalog changed before activation")
+        return ActivatedMode(ref, mode.catalog_hash)
+
+    def deactivate(self, mode: ModeConfig) -> None:
+        del mode
+
+
+class StandSessionExecutor:
+    """Adapter over the stand client already used by sim.skill_eval.
+
+    Import is lazy: defining and unit-testing the benchmark does not require
+    optional HTTP dependencies or a running stand.
+    """
+
+    def __init__(self, **stand_options: Any) -> None:
+        from sim.skill_eval.stand import StandClient
+        self._stand = StandClient(**stand_options)
+
+    def execute(self, request: AgentRequest) -> AgentTurn:
+        from sim.skill_eval.types import EvalCase, SessionSpec
+
+        case = EvalCase(
+            case_id=request.metadata["case_id"],
+            category="",
+            question=request.query,
+            runtime_actor_employee_id=request.employee_id,
+            expected_skill=None,
+            expected_skill_kind=None,
+            gold={},
+            snapshot_id=None,
+            business_task={},
+            raw={},
+        )
+        turn = self._stand.run(
+            case,
+            SessionSpec(
+                employee_id=request.employee_id,
+                config_ref=request.config_ref,
+                metadata=dict(request.metadata),
+            ),
+        )
+        return AgentTurn(
+            answer=turn.answer,
+            stats={
+                **turn.stats,
+                "heimdall_calls": turn.heimdall_calls,
+                "tool_calls": turn.tool_calls,
+                "total_tokens": turn.total_tokens,
+                "latency_ms": turn.latency_ms,
+            },
+            trace=turn.trace,
+            error=turn.error,
+            session_id=turn.session_id,
+            trace_id=turn.trace_id,
+        )
+
+
+def trace_observations(turn: AgentTurn) -> dict[str, Any]:
+    """Extract routing, call, error and timing facts from a full trace."""
+    spans = list(_span_dicts(turn.trace))
+    found: set[str] = set()
+    loaded: set[str] = set()
+    bridge_mcp = []
+    tool_mcp = []
+    failed_bridge = []
+    failed_tool: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    root_attrs: dict[str, Any] = {}
+    for span in spans:
+        attrs = span.get("attributes") or {}
+        name = _tool_name(span, attrs)
+        if not root_attrs and any(str(key).startswith("b2e.turn.") for key in attrs):
+            root_attrs = attrs
+        arguments = _decode(
+            _attr(attrs, "input.value")
+            or _attr(attrs, "tool.parameters")
+            or _attr(attrs, "tool_parameters")
+        )
+        output = _decode(_attr(attrs, "output.value"))
+        if name == "get_skill" and isinstance(arguments, dict) and arguments.get("name"):
+            loaded.add(str(arguments["name"]))
+        if name == "find_skills":
+            found.update(_skill_names(output))
+        if name == "mcp_query":
+            target = bridge_mcp if _attr(attrs, "b2e.heimdall.endpoint") else tool_mcp
+            target.append(span)
+        if _failed_span(span, attrs) and _is_tool_span(span, attrs):
+            if _attr(attrs, "b2e.heimdall.endpoint"):
+                failed_bridge.append(span)
+            else:
+                failed_tool.append((span, attrs))
+
+    stats = turn.stats
+    return {
+        "found_skills": sorted(found),
+        "loaded_skills": sorted(loaded),
+        "tool_calls": _int(stats.get("tool_calls"), _attr(root_attrs, "b2e.turn.tool_calls")),
+        "heimdall_calls": _int(
+            stats.get("heimdall_calls"), _attr(root_attrs, "b2e.turn.heimdall_calls")
+        ),
+        "mcp_query_calls": len(bridge_mcp or tool_mcp),
+        "failed_tool_calls": (
+            len(failed_bridge)
+            + sum(not _looks_like_heimdall_tool(span, attrs) for span, attrs in failed_tool)
+            if failed_bridge else len(failed_tool)
+        ),
+        "total_tokens": _int(
+            stats.get("total_tokens"), _attr(root_attrs, "llm.token_count.total")
+        ),
+        "latency_ms": _number(stats.get("latency_ms")),
+        "agent_duration_ms": _number(_attr(root_attrs, "b2e.turn.duration_ms")),
+        "tool_time_ms": _number(_attr(root_attrs, "b2e.turn.tool_time_ms")),
+    }
+
+
+def _span_dicts(value: Any):
+    if isinstance(value, dict):
+        if "name" in value or "attributes" in value:
+            yield value
+        for key, child in value.items():
+            if key != "attributes":
+                yield from _span_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _span_dicts(child)
+
+
+def _tool_name(span: dict[str, Any], attrs: dict[str, Any]) -> str:
+    raw = (
+        _attr(attrs, "b2e.heimdall.endpoint")
+        or _attr(attrs, "tool.name")
+        or span.get("name")
+        or ""
+    )
+    return str(raw).split("__")[-1].split(".")[-1]
+
+
+def _is_tool_span(span: dict[str, Any], attrs: dict[str, Any]) -> bool:
+    return bool(
+        _attr(attrs, "b2e.heimdall.endpoint")
+        or _attr(attrs, "tool.name")
+        or str(span.get("name") or "").startswith(("heimdall.", "mcp__"))
+    )
+
+
+def _looks_like_heimdall_tool(span: dict[str, Any], attrs: dict[str, Any]) -> bool:
+    return "heimdall" in str(
+        _attr(attrs, "tool.name") or span.get("name") or ""
+    ).lower()
+
+
+def _failed_span(span: dict[str, Any], attrs: dict[str, Any]) -> bool:
+    status = _attr(attrs, "b2e.http.status")
+    status_code = (span.get("status") or {}).get("status_code")
+    return (
+        (isinstance(status, (int, float)) and status >= 400)
+        or bool(_attr(attrs, "b2e.heimdall.error_code"))
+        or str(status_code or "").upper() == "ERROR"
+    )
+
+
+def _skill_names(value: Any) -> set[str]:
+    names: set[str] = set()
+    if isinstance(value, dict):
+        results = value.get("results")
+        if isinstance(results, list):
+            for item in results:
+                if isinstance(item, dict) and item.get("name"):
+                    names.add(str(item["name"]))
+        for child in value.values():
+            names.update(_skill_names(child))
+    elif isinstance(value, list):
+        for child in value:
+            names.update(_skill_names(child))
+    return names
+
+
+def _decode(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _attr(attributes: dict[str, Any], name: str) -> Any:
+    if name in attributes:
+        return attributes[name]
+    current: Any = attributes
+    for part in name.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _int(*values: Any) -> int:
+    for value in values:
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+    return 0
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
