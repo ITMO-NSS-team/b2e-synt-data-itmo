@@ -1,0 +1,92 @@
+{
+  "schema_version": "2.0",
+  "case_id": "case-0002",
+  "status": "draft",
+  "category": "answerable",
+  "query": "Покажи фактическую численность моей команды по грейдам. Верни по одной строке на каждый грейд.",
+  "source_type": "basket",
+  "source_business_process": "Family 5 — Анализ команды",
+  "employee_id": 3715473,
+  "employee_role": "manager",
+  "snapshot_id": "heimdall-sandbox@6ad3901a05d2ae82",
+  "skill_registry_hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "expected_skills": [
+    "headcount_by_dimension"
+  ],
+  "gold_contract": {
+    "$ref": "../templates/gold_contract.schema.json",
+    "properties": {
+      "rows": {
+        "type": "array",
+        "description": "Строки результата: при outcome=answer верни по одной строке на каждый грейд в выбранной команде. Грейды не должны повторяться; порядок строк не важен. Область команды определяй по запросу пользователя и доступным ему данным. При остальных outcome верни пустой массив.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grade",
+            "employee_count"
+          ],
+          "properties": {
+            "grade": {
+              "type": "integer",
+              "description": "Грейд сотрудников, по которому сгруппирована эта строка результата."
+            },
+            "employee_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Фактическая численность сотрудников данного грейда в выбранной команде: количество записей с fact_flag=1, вычисляемое метрикой fact_count. Ноль является допустимым результатом и не означает отсутствие данных."
+            }
+          }
+        }
+      }
+    }
+  },
+  "gold_answer": {
+    "outcome": "answer",
+    "rows": [
+      {
+        "grade": 7,
+        "employee_count": 0
+      },
+      {
+        "grade": 8,
+        "employee_count": 2
+      },
+      {
+        "grade": 9,
+        "employee_count": 0
+      },
+      {
+        "grade": 10,
+        "employee_count": 3
+      },
+      {
+        "grade": 11,
+        "employee_count": 3
+      },
+      {
+        "grade": 13,
+        "employee_count": 2
+      },
+      {
+        "grade": 14,
+        "employee_count": 1
+      },
+      {
+        "grade": 16,
+        "employee_count": 2
+      },
+      {
+        "grade": 17,
+        "employee_count": 1
+      }
+    ],
+    "comments": "Команда определена как прямые подчинённые (oshs_director_person_id_main) сотрудника с person_id 01dd078b-0e5a-4a54-ab9c-c634e1634783 (табельный 3715473); всего фактическая численность 14. Грейды 7 и 9: записи о подчинённых есть, но фактической численности по ним 0 (fact_count). Витрина anagent.employee_actual_orion_dep для этой роли закрыта (403, только HR), расчёт выполнен через dm_core.employee_actual."
+  },
+  "gold_comparison": {
+    "template": "simple_comparison",
+    "row_key": [
+      "grade"
+    ]
+  }
+}

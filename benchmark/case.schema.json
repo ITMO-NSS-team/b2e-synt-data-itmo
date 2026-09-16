@@ -101,34 +101,68 @@
     },
     "gold_answer": {},
     "gold_comparison": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "ordered",
-        "row_key",
-        "allow_extra_rows",
-        "numeric_absolute_tolerance"
-      ],
-      "properties": {
-        "ordered": {
-          "type": "boolean"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ordered",
+            "row_key",
+            "allow_extra_rows",
+            "numeric_absolute_tolerance"
+          ],
+          "properties": {
+            "ordered": {
+              "type": "boolean"
+            },
+            "row_key": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "allow_extra_rows": {
+              "type": "boolean"
+            },
+            "numeric_absolute_tolerance": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
         },
-        "row_key": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "uniqueItems": true
-        },
-        "allow_extra_rows": {
-          "type": "boolean"
-        },
-        "numeric_absolute_tolerance": {
-          "type": "number",
-          "minimum": 0
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "template"
+          ],
+          "properties": {
+            "template": {
+              "const": "simple_comparison"
+            },
+            "ordered": {
+              "type": "boolean"
+            },
+            "row_key": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "allow_extra_rows": {
+              "type": "boolean"
+            },
+            "numeric_absolute_tolerance": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
         }
-      }
+      ]
     }
   }
 }

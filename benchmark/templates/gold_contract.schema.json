@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outcome",
+    "rows"
+  ],
+  "properties": {
+    "comment": {
+      "type": "string",
+      "description": "Необязательный комментарий: кратко поясни, как получен результат, какие источники, фильтры и расчёты использованы, а также существенные допущения, ограничения, детали или нюансы. Если пояснений нет, поле можно опустить."
+    },
+    "outcome": {
+      "description": "Статус выполнения запроса: answer — ответ получен; no_data — необходимых данных нет; missing_skill — нет подходящего навыка для выполнения задачи; access_control — доступ к необходимым данным запрещён; out_of_scope — задача вне предметной области агента. Выбирай статус по фактическому результату выполнения.",
+      "enum": [
+        "answer",
+        "no_data",
+        "missing_skill",
+        "access_control",
+        "out_of_scope"
+      ]
+    },
+    "rows": {
+      "description": "Строки результата. Состав полей каждой строки уточняется контрактом конкретного кейса. При outcome, отличном от answer, массив должен быть пустым."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "not": {
+              "const": "answer"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rows": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}
