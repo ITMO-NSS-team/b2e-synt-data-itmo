@@ -15,6 +15,7 @@ from .modes import ModeConfig, ModeConfigs
 from .preflight import PreflightResult
 from .results import ResultWriter, RunResult
 from .scoring import calculate_metrics, normalize_answer
+from sim.fingerprint import RunFingerprint
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,16 +87,22 @@ class BenchmarkRunner:
         finally:
             self.activator.deactivate(mode)
 
+        fingerprint_error = _fingerprint_error(checked, turn)
+        effective_error = turn.error or fingerprint_error
         observations = trace_observations(turn)
         normalized = normalize_answer(turn.answer, case.raw["response_contract"])
         metrics = calculate_metrics(case, mode, normalized, observations)
-        if turn.error:
+        if effective_error:
             metrics["answer_accuracy"] = 0
             metrics["exact_match"] = 0
             metrics["outcome_accuracy"] = 0
             if metrics["correct_refusal"] is not None:
                 metrics["correct_refusal"] = 0
-        status = "normalization_pending" if normalized.value is None and not turn.error else "completed"
+        status = (
+            "execution_failed" if effective_error else
+            "normalization_pending" if normalized.value is None else
+            "completed"
+        )
         response = {
             "condition_id": checked.fingerprint.condition_id if checked.fingerprint else None,
             "catalog_hash": activated.catalog_hash,
@@ -111,14 +118,15 @@ class BenchmarkRunner:
                 "prompt_renderer_version": PROMPT_RENDERER_VERSION,
                 "evaluation_contract": case.raw["evaluation_contract"],
             },
-            "response": {"raw_answer": turn.answer, "error": turn.error},
+            "response": {"raw_answer": turn.answer, "error": effective_error},
             "observations": observations,
             "session_id": turn.session_id,
             "trace_id": turn.trace_id,
+            "live_fingerprint": turn.fingerprint,
         }
         reasons = []
-        if turn.error:
-            reasons.append(turn.error)
+        if effective_error:
+            reasons.append(effective_error)
         if normalized.error:
             reasons.append(normalized.error)
         score = {
@@ -148,3 +156,25 @@ def _mode_list(
     if len(names) != len(set(names)):
         raise ValueError("benchmark modes contain duplicate names")
     return sorted(values, key=lambda mode: mode.name)
+
+
+def _fingerprint_error(
+    checked: PreflightResult, turn: AgentTurn,
+) -> str | None:
+    """Refuse results produced under conditions other than preflight approved."""
+    if turn.error:
+        return None
+    if checked.fingerprint is None:
+        return "preflight returned no experiment fingerprint"
+    if turn.fingerprint is None:
+        return "stand session returned no experiment fingerprint"
+    try:
+        live = RunFingerprint.create(**turn.fingerprint)
+    except Exception as exc:
+        return f"invalid stand fingerprint: {exc}"
+    if live != checked.fingerprint:
+        expected = checked.fingerprint.as_dict()
+        actual = live.as_dict()
+        changed = sorted(key for key in expected if expected[key] != actual[key])
+        return "stand fingerprint differs from preflight: " + ", ".join(changed)
+    return None

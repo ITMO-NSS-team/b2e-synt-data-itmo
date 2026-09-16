@@ -16,7 +16,7 @@ from sim.benchmark.runner import BenchmarkRunner
 from sim.fingerprint import RunFingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "benchmarking/cases/case-0001.json"
+EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
 
 
 def ready_case(case_id: str = "case-ready") -> BenchmarkCase:
@@ -108,6 +108,7 @@ class FakeExecutor:
             {"tool_calls": 2, "heimdall_calls": 1, "total_tokens": 321,
              "latency_ms": 1500},
             trace, session_id=f"session-{len(self.requests)}", trace_id="trace-1",
+            fingerprint=fingerprint().as_dict(),
         )
 
 
@@ -172,7 +173,10 @@ def test_unstructured_answer_is_pending_not_counted_as_incorrect() -> None:
     class ProseExecutor:
         def execute(self, request: AgentRequest) -> AgentTurn:
             del request
-            return AgentTurn("В команде пять сотрудников.")
+            return AgentTurn(
+                "В команде пять сотрудников.",
+                fingerprint=fingerprint().as_dict(),
+            )
 
     runner = BenchmarkRunner(
         "eval-1",
@@ -185,6 +189,31 @@ def test_unstructured_answer_is_pending_not_counted_as_incorrect() -> None:
     assert result.status == "normalization_pending"
     assert result.score["metrics"]["answer_accuracy"] is None
     assert summarize_results([result])["n_normalization_pending"] == 1
+
+
+def test_runner_rejects_a_live_fingerprint_different_from_preflight() -> None:
+    class DriftedExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            turn = super().execute(request)
+            drifted = dict(turn.fingerprint)
+            drifted["model_id"] = "another-model"
+            return AgentTurn(
+                turn.answer, turn.stats, turn.trace,
+                session_id=turn.session_id, trace_id=turn.trace_id,
+                fingerprint=drifted,
+            )
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=DriftedExecutor(),
+    )
+    result = runner.run([ready_case()], {"heimdall_skills": mode()})[0]
+    assert result.status == "execution_failed"
+    assert result.response["response"]["error"].endswith("model_id")
+    assert result.score["metrics"]["answer_accuracy"] == 0
 
 
 def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -> None:
@@ -200,6 +229,7 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     response = json.loads(writer.responses_path.read_text(encoding="utf-8"))
     score = json.loads(writer.scores_path.read_text(encoding="utf-8"))
     summary = json.loads((writer.root / "summary.json").read_text(encoding="utf-8"))
+    writer.write_manifest({"schema_version": "1.0", "eval_id": "eval-1"})
     assert response["response"]["raw_answer"]
     assert response["case_snapshot"]["evaluation_contract"]
     assert response["case_snapshot"]["original_query"]
@@ -208,6 +238,7 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     assert (writer.root / response["trace_path"]).is_file()
     assert score["metrics"]["answer_accuracy"] == 1
     assert summary["by_mode"]["heimdall_skills"]["answer_accuracy"] == 1
+    assert (writer.root / "run-manifest.json").is_file()
     with pytest.raises(ValueError, match="already exists"):
         ResultWriter(tmp_path, "eval-1")
     assert summarize_results(results)["n_runs"] == 1

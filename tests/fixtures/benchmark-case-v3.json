@@ -1,0 +1,39 @@
+{
+  "schema_version": "3.0",
+  "case_id": "case-fixture",
+  "status": "ready",
+  "category": "answerable",
+  "query": "Покажи фактическую численность моей команды по грейдам.",
+  "response_contract": {
+    "protocol_version": "1.0",
+    "result_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grade", "employee_count"],
+        "properties": {
+          "grade": {"type": "integer"},
+          "employee_count": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "evaluation_contract": {
+    "expected_outcome": "answer",
+    "gold_result": [{"grade": 10, "employee_count": 3}],
+    "comparison": {
+      "ordered": false,
+      "row_key": ["grade"],
+      "allow_extra_rows": false,
+      "numeric_absolute_tolerance": 0
+    }
+  },
+  "source_type": "test",
+  "source_business_process": "test",
+  "employee_id": "123456",
+  "employee_role": "manager",
+  "snapshot_id": "heimdall-sandbox@test",
+  "skill_registry_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "expected_skills": ["headcount_by_dimension"]
+}

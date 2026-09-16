@@ -6,7 +6,8 @@ import json
 import pytest
 
 from sim.benchmark.execution import (
-    AgentTurn, PinnedConfigActivator, trace_observations,
+    AgentRequest, AgentTurn, PinnedConfigActivator, StandSessionExecutor,
+    trace_observations,
 )
 from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
 
@@ -102,3 +103,29 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     assert observed["mcp_query_rows"] == [0]
     assert observed["agent_duration_ms"] == 40
     assert observed["tool_time_ms"] == 12
+
+
+def test_stand_executor_marks_missing_session_trace_as_error(monkeypatch) -> None:
+    from sim.skill_eval.types import TurnResult
+
+    class TraceMissingStand:
+        def __init__(self, **_options) -> None:
+            pass
+
+        def run(self, _case, _spec) -> TurnResult:
+            return TurnResult(
+                session_id="ses-target", answer="{}", stats={}, trace=None,
+                error=None, retrieved_skills=[], heimdall_calls=0,
+                tool_calls=0, total_tokens=0, latency_ms=1.0,
+                trace_id=None, root_span_id=None,
+            )
+
+    monkeypatch.setattr("sim.skill_eval.stand.StandClient", TraceMissingStand)
+    executor = StandSessionExecutor(trace_attempts=1)
+
+    turn = executor.execute(AgentRequest(
+        query="question", employee_id="1", config_ref="agent@1",
+        metadata={"case_id": "case-1"},
+    ))
+
+    assert turn.error == "trace unavailable for session ses-target"

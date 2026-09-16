@@ -9,7 +9,7 @@ from sim.benchmark.modes import SKILL_TOOLS, BenchmarkMode, CommonConditions, Mo
 from sim.benchmark.scoring import NormalizedAnswer, calculate_metrics, normalize_answer
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "benchmarking/cases/case-0001.json"
+EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
 
 
 def ready_case() -> BenchmarkCase:

@@ -16,7 +16,7 @@ from sim.benchmark.contracts import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "benchmarking/cases/case-0001.json"
+EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
 
 
 def contract() -> dict:

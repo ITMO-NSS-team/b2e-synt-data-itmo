@@ -71,6 +71,11 @@ heimdall-skills/
 # catalog and recorded by hash in each benchmark mode configuration.
 benchmarking/catalog-snapshots/
 benchmarking/cases/
+# Local benchmark runs may include full prompts, answers, traces and HR rows.
+# They are experiment artefacts, not source code; publish them deliberately.
+benchmarking/results/
+var/benchmark-catalog-snapshots/
+var/benchmark-live-config.json
 
 var/mlruns/
 var/eval-site/

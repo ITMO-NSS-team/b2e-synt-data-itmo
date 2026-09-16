@@ -30,6 +30,7 @@ class AgentTurn:
     error: str | None = None
     session_id: str | None = None
     trace_id: str | None = None
+    fingerprint: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,9 +139,16 @@ class StandSessionExecutor:
                 "latency_ms": turn.latency_ms,
             },
             trace=turn.trace,
-            error=turn.error,
+            error=(
+                turn.error
+                or (
+                    f"trace unavailable for session {turn.session_id}"
+                    if turn.session_id and turn.trace is None else None
+                )
+            ),
             session_id=turn.session_id,
             trace_id=turn.trace_id,
+            fingerprint=turn.fingerprint,
         )
 
 

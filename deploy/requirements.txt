@@ -14,3 +14,4 @@ openinference-instrumentation-anthropic==1.1.0
 opentelemetry-sdk==1.44.0
 opentelemetry-exporter-otlp-proto-http==1.44.0
 pyarrow>=17
+jsonschema>=4.21

@@ -1,0 +1,328 @@
+"""Preflight and run benchmark cases against a real Compose stand."""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+from .cases import BenchmarkCase, load_case, load_suite, validate_case
+from .execution import PinnedConfigActivator, StandSessionExecutor
+from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes
+from .preflight import PreflightResult, preflight_case
+from .results import ResultWriter
+from .runner import BenchmarkRunner
+
+DEFAULT_MODES = (
+    BenchmarkMode.SKILLS_DISABLED.value,
+    BenchmarkMode.HEIMDALL_SKILLS.value,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedBenchmark:
+    cases: list[BenchmarkCase]
+    live: dict[str, Any]
+    selected_modes: dict[str, ModeConfig]
+    activator: PinnedConfigActivator
+    checked: dict[tuple[str, str], PreflightResult]
+
+
+def load_cases_path(
+    source: str | Path,
+    *,
+    schema_path: str | Path | None = None,
+    limit: int | None = None,
+) -> list[BenchmarkCase]:
+    """Accept a case directory, one authorial JSON, or a derived JSONL suite."""
+    path = Path(source)
+    if path.is_dir():
+        cases = load_suite(path, on_draft="skip", schema_path=schema_path)
+    elif path.is_file() and path.suffix == ".json":
+        case = load_case(path, schema_path=schema_path)
+        cases = [] if case.status == "draft" else [case]
+    elif path.is_file() and path.suffix == ".jsonl":
+        cases = _load_jsonl(path, schema_path=schema_path)
+    else:
+        raise ValueError(
+            f"cases path must be a directory, .json or .jsonl file: {path}"
+        )
+    if not cases:
+        raise ValueError(f"cases path contains no ready cases: {path}")
+    if limit is not None:
+        if limit < 1:
+            raise ValueError("case limit must be >= 1")
+        cases = cases[:limit]
+    return cases
+
+
+def _load_jsonl(
+    path: Path, *, schema_path: str | Path | None,
+) -> list[BenchmarkCase]:
+    cases: list[BenchmarkCase] = []
+    seen: set[str] = set()
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path}:{line_number}: invalid JSON: {exc}") from exc
+        validate_case(raw, schema_path=schema_path)
+        case = BenchmarkCase(path.resolve(), raw)
+        if case.case_id in seen:
+            raise ValueError(f"duplicate case_id in {path}: {case.case_id}")
+        seen.add(case.case_id)
+        if case.status == "ready":
+            cases.append(case)
+    return sorted(cases, key=lambda item: item.case_id)
+
+
+def load_live_config(path: str | Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    required = {
+        "schema_version", "refs", "configs", "prompt_versions",
+        "skill_registry_hash", "emulator",
+    }
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise ValueError("live stand manifest has missing or unknown fields")
+    if payload["schema_version"] != "1.0":
+        raise ValueError("unsupported live stand manifest version")
+    for field in ("refs", "configs", "prompt_versions", "emulator"):
+        if not isinstance(payload[field], dict):
+            raise ValueError(f"live stand manifest {field} must be an object")
+    return payload
+
+
+def common_conditions(payload: dict[str, Any]) -> CommonConditions:
+    refs = payload["refs"]
+    configs = payload["configs"]
+    prompts = payload["prompt_versions"]
+    required_modes = set(DEFAULT_MODES)
+    if not required_modes <= refs.keys():
+        raise ValueError("live stand manifest has no pinned skills-on/off refs")
+    selected = [configs[refs[name]] for name in DEFAULT_MODES]
+    stable_fields = (
+        "model_id", "temperature", "code_execution", "conversation_mode",
+    )
+    for field in stable_fields:
+        if len({json.dumps(config.get(field), sort_keys=True) for config in selected}) != 1:
+            raise ValueError(f"pinned benchmark configs differ by {field}")
+    prompt_refs = {prompts[refs[name]] for name in DEFAULT_MODES}
+    if len(prompt_refs) != 1:
+        raise ValueError("pinned benchmark configs resolve to different prompts")
+    emulator = payload["emulator"]
+    return CommonConditions(
+        model_id=selected[0]["model_id"],
+        temperature=selected[0]["temperature"],
+        prompt_registry_version=next(iter(prompt_refs)),
+        snapshot_id=emulator["data_snapshot_hash"],
+        traps_enabled=emulator["traps_enabled"],
+        latency_profile=emulator["latency_profile"],
+        hr_employee_ids=tuple(str(value) for value in emulator["hr_employee_ids"]),
+        code_execution=selected[0]["code_execution"],
+    )
+
+
+def select_modes(all_modes: Iterable[ModeConfig], names: str) -> dict[str, ModeConfig]:
+    requested = [item.strip() for item in names.split(",") if item.strip()]
+    if not requested:
+        raise ValueError("at least one benchmark mode is required")
+    if len(requested) != len(set(requested)):
+        raise ValueError("benchmark modes contain duplicates")
+    available = {mode.name: mode for mode in all_modes}
+    unknown = set(requested) - available.keys()
+    if unknown:
+        raise ValueError(f"unknown benchmark modes: {sorted(unknown)}")
+    selected = {name: available[name] for name in requested}
+    generated = selected.get(BenchmarkMode.GENERATED_SKILL.value)
+    if generated is not None and generated.is_mock:
+        raise ValueError(
+            "generated_skill is still a mock; provide and mount a generated catalog first"
+        )
+    return selected
+
+
+def prepare(args: argparse.Namespace) -> PreparedBenchmark:
+    """Validate the complete selected matrix without creating agent sessions."""
+    cases = load_cases_path(
+        args.cases, schema_path=args.schema, limit=args.limit,
+    )
+    live = load_live_config(args.live_config)
+    common = common_conditions(live)
+    if any(case.raw["skill_registry_hash"] != live["skill_registry_hash"] for case in cases):
+        mismatched = [
+            case.case_id for case in cases
+            if case.raw["skill_registry_hash"] != live["skill_registry_hash"]
+        ]
+        raise ValueError(
+            "case skill_registry_hash differs from the live stand for: "
+            + ", ".join(mismatched)
+        )
+    modes = build_modes(
+        common,
+        args.catalog,
+        snapshots_root=args.catalog_snapshots,
+    )
+    selected = select_modes(modes, args.modes)
+    refs = live["refs"]
+    activator = PinnedConfigActivator(
+        {name: refs[name] for name in selected},
+        config_reader=lambda ref: live["configs"][ref],
+    )
+
+    # Validate every case x mode before the first model call.  Runner reuses
+    # these immutable results instead of discovering a bad final case late.
+    checked: dict[tuple[str, str], PreflightResult] = {}
+    for mode in selected.values():
+        activator.activate(mode)
+        activator.deactivate(mode)
+    for case in cases:
+        for mode in selected.values():
+            checked[(case.case_id, mode.name)] = preflight_case(
+                case,
+                mode,
+                snapshot_root=args.data,
+                standard_catalog_path=modes.heimdall_skills.catalog_path,
+                model_catalog_path=args.model_catalog,
+                agent_config_version=refs[mode.name],
+                schema_path=args.schema,
+            )
+
+    return PreparedBenchmark(cases, live, selected, activator, checked)
+
+
+def _eval_id(args: argparse.Namespace, default_prefix: str) -> str:
+    prefix = args.eval_prefix or default_prefix
+    return args.eval_id or (
+        prefix + "-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    )
+
+
+def _manifest(
+    args: argparse.Namespace,
+    prepared: PreparedBenchmark,
+    eval_id: str,
+    *,
+    check_only: bool,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "eval_id": eval_id,
+        "check_only": check_only,
+        "cases_path": str(Path(args.cases).resolve()),
+        "case_ids": [case.case_id for case in prepared.cases],
+        "modes": [mode.as_dict() for mode in prepared.selected_modes.values()],
+        "repetitions": 0 if check_only else args.repetitions,
+        "live_stand": prepared.live,
+    }
+
+
+def check(args: argparse.Namespace) -> ResultWriter:
+    """Run all preflight checks and persist a report; never call an agent."""
+    prepared = prepare(args)
+    eval_id = _eval_id(args, "check")
+    writer = ResultWriter(args.results, eval_id)
+    writer.write_manifest(_manifest(args, prepared, eval_id, check_only=True))
+    report = [
+        {
+            "case_id": result.case_id,
+            "mode": result.mode,
+            "status": result.status,
+            "fingerprint": (
+                result.fingerprint.as_dict() if result.fingerprint else None
+            ),
+            "condition_id": (
+                result.fingerprint.condition_id if result.fingerprint else None
+            ),
+        }
+        for _key, result in sorted(prepared.checked.items())
+    ]
+    (writer.root / "preflight.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return writer
+
+
+def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
+    prepared = prepare(args)
+    eval_id = _eval_id(args, "benchmark")
+    writer = ResultWriter(args.results, eval_id)
+    writer.write_manifest(_manifest(args, prepared, eval_id, check_only=False))
+    runner = BenchmarkRunner(
+        eval_id,
+        preflight=lambda case, mode: prepared.checked[(case.case_id, mode.name)],
+        activator=prepared.activator,
+        executor=StandSessionExecutor(
+            env_file=args.env_file,
+            timeout=args.timeout,
+            trace_attempts=args.trace_attempts,
+        ),
+        writer=writer,
+    )
+    return runner.run(
+        prepared.cases, prepared.selected_modes, repetitions=args.repetitions,
+    ), writer
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(
+        description="Run ready benchmark cases against the local Compose stand."
+    )
+    result.add_argument("--cases", required=True, help="Directory, JSON case, or JSONL suite")
+    result.add_argument("--data", default="data-small", help="Host path to the mounted data snapshot")
+    result.add_argument("--catalog", default="heimdall-skills")
+    result.add_argument("--catalog-snapshots", default="var/benchmark-catalog-snapshots")
+    result.add_argument("--model-catalog", default="catalog/snapshot.json")
+    result.add_argument("--schema", default="benchmarking/schemas/benchmark-case-v3.schema.json")
+    result.add_argument("--live-config", default="var/benchmark-live-config.json")
+    result.add_argument("--results", default="benchmarking/results")
+    result.add_argument("--modes", default=",".join(DEFAULT_MODES))
+    result.add_argument("--limit", type=int, help="Run/check only the first N ready cases")
+    result.add_argument("--repetitions", type=int, default=1)
+    result.add_argument("--eval-id")
+    result.add_argument("--eval-prefix")
+    result.add_argument("--check-only", action="store_true")
+    result.add_argument("--env-file", default="deploy/.env")
+    result.add_argument("--timeout", type=float, default=1800.0)
+    result.add_argument("--trace-attempts", type=int, default=30)
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = parser().parse_args(argv)
+        if args.repetitions < 1:
+            raise ValueError("repetitions must be >= 1")
+        if args.check_only:
+            writer = check(args)
+            print(json.dumps({
+                "results_dir": str(writer.root),
+                "preflight": str(writer.root / "preflight.json"),
+                "agent_calls": 0,
+            }, ensure_ascii=False, indent=2))
+            return 0
+        results, writer = run(args)
+        failures = [
+            item for item in results
+            if item.status != "completed"
+            or (item.response and item.response.get("response", {}).get("error"))
+        ]
+        print(json.dumps({
+            "results_dir": str(writer.root),
+            "runs": len(results),
+            "pipeline_failures": len(failures),
+            "summary": str(writer.root / "summary.json"),
+        }, ensure_ascii=False, indent=2))
+        return 2 if failures else 0
+    except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"benchmark failed before completion: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

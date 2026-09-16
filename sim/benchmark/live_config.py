@@ -1,0 +1,117 @@
+"""Capture the conditions that are actually active in the Compose stand.
+
+This module is executed inside ``admin-ui``: that container owns the writable
+registry and can reach the emulator on the internal network.  The resulting
+JSON is consumed by the host-side benchmark driver; secrets are never included.
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Any, Callable
+
+from sim.registry import Registry
+from sim.skill_eval.pin import pin
+from sim.skills import SkillStore
+
+from .modes import BenchmarkMode
+
+
+def pin_live_configs(
+    registry: Registry, *, model_id: str | None = None,
+    base_pinner: Callable[[Registry], dict[str, str]] = pin,
+) -> dict[str, str]:
+    """Pin the benchmark arms, optionally overriding only their model."""
+    refs = base_pinner(registry)
+    selected_model = (model_id or "").strip()
+    if not selected_model:
+        return refs
+    updated: dict[str, str] = {}
+    for key, ref in refs.items():
+        version, raw = registry.load(ref)
+        body = dict(raw)
+        body["model_id"] = selected_model
+        committed = registry.commit(
+            version.name,
+            "agent",
+            body,
+            actor="benchmark_smoke",
+            note=f"benchmark: model override {selected_model}",
+        )
+        updated[key] = committed.ref
+    return updated
+
+
+def capture_live_config(
+    registry: Registry,
+    emulator_config: dict[str, Any],
+    *,
+    pinner: Callable[[Registry], dict[str, str]] = pin,
+) -> dict[str, Any]:
+    """Pin skills-on/off configs and return a secret-free experiment manifest."""
+    pinned = pinner(registry)
+    refs = {
+        BenchmarkMode.SKILLS_DISABLED.value: pinned["skills_off"],
+        BenchmarkMode.HEIMDALL_SKILLS.value: pinned["skills_on"],
+    }
+    configs: dict[str, dict[str, Any]] = {}
+    prompt_versions: dict[str, str] = {}
+    for ref in refs.values():
+        _version, raw = registry.load(ref)
+        if not isinstance(raw, dict) or not isinstance(raw.get("system_prompt_ref"), str):
+            raise ValueError(f"pinned agent config is malformed: {ref}")
+        prompt_version, _prompt = registry.load(raw["system_prompt_ref"])
+        configs[ref] = raw
+        prompt_versions[ref] = prompt_version.ref
+
+    required = {
+        "data_snapshot_hash", "traps_enabled", "latency_profile",
+        "hr_employee_ids",
+    }
+    missing = required - emulator_config.keys()
+    if missing:
+        raise ValueError(f"emulator condition is incomplete: {sorted(missing)}")
+    condition = {key: emulator_config[key] for key in sorted(required)}
+    return {
+        "schema_version": "1.0",
+        "refs": refs,
+        "configs": configs,
+        "prompt_versions": prompt_versions,
+        "skill_registry_hash": SkillStore(registry).registry_hash(),
+        "emulator": condition,
+    }
+
+
+def fetch_json(url: str, *, opener: Callable[..., Any] | None = None) -> dict[str, Any]:
+    """Read one internal JSON endpoint; dependency injection keeps tests offline."""
+    if opener is None:
+        from urllib.request import urlopen
+
+        opener = urlopen
+    with opener(url, timeout=10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected JSON object from {url}")
+    return payload
+
+
+def main() -> None:
+    registry_path = os.environ.get("B2E_REGISTRY_DB", "/app/registry/registry.db")
+    emulator_url = os.environ.get("HEIMDALL_URL", "http://heimdall-emulator:8081")
+    registry = Registry(registry_path)
+    try:
+        payload = capture_live_config(
+            registry,
+            fetch_json(f"{emulator_url.rstrip('/')}/control/config"),
+            pinner=lambda target: pin_live_configs(
+                target,
+                model_id=os.environ.get("B2E_BENCH_MODEL"),
+            ),
+        )
+    finally:
+        registry.close()
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

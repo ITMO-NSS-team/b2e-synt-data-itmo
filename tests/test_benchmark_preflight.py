@@ -12,7 +12,7 @@ from sim.benchmark.modes import CommonConditions, build_modes
 from sim.benchmark.preflight import preflight_case
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "benchmarking/cases/case-0001.json"
+EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
 SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v3.schema.json"
 MODEL_CATALOG = ROOT / "catalog/snapshot.json"
 EMPTY_HASH = "sha256:" + "0" * 64
@@ -87,6 +87,7 @@ def test_preflight_skips_draft_and_generated_mock_without_llm(tmp_path: Path) ->
     standard = make_catalog(tmp_path / "standard")
     modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
     draft_raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    draft_raw.update({"status": "draft", "employee_id": None, "evaluation_contract": None})
     draft = BenchmarkCase(EXAMPLE, draft_raw)
     draft_result = preflight_case(
         draft, modes.heimdall_skills, snapshot_root=tmp_path / "missing",

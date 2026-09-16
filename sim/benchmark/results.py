@@ -51,6 +51,14 @@ class ResultWriter:
         if result.score is not None:
             _append_jsonl(self.scores_path, result.score)
 
+    def write_manifest(self, manifest: dict[str, Any]) -> Path:
+        """Persist the exact requested and live conditions before any run."""
+        path = self.root / "run-manifest.json"
+        if path.exists():
+            raise ValueError(f"run manifest already exists: {path}")
+        path.write_text(_json(manifest) + "\n", encoding="utf-8")
+        return path
+
     def write_summary(self, results: Iterable[RunResult]) -> Path:
         summary = summarize_results(results)
         path = self.root / "summary.json"

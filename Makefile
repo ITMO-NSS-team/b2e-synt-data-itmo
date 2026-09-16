@@ -13,7 +13,9 @@ PROFILE ?=
 
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
-        rebuild sim-test demo eval-skills eval-deps pin-eval-configs
+        rebuild sim-test demo eval-skills eval-deps pin-eval-configs \
+        benchmark-data-check benchmark-live-config benchmark-check \
+        benchmark-smoke benchmark-run
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -21,7 +23,7 @@ help:
 setup:  ## окружение и зависимости
 	python3 -m venv .venv
 	.venv/bin/pip install -q -U pip
-	.venv/bin/pip install -q numpy pyyaml fastapi "uvicorn[standard]" pytest httpx
+	.venv/bin/pip install -q numpy pyyaml jsonschema fastapi "uvicorn[standard]" pytest httpx
 
 catalog:  ## каталог витрин из спецификации OpenAPI (OPENAPI=путь)
 	$(PY) -m b2e.cli catalog --openapi $(OPENAPI) --overlay catalog --out catalog/snapshot.json
@@ -86,7 +88,7 @@ check-docs:  ## выполнить каждый пример из heimdall-skill
 	$(PY) scripts/check_skill_docs.py --url $(HEIMDALL_URL)
 
 hash-password:  ## хэш для BASIC_AUTH_HASH; открытый пароль никуда не пишется
-	@docker run --rm caddy:2.10-alpine caddy hash-password
+	@docker run --rm -it caddy:2.10-alpine caddy hash-password
 
 openapi:  ## выгрузить OpenAPI b2e-agent и research-api в docs/openapi/
 	$(PY) scripts/export_openapi.py
@@ -126,3 +128,48 @@ eval-skills: pin-eval-configs eval-deps  ## Hydra skill-eval; CATALOG=none|heimd
 		python -m sim.skill_eval \
 			catalog=$(CATALOG) logging=$(LOGGING) \
 			$(EVAL_CASE) ignore_snapshot=$(IGNORE_SNAPSHOT)
+
+# ============================================================ benchmark
+
+CASES ?= benchmarking/cases
+# Compose resolves a relative DATA_DIR against deploy/.  Use the same snapshot
+# by default so the short benchmark commands cannot silently validate one
+# corpus and run against another.  An explicit BENCH_DATA still takes priority.
+DEPLOY_DATA_DIR := $(shell awk -F= '/^DATA_DIR=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
+BENCH_DATA ?= $(if $(DEPLOY_DATA_DIR),$(if $(filter /%,$(DEPLOY_DATA_DIR)),$(DEPLOY_DATA_DIR),deploy/$(DEPLOY_DATA_DIR)),data-small)
+BENCH_MODES ?= skills_disabled,heimdall_skills
+BENCH_REPETITIONS ?= 1
+BENCH_RESULTS ?= benchmarking/results
+BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
+BENCH_EVAL_ID ?=
+BENCH_TIMEOUT ?= 1800
+BENCH_MODEL ?=
+
+benchmark-data-check:  ## убедиться, что локальный снимок данных существует
+	@test -f "$(BENCH_DATA)/manifest.json" || { \
+		echo "нет $(BENCH_DATA)/manifest.json — сначала выполните make seed или задайте BENCH_DATA"; \
+		exit 1; \
+	}
+BENCH_ARGS = --cases "$(CASES)" --data "$(BENCH_DATA)" \
+	--live-config "$(BENCH_LIVE_CONFIG)" --results "$(BENCH_RESULTS)" \
+	--modes "$(BENCH_MODES)" --timeout "$(BENCH_TIMEOUT)"
+
+benchmark-live-config: export DATA_DIR := $(abspath $(BENCH_DATA))
+benchmark-live-config: benchmark-data-check up
+	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))"
+	$(COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
+		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
+
+benchmark-check: benchmark-live-config  ## полный preflight всех ready-кейсов, без вызовов агента
+	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) --check-only --eval-prefix check \
+		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
+
+benchmark-smoke: benchmark-live-config  ## первые два ready-кейса × режимы, один повтор
+	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) --limit 2 --repetitions 1 \
+		--eval-prefix smoke \
+		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
+
+benchmark-run: benchmark-live-config  ## все ready-кейсы × режимы; BENCH_REPETITIONS=N
+	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) \
+		--repetitions "$(BENCH_REPETITIONS)" --eval-prefix benchmark \
+		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)

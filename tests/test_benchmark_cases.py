@@ -10,7 +10,7 @@ import pytest
 from sim.benchmark.cases import load_case, load_suite, validate_case, write_suite_jsonl
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "benchmarking/cases/case-0001.json"
+EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
 SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v3.schema.json"
 
 
@@ -32,17 +32,20 @@ def ready_case(case_id: str = "case-ready") -> dict:
     return raw
 
 
-def test_supplied_example_matches_published_contract_and_is_draft() -> None:
+def test_supplied_example_matches_published_contract_and_is_ready() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     assert set(schema["required"]) == set(schema["properties"])
     case = load_case(EXAMPLE, schema_path=SCHEMA)
-    assert case.case_id == "case-0001"
-    assert case.status == "draft"
-    assert case.raw["employee_id"] is None
-    assert case.raw["evaluation_contract"] is None
+    assert case.case_id == "case-fixture"
+    assert case.status == "ready"
+    assert case.raw["employee_id"] == "123456"
+    assert case.raw["evaluation_contract"]["expected_outcome"] == "answer"
 
     incomplete = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    incomplete["status"] = "draft"
     incomplete["response_contract"] = None
+    incomplete["evaluation_contract"] = None
+    incomplete["employee_id"] = None
     validate_case(incomplete, schema_path=SCHEMA)
 
 
@@ -50,6 +53,7 @@ def test_validation_follows_supplied_schema_path(tmp_path: Path) -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     schema["properties"]["category"]["enum"] = ["only_this"]
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    raw["status"] = "draft"
     path = tmp_path / "schema.json"
     path.write_text(json.dumps(schema), encoding="utf-8")
     with pytest.raises(ValueError, match="unknown category"):
@@ -103,9 +107,13 @@ def test_rejects_invalid_authorial_fields() -> None:
 def test_suite_skips_draft_and_preserves_source_json(tmp_path: Path) -> None:
     cases_dir = tmp_path / "cases"
     cases_dir.mkdir()
-    draft_path = cases_dir / "case-0001.json"
+    draft_path = cases_dir / "case-fixture.json"
     ready_path = cases_dir / "case-ready.json"
-    draft_path.write_bytes(EXAMPLE.read_bytes())
+    draft = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    draft["status"] = "draft"
+    draft["employee_id"] = None
+    draft["evaluation_contract"] = None
+    draft_path.write_text(json.dumps(draft), encoding="utf-8")
     ready_path.write_text(json.dumps(ready_case()), encoding="utf-8")
     source_before = {path: path.read_bytes() for path in (draft_path, ready_path)}
     suite = load_suite(cases_dir, schema_path=SCHEMA)
@@ -114,7 +122,7 @@ def test_suite_skips_draft_and_preserves_source_json(tmp_path: Path) -> None:
     lines = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
     assert [item["case_id"] for item in lines] == ["case-ready"]
     assert {path: path.read_bytes() for path in source_before} == source_before
-    assert load_suite(cases_dir, ["case-0001"], schema_path=SCHEMA) == []
+    assert load_suite(cases_dir, ["case-fixture"], schema_path=SCHEMA) == []
     with pytest.raises(ValueError, match="draft case"):
         load_suite(cases_dir, on_draft="error", schema_path=SCHEMA)
     with pytest.raises(ValueError, match="unknown case_ids"):

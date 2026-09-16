@@ -82,6 +82,7 @@ class StandClient:
                 total_tokens=0, latency_ms=_ms(started),
                 trace_id=None, root_span_id=None,
                 live_snapshot_id=None,
+                fingerprint=None,
             )
         body = session.json()
         session_id = body.get("session_id")
@@ -99,6 +100,7 @@ class StandClient:
                 total_tokens=0, latency_ms=_ms(started),
                 trace_id=None, root_span_id=None,
                 live_snapshot_id=live_snapshot,
+                fingerprint=fingerprint,
             )
         payload = reply.json()
         stats = payload.get("stats") or {}
@@ -118,6 +120,7 @@ class StandClient:
             trace_id=_trace_id(trace),
             root_span_id=root_span_id(trace),
             live_snapshot_id=live_snapshot,
+            fingerprint=fingerprint,
         )
 
     def _wait_trace(self, session_id: str) -> dict[str, Any] | None:
@@ -125,7 +128,9 @@ class StandClient:
         for _ in range(self.trace_attempts):
             last = self._client.get(f"/research/traces/{session_id}")
             if last.status_code == 200:
-                return last.json()
+                payload = last.json()
+                if _trace_contains_session(payload, session_id):
+                    return payload
             time.sleep(1.0)
         return None
 
@@ -147,3 +152,22 @@ def _trace_id(trace: dict[str, Any] | None) -> str | None:
                 or str(context.get("trace_id") or "")
                 or None)
     return None
+
+
+def _trace_contains_session(trace: dict[str, Any], session_id: str) -> bool:
+    """Verify trace ownership instead of trusting the echoed request id."""
+    pending: list[Any] = list(trace.get("tree") or trace.get("spans") or [])
+    while pending:
+        span = pending.pop()
+        if not isinstance(span, dict):
+            continue
+        attrs = span.get("attributes") or {}
+        actual = attrs.get("session.id")
+        if actual is None and isinstance(attrs.get("session"), dict):
+            actual = attrs["session"].get("id")
+        if actual == session_id:
+            return True
+        children = span.get("children") or []
+        if isinstance(children, list):
+            pending.extend(children)
+    return False

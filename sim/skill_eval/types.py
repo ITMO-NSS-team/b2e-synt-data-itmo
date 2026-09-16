@@ -40,6 +40,7 @@ class TurnResult:
     trace_id: str | None
     root_span_id: str | None
     live_snapshot_id: str | None = None
+    fingerprint: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
