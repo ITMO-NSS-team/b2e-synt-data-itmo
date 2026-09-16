@@ -13,7 +13,7 @@ from sim.benchmark.preflight import preflight_case
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "benchmarking/cases/case-0001.json"
-SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v2.schema.json"
+SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v3.schema.json"
 MODEL_CATALOG = ROOT / "catalog/snapshot.json"
 EMPTY_HASH = "sha256:" + "0" * 64
 
@@ -50,9 +50,13 @@ def ready_case(snapshot_id: str = "heimdall-sandbox@test") -> BenchmarkCase:
         "employee_role": "manager",
         "snapshot_id": snapshot_id,
         "skill_registry_hash": EMPTY_HASH,
-        "gold_answer": {
-            "outcome": "answer",
-            "rows": [{"grade": 10, "employee_count": 3}],
+        "evaluation_contract": {
+            "expected_outcome": "answer",
+            "gold_result": [{"grade": 10, "employee_count": 3}],
+            "comparison": {
+                "ordered": False, "row_key": ["grade"],
+                "allow_extra_rows": False, "numeric_absolute_tolerance": 0,
+            },
         },
     })
     return BenchmarkCase(Path("/authorial/case-ready.json"), raw)
@@ -126,8 +130,8 @@ def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:
         "schema_path": SCHEMA,
     }
     bad_gold = ready_case()
-    bad_gold.raw["gold_answer"]["rows"][0]["employee_count"] = -1
-    with pytest.raises(ValueError, match="gold_answer violates"):
+    bad_gold.raw["evaluation_contract"]["gold_result"][0]["employee_count"] = -1
+    with pytest.raises(ValueError, match="evaluation_contract violates"):
         preflight_case(bad_gold, mode, **kwargs)
     bad_role = ready_case()
     bad_role.raw["employee_role"] = "self"

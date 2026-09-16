@@ -153,6 +153,9 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
     tool_mcp = []
     failed_bridge = []
     failed_tool: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    http_statuses: list[int] = []
+    error_codes: list[str] = []
+    mcp_query_rows: list[int] = []
     root_attrs: dict[str, Any] = {}
     for span in spans:
         attrs = span.get("attributes") or {}
@@ -165,6 +168,12 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             or _attr(attrs, "tool_parameters")
         )
         output = _decode(_attr(attrs, "output.value"))
+        status = _attr(attrs, "b2e.http.status")
+        if isinstance(status, (int, float)):
+            http_statuses.append(int(status))
+        error_code = _attr(attrs, "b2e.heimdall.error_code")
+        if error_code:
+            error_codes.append(str(error_code))
         if name == "get_skill" and isinstance(arguments, dict) and arguments.get("name"):
             loaded.add(str(arguments["name"]))
         if name == "find_skills":
@@ -172,6 +181,9 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
         if name == "mcp_query":
             target = bridge_mcp if _attr(attrs, "b2e.heimdall.endpoint") else tool_mcp
             target.append(span)
+            rows = _attr(attrs, "b2e.heimdall.rows")
+            if status is not None and isinstance(rows, (int, float)):
+                mcp_query_rows.append(int(rows))
         if _failed_span(span, attrs) and _is_tool_span(span, attrs):
             if _attr(attrs, "b2e.heimdall.endpoint"):
                 failed_bridge.append(span)
@@ -192,6 +204,9 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             + sum(not _looks_like_heimdall_tool(span, attrs) for span, attrs in failed_tool)
             if failed_bridge else len(failed_tool)
         ),
+        "http_statuses": http_statuses,
+        "error_codes": error_codes,
+        "mcp_query_rows": mcp_query_rows,
         "total_tokens": _int(
             stats.get("total_tokens"), _attr(root_attrs, "llm.token_count.total")
         ),

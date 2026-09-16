@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
-from jsonschema import Draft202012Validator
-
 from heimdall.catalog.model import Catalog
 from heimdall.engine.compile import compile_query
 from heimdall.skills.registry import Registry
@@ -80,14 +78,6 @@ def validate_skill_catalog(root: str | Path, model_catalog: Catalog) -> Registry
     return registry
 
 
-def _check_gold(case: BenchmarkCase) -> None:
-    try:
-        Draft202012Validator.check_schema(case.raw["gold_contract"])
-        Draft202012Validator(case.raw["gold_contract"]).validate(case.raw["gold_answer"])
-    except Exception as exc:
-        raise ValueError(f"{case.case_id}: gold_answer violates gold_contract: {exc}") from exc
-
-
 def preflight_case(
     case: BenchmarkCase,
     mode: ModeConfig,
@@ -104,7 +94,6 @@ def preflight_case(
     if case.status == "draft":
         return PreflightResult(case.case_id, mode.name, "draft_skipped")
     case.require_ready()
-    _check_gold(case)
     if mode.name not in {item.value for item in BenchmarkMode}:
         raise ValueError(f"unknown benchmark mode: {mode.name}")
     if mode.name == BenchmarkMode.SKILLS_DISABLED:

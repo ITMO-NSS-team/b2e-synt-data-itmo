@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
 from .cases import BenchmarkCase
+from .contracts import (
+    PROMPT_RENDERER_VERSION, render_agent_query, response_contract_hash,
+)
 from .execution import (
     AgentRequest, AgentTurn, ModeActivator, SessionExecutor, trace_observations,
 )
@@ -59,8 +62,11 @@ class BenchmarkRunner:
 
         activated = self.activator.activate(mode)
         try:
+            public_contract = case.raw["response_contract"]
+            contract_hash = response_contract_hash(public_contract)
+            rendered_query = render_agent_query(case.raw["query"], public_contract)
             request = AgentRequest(
-                query=case.raw["query"],
+                query=rendered_query,
                 employee_id=case.raw["employee_id"],
                 config_ref=activated.config_ref,
                 metadata={
@@ -69,6 +75,8 @@ class BenchmarkRunner:
                     "mode": mode.name,
                     "run_id": run_id,
                     "comparison_group_id": group_id,
+                    "response_contract_hash": contract_hash,
+                    "prompt_renderer_version": PROMPT_RENDERER_VERSION,
                 },
             )
             try:
@@ -79,7 +87,7 @@ class BenchmarkRunner:
             self.activator.deactivate(mode)
 
         observations = trace_observations(turn)
-        normalized = normalize_answer(turn.answer, case.raw["gold_contract"])
+        normalized = normalize_answer(turn.answer, case.raw["response_contract"])
         metrics = calculate_metrics(case, mode, normalized, observations)
         if turn.error:
             metrics["answer_accuracy"] = 0
@@ -93,14 +101,15 @@ class BenchmarkRunner:
             "catalog_hash": activated.catalog_hash,
             "case_snapshot": {
                 "category": case.raw["category"],
-                "query": case.raw["query"],
+                "original_query": case.raw["query"],
+                "rendered_query": rendered_query,
                 "employee_role": case.raw["employee_role"],
                 "employee_id": case.raw["employee_id"],
-                "expected_outcome": case.raw["gold_answer"]["outcome"],
                 "expected_skills": case.raw["expected_skills"],
-                "gold_answer": case.raw["gold_answer"],
-                "gold_contract": case.raw["gold_contract"],
-                "gold_comparison": case.raw["gold_comparison"],
+                "response_contract": case.raw["response_contract"],
+                "response_contract_hash": contract_hash,
+                "prompt_renderer_version": PROMPT_RENDERER_VERSION,
+                "evaluation_contract": case.raw["evaluation_contract"],
             },
             "response": {"raw_answer": turn.answer, "error": turn.error},
             "observations": observations,

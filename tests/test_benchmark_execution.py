@@ -83,6 +83,8 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
                 "attributes": {
                     "b2e.heimdall.endpoint": "mcp_query",
                     "b2e.http.status": 400,
+                    "b2e.heimdall.error_code": "bad_request",
+                    "b2e.heimdall.rows": 0,
                 },
             },
         ],
@@ -95,5 +97,8 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     assert observed["loaded_skills"] == ["generated_headcount"]
     assert observed["mcp_query_calls"] == 1
     assert observed["failed_tool_calls"] == 1
+    assert observed["http_statuses"] == [400]
+    assert observed["error_codes"] == ["bad_request"]
+    assert observed["mcp_query_rows"] == [0]
     assert observed["agent_duration_ms"] == 40
     assert observed["tool_time_ms"] == 12

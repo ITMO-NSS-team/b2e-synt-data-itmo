@@ -12,14 +12,20 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
-DEFAULT_SCHEMA_PATH = Path("benchmarking/schemas/benchmark-case-v2.schema.json")
+from jsonschema import Draft202012Validator
+
+from .contracts import response_schema, validate_response_contract
+
+DEFAULT_SCHEMA_PATH = Path("benchmarking/schemas/benchmark-case-v3.schema.json")
+_EVALUATION_OUTCOMES = frozenset({
+    "answer", "access_control", "no_data", "missing_skill", "out_of_scope",
+})
 
 
 @dataclass(frozen=True, slots=True)
 class _CaseSchema:
     fields: frozenset[str]
     categories: frozenset[str]
-    comparison_fields: frozenset[str]
     case_id: re.Pattern[str]
     sha256: re.Pattern[str]
 
@@ -30,14 +36,13 @@ def _case_schema(schema_path: str) -> _CaseSchema:
     return _CaseSchema(
         fields=frozenset(contract["required"]),
         categories=frozenset(contract["properties"]["category"]["enum"]),
-        comparison_fields=frozenset(contract["properties"]["gold_comparison"]["required"]),
         case_id=re.compile(contract["properties"]["case_id"]["pattern"]),
         sha256=re.compile(contract["properties"]["skill_registry_hash"]["pattern"]),
     )
 
 
 def resolve_schema_path(schema_path: str | Path | None = None) -> Path:
-    """Use the published v2 schema unless a caller supplies another file."""
+    """Use the published case schema unless a caller supplies another file."""
     path = Path(schema_path) if schema_path is not None else DEFAULT_SCHEMA_PATH
     if not path.is_absolute():
         path = Path.cwd() / path
@@ -50,8 +55,48 @@ def _nonempty(value: Any, field: str) -> str:
     return value
 
 
+def _validate_comparison(comparison: Any) -> None:
+    fields = {
+        "ordered", "row_key", "allow_extra_rows", "numeric_absolute_tolerance",
+    }
+    if not isinstance(comparison, dict) or set(comparison) != fields:
+        raise ValueError("evaluation_contract.comparison has missing or unknown fields")
+    for field in ("ordered", "allow_extra_rows"):
+        if not isinstance(comparison[field], bool):
+            raise ValueError(f"evaluation_contract.comparison.{field} must be boolean")
+    keys = comparison["row_key"]
+    if not isinstance(keys, list) or any(not isinstance(k, str) or not k.strip() for k in keys):
+        raise ValueError("evaluation_contract.comparison.row_key must be an array of strings")
+    if len(keys) != len(set(keys)):
+        raise ValueError("evaluation_contract.comparison.row_key contains duplicates")
+    tolerance = comparison["numeric_absolute_tolerance"]
+    if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or tolerance < 0:
+        raise ValueError(
+            "evaluation_contract.comparison.numeric_absolute_tolerance must be >= 0"
+        )
+
+
+def _validate_evaluation_contract(contract: Any) -> None:
+    if not isinstance(contract, dict):
+        raise ValueError("evaluation_contract must be an object")
+    if set(contract) != {"expected_outcome", "gold_result", "comparison"}:
+        raise ValueError(
+            "evaluation_contract must contain expected_outcome, gold_result and comparison"
+        )
+    if contract["expected_outcome"] not in _EVALUATION_OUTCOMES:
+        raise ValueError("evaluation_contract.expected_outcome is unknown")
+    _validate_comparison(contract["comparison"])
+    if contract["expected_outcome"] == "answer":
+        if contract["gold_result"] is None:
+            raise ValueError("evaluation_contract.gold_result is required for outcome=answer")
+        if contract["comparison"]["row_key"] and not isinstance(contract["gold_result"], list):
+            raise ValueError("comparison.row_key is only valid for array gold_result")
+    elif contract["gold_result"] is not None:
+        raise ValueError("evaluation_contract.gold_result must be null for non-answer outcomes")
+
+
 def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
-    """Validate the current v2.0 authorial shape; draft may be incomplete."""
+    """Validate the current v3.0 authorial shape; draft may be incomplete."""
     schema = _case_schema(str(resolve_schema_path(schema_path)))
     if not isinstance(raw, dict):
         raise ValueError("case must be a JSON object")
@@ -59,8 +104,8 @@ def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
     extra = raw.keys() - schema.fields
     if missing or extra:
         raise ValueError(f"case fields: missing={sorted(missing)}, unknown={sorted(extra)}")
-    if raw["schema_version"] != "2.0":
-        raise ValueError("schema_version must be '2.0'")
+    if raw["schema_version"] != "3.0":
+        raise ValueError("schema_version must be '3.0'")
     if not schema.case_id.fullmatch(_nonempty(raw["case_id"], "case_id")):
         raise ValueError("case_id contains unsafe characters")
     if not isinstance(raw["status"], str) or raw["status"] not in {"draft", "ready"}:
@@ -80,22 +125,10 @@ def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
         raise ValueError("expected_skills must be an array of non-empty strings")
     if len(set(skills)) != len(skills):
         raise ValueError("expected_skills contains duplicates")
-    if not isinstance(raw["gold_contract"], dict) or not raw["gold_contract"]:
-        raise ValueError("gold_contract must be a non-empty JSON Schema object")
-    if raw["gold_answer"] is not None and not isinstance(raw["gold_answer"], dict):
-        raise ValueError("gold_answer must be an object or null")
-    comparison = raw["gold_comparison"]
-    if not isinstance(comparison, dict) or set(comparison) != schema.comparison_fields:
-        raise ValueError("gold_comparison has missing or unknown fields")
-    for field in ("ordered", "allow_extra_rows"):
-        if not isinstance(comparison[field], bool):
-            raise ValueError(f"gold_comparison.{field} must be boolean")
-    keys = comparison["row_key"]
-    if not isinstance(keys, list) or any(not isinstance(k, str) or not k.strip() for k in keys):
-        raise ValueError("gold_comparison.row_key must be an array of strings")
-    tolerance = comparison["numeric_absolute_tolerance"]
-    if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or tolerance < 0:
-        raise ValueError("gold_comparison.numeric_absolute_tolerance must be >= 0")
+    if raw["response_contract"] is not None:
+        validate_response_contract(raw["response_contract"])
+    if raw["evaluation_contract"] is not None:
+        _validate_evaluation_contract(raw["evaluation_contract"])
     if raw["status"] == "ready":
         require_ready(raw)
 
@@ -104,16 +137,42 @@ def require_ready(raw: dict[str, Any]) -> None:
     """Refuse incomplete cases; never fill actor or gold by guessing."""
     if raw["status"] != "ready":
         raise ValueError(f"{raw['case_id']}: draft case is not runnable")
-    if raw["employee_id"] is None or raw["gold_answer"] is None:
-        raise ValueError(f"{raw['case_id']}: ready requires employee_id and gold_answer")
-    gold = raw["gold_answer"]
-    expected = "answer" if raw["category"] == "answerable" else raw["category"]
-    if gold.get("outcome") != expected:
-        raise ValueError(f"{raw['case_id']}: gold_answer.outcome must be {expected!r}")
-    if not isinstance(gold.get("rows"), list):
-        raise ValueError(f"{raw['case_id']}: gold_answer.rows must be an array")
-    if expected != "answer" and gold["rows"]:
-        raise ValueError(f"{raw['case_id']}: non-answer gold rows must be empty")
+    if (
+        raw["employee_id"] is None
+        or raw["response_contract"] is None
+        or raw["evaluation_contract"] is None
+    ):
+        raise ValueError(
+            f"{raw['case_id']}: ready requires employee_id, response_contract and evaluation_contract"
+        )
+    expected = raw["evaluation_contract"]["expected_outcome"]
+    fixed = {
+        "answerable": {"answer"},
+        "access_control": {"access_control"},
+        "no_data": {"no_data"},
+        "out_of_scope": {"out_of_scope"},
+        # A missing ready-made skill may still be solvable with base tools.
+        "missing_skill": {"answer", "missing_skill"},
+    }
+    if expected not in fixed[raw["category"]]:
+        raise ValueError(
+            f"{raw['case_id']}: expected_outcome {expected!r} is incompatible "
+            f"with category {raw['category']!r}"
+        )
+    expected_response = {
+        "result": raw["evaluation_contract"]["gold_result"],
+        "message": None,
+    }
+    errors = list(
+        Draft202012Validator(response_schema(raw["response_contract"])).iter_errors(
+            expected_response
+        )
+    )
+    if errors:
+        raise ValueError(
+            f"{raw['case_id']}: evaluation_contract violates response_contract: "
+            f"{errors[0].message}"
+        )
 
 
 @dataclass(frozen=True, slots=True)

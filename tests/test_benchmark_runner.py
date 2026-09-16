@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from sim.benchmark.cases import BenchmarkCase
+from sim.benchmark.contracts import PROMPT_RENDERER_VERSION, response_contract_hash
 from sim.benchmark.execution import ActivatedMode, AgentRequest, AgentTurn
 from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
 from sim.benchmark.preflight import PreflightResult
@@ -23,12 +24,16 @@ def ready_case(case_id: str = "case-ready") -> BenchmarkCase:
     raw.update({
         "case_id": case_id, "status": "ready", "employee_id": "123",
         "employee_role": "manager", "snapshot_id": "heimdall-sandbox@test",
-        "gold_answer": {
-            "outcome": "answer",
-            "rows": [
+        "evaluation_contract": {
+            "expected_outcome": "answer",
+            "gold_result": [
                 {"grade": 10, "employee_count": 3},
                 {"grade": 11, "employee_count": 2},
             ],
+            "comparison": {
+                "ordered": False, "row_key": ["grade"],
+                "allow_extra_rows": False, "numeric_absolute_tolerance": 0,
+            },
         },
     })
     return BenchmarkCase(Path(f"/authorial/{case_id}.json"), raw)
@@ -78,11 +83,11 @@ class FakeExecutor:
     def execute(self, request: AgentRequest) -> AgentTurn:
         self.requests.append(request)
         answer = json.dumps({
-            "outcome": "answer",
-            "rows": [
+            "result": [
                 {"grade": 11, "employee_count": 2},
                 {"grade": 10, "employee_count": 3},
             ],
+            "message": None,
         })
         trace = {"tree": [{
             "name": "agent.turn",
@@ -119,9 +124,19 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
     assert len(results) == 2
     assert len({request.metadata["run_id"] for request in executor.requests}) == 2
     for request in executor.requests:
-        assert request.query == ready_case().raw["query"]
+        case = ready_case()
+        assert request.query.startswith(case.raw["query"])
+        assert "Формат ответа для автоматической проверки" in request.query
+        assert '"result"' in request.query
+        assert "access_control" not in request.query
+        assert "no_data" not in request.query
+        assert request.metadata["response_contract_hash"] == response_contract_hash(
+            case.raw["response_contract"]
+        )
+        assert request.metadata["prompt_renderer_version"] == PROMPT_RENDERER_VERSION
         assert request.employee_id == "123"
-        assert "gold_answer" not in repr(request)
+        assert "gold_result" not in repr(request)
+        assert "employee_count\": 3" not in repr(request)
         assert "expected_skills" not in repr(request)
     assert activator.activated == ["heimdall_skills", "heimdall_skills"]
     assert activator.deactivated == activator.activated
@@ -186,7 +201,10 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     score = json.loads(writer.scores_path.read_text(encoding="utf-8"))
     summary = json.loads((writer.root / "summary.json").read_text(encoding="utf-8"))
     assert response["response"]["raw_answer"]
-    assert response["case_snapshot"]["gold_answer"]
+    assert response["case_snapshot"]["evaluation_contract"]
+    assert response["case_snapshot"]["original_query"]
+    assert response["case_snapshot"]["rendered_query"]
+    assert response["case_snapshot"]["response_contract_hash"].startswith("sha256:")
     assert (writer.root / response["trace_path"]).is_file()
     assert score["metrics"]["answer_accuracy"] == 1
     assert summary["by_mode"]["heimdall_skills"]["answer_accuracy"] == 1

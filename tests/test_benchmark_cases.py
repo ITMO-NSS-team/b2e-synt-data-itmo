@@ -11,7 +11,7 @@ from sim.benchmark.cases import load_case, load_suite, validate_case, write_suit
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "benchmarking/cases/case-0001.json"
-SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v2.schema.json"
+SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v3.schema.json"
 
 
 def ready_case(case_id: str = "case-ready") -> dict:
@@ -19,9 +19,15 @@ def ready_case(case_id: str = "case-ready") -> dict:
     raw["case_id"] = case_id
     raw["status"] = "ready"
     raw["employee_id"] = "123456"
-    raw["gold_answer"] = {
-        "outcome": "answer",
-        "rows": [{"grade": 10, "employee_count": 3}],
+    raw["evaluation_contract"] = {
+        "expected_outcome": "answer",
+        "gold_result": [{"grade": 10, "employee_count": 3}],
+        "comparison": {
+            "ordered": False,
+            "row_key": ["grade"],
+            "allow_extra_rows": False,
+            "numeric_absolute_tolerance": 0,
+        },
     }
     return raw
 
@@ -33,7 +39,11 @@ def test_supplied_example_matches_published_contract_and_is_draft() -> None:
     assert case.case_id == "case-0001"
     assert case.status == "draft"
     assert case.raw["employee_id"] is None
-    assert case.raw["gold_answer"] is None
+    assert case.raw["evaluation_contract"] is None
+
+    incomplete = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    incomplete["response_contract"] = None
+    validate_case(incomplete, schema_path=SCHEMA)
 
 
 def test_validation_follows_supplied_schema_path(tmp_path: Path) -> None:
@@ -51,15 +61,27 @@ def test_validation_follows_supplied_schema_path(tmp_path: Path) -> None:
 def test_ready_requires_actor_and_gold() -> None:
     raw = ready_case()
     validate_case(raw, schema_path=SCHEMA)
-    for field in ("employee_id", "gold_answer"):
+    for field in ("employee_id", "response_contract", "evaluation_contract"):
         bad = copy.deepcopy(raw)
         bad[field] = None
         with pytest.raises(ValueError, match="ready requires"):
             validate_case(bad, schema_path=SCHEMA)
     bad = copy.deepcopy(raw)
-    bad["gold_answer"]["outcome"] = "no_data"
-    with pytest.raises(ValueError, match="gold_answer.outcome"):
+    bad["evaluation_contract"]["expected_outcome"] = "no_data"
+    bad["evaluation_contract"]["gold_result"] = None
+    with pytest.raises(ValueError, match="incompatible with category"):
         validate_case(bad, schema_path=SCHEMA)
+
+
+def test_missing_skill_can_expect_base_tool_answer_or_honest_refusal() -> None:
+    fallback = ready_case()
+    fallback["category"] = "missing_skill"
+    validate_case(fallback, schema_path=SCHEMA)
+    refusal = copy.deepcopy(fallback)
+    refusal["evaluation_contract"]["expected_outcome"] = "missing_skill"
+    refusal["evaluation_contract"]["gold_result"] = None
+    refusal["evaluation_contract"]["comparison"]["row_key"] = []
+    validate_case(refusal, schema_path=SCHEMA)
 
 
 def test_rejects_invalid_authorial_fields() -> None:

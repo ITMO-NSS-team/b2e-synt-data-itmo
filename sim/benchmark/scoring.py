@@ -10,10 +10,11 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .cases import BenchmarkCase
+from .contracts import response_schema
 from .modes import BenchmarkMode, ModeConfig
 
 _FENCED_JSON = re.compile(r"[\x60]{3}(?:json)?\s*\n(.*?)\n[\x60]{3}", re.DOTALL | re.IGNORECASE)
-_REFUSAL_CATEGORIES = frozenset({"access_control", "missing_skill", "out_of_scope"})
+_REFUSAL_OUTCOMES = frozenset({"access_control", "missing_skill", "out_of_scope"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +23,7 @@ class NormalizedAnswer:
     error: str | None
 
 
-def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAnswer:
+def normalize_answer(answer: str, response_contract: dict[str, Any]) -> NormalizedAnswer:
     """Extract a JSON object and validate it against the case contract.
 
     This deterministic normalizer does not call an LLM. It accepts a direct
@@ -30,7 +31,7 @@ def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAn
     in prose. An unstructured answer is retained raw but receives no fabricated
     normalized value.
     """
-    validator = Draft202012Validator(gold_contract)
+    validator = Draft202012Validator(response_schema(response_contract))
     parsed: list[dict[str, Any]] = []
     seen: set[str] = set()
     for candidate in _json_candidates(answer):
@@ -46,7 +47,7 @@ def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAn
         return NormalizedAnswer(None, "final answer contains no JSON object")
     first_error = next(validator.iter_errors(parsed[0]), None)
     detail = first_error.message if first_error is not None else "no candidate matched"
-    return NormalizedAnswer(None, f"normalized answer violates gold_contract: {detail}")
+    return NormalizedAnswer(None, f"normalized answer violates response_contract: {detail}")
 
 
 def calculate_metrics(
@@ -57,21 +58,30 @@ def calculate_metrics(
 ) -> dict[str, Any]:
     """Score one completed run. Aggregate rates are means of these 0/1 values."""
     actual = normalized.value
-    expected = case.raw["gold_answer"]
-    expected_outcome = expected["outcome"]
-    outcome_accuracy = (
-        int(actual.get("outcome") == expected_outcome) if actual is not None else None
-    )
-    exact_match = (
-        int(_answers_equal(actual, expected, case.raw["gold_comparison"]))
+    evaluation = case.raw["evaluation_contract"]
+    expected_outcome = evaluation["expected_outcome"]
+    observed_outcome = (
+        _observed_outcome(case.raw["category"], actual, observations)
         if actual is not None else None
     )
-    if case.raw["category"] == "answerable":
+    outcome_accuracy = (
+        int(observed_outcome == expected_outcome) if actual is not None else None
+    )
+    exact_match: int | None = None
+    if actual is not None and expected_outcome == "answer":
+        exact_match = int(
+            observed_outcome == "answer" and _results_equal(
+                actual.get("result"),
+                evaluation["gold_result"],
+                evaluation["comparison"],
+            )
+        )
+    if expected_outcome == "answer":
         answer_accuracy = exact_match
     else:
         answer_accuracy = outcome_accuracy
     correct_refusal = (
-        outcome_accuracy if case.raw["category"] in _REFUSAL_CATEGORIES else None
+        outcome_accuracy if expected_outcome in _REFUSAL_OUTCOMES else None
     )
     generated_loaded: int | None = None
     if mode.name == BenchmarkMode.GENERATED_SKILL and not mode.is_mock:
@@ -91,6 +101,31 @@ def calculate_metrics(
         "agent_duration_ms": observations["agent_duration_ms"],
         "tool_time_ms": observations["tool_time_ms"],
     }
+
+
+def _observed_outcome(
+    category: str,
+    actual: dict[str, Any],
+    observations: dict[str, Any],
+) -> str | None:
+    """Infer the outcome from result and trace without asking the agent to label it."""
+    if actual.get("result") is not None:
+        return "answer"
+    message = actual.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return None
+    statuses = set(observations.get("http_statuses") or ())
+    errors = {str(item).lower() for item in observations.get("error_codes") or ()}
+    rows = observations.get("mcp_query_rows") or []
+    if category == "access_control" and (403 in statuses or "forbidden" in errors):
+        return "access_control"
+    if category == "no_data" and rows and all(value == 0 for value in rows):
+        return "no_data"
+    if category == "out_of_scope" and observations.get("heimdall_calls", 0) == 0:
+        return "out_of_scope"
+    if category == "missing_skill" and observations.get("heimdall_calls", 0) > 0:
+        return "missing_skill"
+    return None
 
 
 def _json_candidates(text: str):
@@ -115,17 +150,17 @@ def _json_candidates(text: str):
             yield value
 
 
-def _answers_equal(
-    actual: dict[str, Any],
-    expected: dict[str, Any],
+def _results_equal(
+    actual: Any,
+    expected: Any,
     comparison: dict[str, Any],
 ) -> bool:
-    if actual.get("outcome") != expected.get("outcome"):
-        return False
-    actual_rows = actual.get("rows")
-    expected_rows = expected.get("rows")
-    if not isinstance(actual_rows, list) or not isinstance(expected_rows, list):
-        return False
+    if not isinstance(actual, list) or not isinstance(expected, list):
+        return _value_equal(
+            actual, expected, float(comparison["numeric_absolute_tolerance"])
+        )
+    actual_rows = actual
+    expected_rows = expected
     ordered = comparison["ordered"]
     row_key = comparison["row_key"]
     allow_extra = comparison["allow_extra_rows"]
