@@ -216,6 +216,27 @@ def test_runner_rejects_a_live_fingerprint_different_from_preflight() -> None:
     assert result.score["metrics"]["answer_accuracy"] == 0
 
 
+def test_runner_keeps_the_full_executor_traceback() -> None:
+    class BoomExecutor:
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            del request
+            raise RuntimeError("stand exploded " + ("z" * 80))
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=BoomExecutor(),
+    )
+    result = runner.run([ready_case()], {"heimdall_skills": mode()})[0]
+    error = result.response["response"]["error"]
+    assert result.status == "execution_failed"
+    assert "Traceback (most recent call last)" in error
+    assert "stand exploded " + ("z" * 80) in error
+    assert "RuntimeError" in error
+
+
 def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -> None:
     writer = ResultWriter(tmp_path, "eval-1")
     runner = BenchmarkRunner(

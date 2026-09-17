@@ -95,7 +95,7 @@ class BindMountRestartInstaller(SkillInstaller):
             )
             if result.returncode == 0:
                 return
-            last = (result.stderr or result.stdout or "")[:200]
+            last = result.stderr or result.stdout or ""
             time.sleep(2.0)
         raise RuntimeError(
             f"heimdall-emulator did not recover after restart: {last}")
@@ -149,7 +149,7 @@ def _docker_api(method: str, path: str, *, timeout: int = 60) -> str:
     body = response.read().decode("utf-8")
     conn.close()
     if response.status >= 400:
-        raise RuntimeError(f"docker API {method} {path}: {response.status} {body[:200]}")
+        raise RuntimeError(f"docker API {method} {path}: {response.status} {body}")
     return body
 
 

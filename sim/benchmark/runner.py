@@ -1,6 +1,7 @@
 """Orchestrate preflight, isolated turns, normalization, scoring and output."""
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
@@ -116,8 +117,8 @@ class BenchmarkRunner:
             )
             try:
                 turn = self.executor.execute(request)
-            except Exception as exc:
-                turn = AgentTurn(answer="", error=f"{type(exc).__name__}: {exc}")
+            except Exception:
+                turn = AgentTurn(answer="", error=traceback.format_exc())
         finally:
             self.activator.deactivate(mode)
 
