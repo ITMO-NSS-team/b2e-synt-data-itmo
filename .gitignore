@@ -57,7 +57,7 @@ data-small-notraps/
 .ua/
 *.md
 *.txt
-!docs/benchmark-execution-plan.md
+!docs/benchmark-execution-description.md
 
 # Backups
 *backup*
