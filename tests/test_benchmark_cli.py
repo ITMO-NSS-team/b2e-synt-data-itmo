@@ -2,15 +2,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from sim.benchmark.cli import common_conditions, load_cases_path, select_modes
 from sim.benchmark.modes import CommonConditions, build_modes
-
-ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
+from tests.fixtures.constants import EXAMPLE
 
 
 def live_payload() -> dict:

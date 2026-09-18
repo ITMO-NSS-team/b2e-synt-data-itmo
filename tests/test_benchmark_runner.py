@@ -14,9 +14,7 @@ from sim.benchmark.preflight import PreflightResult
 from sim.benchmark.results import ResultWriter, summarize_results
 from sim.benchmark.runner import BenchmarkRunner
 from sim.fingerprint import RunFingerprint
-
-ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
+from tests.fixtures.constants import EMPTY_HASH, EXAMPLE
 
 
 def ready_case(case_id: str = "case-ready") -> BenchmarkCase:
@@ -57,7 +55,7 @@ def mode(name: str = "heimdall_skills", *, mock: bool = False) -> ModeConfig:
 def fingerprint() -> RunFingerprint:
     return RunFingerprint.create(
         agent_config_version="agent@1", prompt_registry_version="prompt@1",
-        skill_registry_hash="sha256:" + "0" * 64, model_id="model",
+        skill_registry_hash=EMPTY_HASH, model_id="model",
         temperature=0, data_snapshot_hash="heimdall-sandbox@test",
         traps_enabled=True, latency_profile="instant", hr_employee_ids=(),
     )

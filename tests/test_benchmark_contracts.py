@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -14,9 +13,7 @@ from sim.benchmark.contracts import (
     response_schema,
     validate_response_contract,
 )
-
-ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
+from tests.fixtures.constants import EXAMPLE
 
 
 def contract() -> dict:

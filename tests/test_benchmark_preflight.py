@@ -10,12 +10,7 @@ import pytest
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import CommonConditions, build_modes
 from sim.benchmark.preflight import preflight_case
-
-ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
-SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v3.schema.json"
-MODEL_CATALOG = ROOT / "catalog/snapshot.json"
-EMPTY_HASH = "sha256:" + "0" * 64
+from tests.fixtures.constants import EMPTY_HASH, EXAMPLE, MODEL_CATALOG, SCHEMA
 
 
 def skill_yaml(name: str, metric: str = "fact_count") -> str:

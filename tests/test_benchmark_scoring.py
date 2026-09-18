@@ -7,9 +7,7 @@ from pathlib import Path
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
 from sim.benchmark.scoring import NormalizedAnswer, calculate_metrics, normalize_answer
-
-ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
+from tests.fixtures.constants import EXAMPLE
 
 
 def ready_case() -> BenchmarkCase:

@@ -8,10 +8,7 @@ from pathlib import Path
 import pytest
 
 from sim.benchmark.cases import load_case, load_suite, validate_case, write_suite_jsonl
-
-ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "tests/fixtures/benchmark-case-v3.json"
-SCHEMA = ROOT / "benchmarking/schemas/benchmark-case-v3.schema.json"
+from tests.fixtures.constants import EXAMPLE, SCHEMA
 
 
 def ready_case(case_id: str = "case-ready") -> dict:
