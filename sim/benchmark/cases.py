@@ -223,14 +223,6 @@ class BenchmarkCase:
         """Authorial status: ``draft`` or ``ready``."""
         return self.raw["status"]
 
-    def require_ready(self) -> None:
-        """Raise if this case is not runnable.
-
-        Raises:
-            ValueError: If actor, contracts or gold are incomplete.
-        """
-        require_ready(self.raw)
-
 
 def load_case(path: str | Path, *, schema_path: str | Path | None = None) -> BenchmarkCase:
     """Load and validate one authorial JSON case.
@@ -293,7 +285,7 @@ def load_suite(
     for case in selected:
         if case.status == "draft" and on_draft == "skip":
             continue
-        case.require_ready()
+        require_ready(case.raw)
         ready.append(case)
     return ready
 

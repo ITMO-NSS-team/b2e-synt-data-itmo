@@ -13,7 +13,7 @@ from heimdall.skills.registry import Registry
 from sim.emulator.identity import IdentityIndex
 from sim.fingerprint import RunFingerprint
 
-from .cases import BenchmarkCase, validate_case
+from .cases import BenchmarkCase, require_ready, validate_case
 from .catalog_snapshots import verify_snapshot
 from .modes import DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, ModeConfig, ModeConfigs, _loaded_registry
 
@@ -129,7 +129,7 @@ def preflight_case(
     validate_case(case.raw, schema_path=schema_path)
     if case.status == "draft":
         return PreflightResult(case.case_id, mode.name, "draft_skipped")
-    case.require_ready()
+    require_ready(case.raw)
     if mode.name not in {item.value for item in BenchmarkMode}:
         raise ValueError(f"unknown benchmark mode: {mode.name}")
     if mode.name == BenchmarkMode.SKILLS_DISABLED:

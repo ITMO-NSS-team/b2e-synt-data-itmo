@@ -107,14 +107,6 @@ class ModeConfig:
     skills_enabled: bool = True
     is_mock: bool = False
 
-    def as_dict(self) -> dict:
-        """Serialize this mode for manifests and preflight reports.
-
-        Returns:
-            JSON-ready mapping of every field, including nested ``common``.
-        """
-        return asdict(self)
-
 
 @dataclass(frozen=True, slots=True)
 class ModeConfigs:
@@ -286,7 +278,7 @@ def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": "1.0",
-        "modes": {mode.name: mode.as_dict() for mode in sorted(modes, key=lambda item: item.name)},
+        "modes": {mode.name: asdict(mode) for mode in sorted(modes, key=lambda item: item.name)},
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

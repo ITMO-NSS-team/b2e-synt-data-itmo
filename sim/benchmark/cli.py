@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -281,7 +281,7 @@ def _manifest(
         "check_only": check_only,
         "cases_path": str(Path(args.cases).resolve()),
         "case_ids": [case.case_id for case in prepared.cases],
-        "modes": [mode.as_dict() for mode in prepared.selected_modes.values()],
+        "modes": [asdict(mode) for mode in prepared.selected_modes.values()],
         "repetitions": 0 if check_only else args.repetitions,
         "live_stand": prepared.live,
     }
