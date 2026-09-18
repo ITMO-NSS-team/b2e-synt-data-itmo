@@ -75,13 +75,10 @@ class StandClient:
             "metadata": spec.metadata,
         })
         if session.status_code >= 400 or not session.content:
-            return TurnResult(
-                session_id=None, answer="", stats={}, trace=None,
-                error=session.text[:400] or f"session {session.status_code}",
-                retrieved_skills=[], heimdall_calls=0, tool_calls=0,
-                total_tokens=0, latency_ms=_ms(started),
-                trace_id=None, root_span_id=None,
-                live_snapshot_id=None,
+            return self._failed_turn(
+                started=started,
+                error=_http_error_body(
+                    session, empty=f"session {session.status_code}"),
             )
         body = session.json()
         session_id = body.get("session_id")
@@ -92,13 +89,13 @@ class StandClient:
             json={"content": case.question},
         )
         if reply.status_code >= 400:
-            return TurnResult(
-                session_id=session_id, answer="", stats={}, trace=None,
-                error=reply.text[:400],
-                retrieved_skills=[], heimdall_calls=0, tool_calls=0,
-                total_tokens=0, latency_ms=_ms(started),
-                trace_id=None, root_span_id=None,
+            return self._failed_turn(
+                started=started,
+                session_id=session_id,
+                error=_http_error_body(
+                    reply, empty=f"HTTP {reply.status_code}"),
                 live_snapshot_id=live_snapshot,
+                fingerprint=fingerprint,
             )
         payload = reply.json()
         stats = payload.get("stats") or {}
@@ -118,6 +115,7 @@ class StandClient:
             trace_id=_trace_id(trace),
             root_span_id=root_span_id(trace),
             live_snapshot_id=live_snapshot,
+            fingerprint=fingerprint,
         )
 
     def _wait_trace(self, session_id: str) -> dict[str, Any] | None:
@@ -125,12 +123,47 @@ class StandClient:
         for _ in range(self.trace_attempts):
             last = self._client.get(f"/research/traces/{session_id}")
             if last.status_code == 200:
-                return last.json()
+                payload = last.json()
+                if _trace_contains_session(payload, session_id):
+                    return payload
             time.sleep(1.0)
         return None
 
     def phoenix_http(self) -> httpx.Client:
         return self._phoenix_http
+
+    def _failed_turn(
+        self,
+        *,
+        started: float,
+        error: str,
+        session_id: str | None = None,
+        live_snapshot_id: str | None = None,
+        fingerprint: dict[str, Any] | None = None,
+    ) -> TurnResult:
+        """Keep the full HTTP error and the Phoenix trace when a session exists."""
+        trace = self._wait_trace(session_id) if session_id else None
+        return TurnResult(
+            session_id=session_id, answer="", stats={}, trace=trace,
+            error=error,
+            retrieved_skills=retrieved_skills(trace),
+            heimdall_calls=0, tool_calls=0,
+            total_tokens=0, latency_ms=_ms(started),
+            trace_id=_trace_id(trace), root_span_id=root_span_id(trace),
+            live_snapshot_id=live_snapshot_id,
+            fingerprint=fingerprint,
+        )
+
+
+def _http_error_body(response: httpx.Response, *, empty: str) -> str:
+    """Return status plus the complete response body, never a 400-char excerpt."""
+    body = response.text or ""
+    status = f"HTTP {response.status_code}"
+    if not body.strip():
+        return empty
+    if body.startswith(status):
+        return body
+    return f"{status}: {body}"
 
 
 def _ms(started: float) -> float:
@@ -147,3 +180,22 @@ def _trace_id(trace: dict[str, Any] | None) -> str | None:
                 or str(context.get("trace_id") or "")
                 or None)
     return None
+
+
+def _trace_contains_session(trace: dict[str, Any], session_id: str) -> bool:
+    """Verify trace ownership instead of trusting the echoed request id."""
+    pending: list[Any] = list(trace.get("tree") or trace.get("spans") or [])
+    while pending:
+        span = pending.pop()
+        if not isinstance(span, dict):
+            continue
+        attrs = span.get("attributes") or {}
+        actual = attrs.get("session.id")
+        if actual is None and isinstance(attrs.get("session"), dict):
+            actual = attrs["session"].get("id")
+        if actual == session_id:
+            return True
+        children = span.get("children") or []
+        if isinstance(children, list):
+            pending.extend(children)
+    return False

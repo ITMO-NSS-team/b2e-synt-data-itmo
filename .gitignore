@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.DS_Store
+b2e_synt_data.egg-info/PKG-INFO
 # Шаблон, а не перечисление. Перечисление уже подвело: фикстура с новым именем
 # .pytest-e2ereview/ утащила в индекс 1529 файлов корпуса вместе с truth/, потому
 # что её имени не было в списке. Каталог корпуса не кладётся в репозиторий по
@@ -55,6 +57,8 @@ data-small-notraps/
 .ua/
 *.md
 *.txt
+!docs/benchmark-execution-description.md
+!sim/benchmark/prompts/benchmark-response-prompt.txt
 
 # Backups
 *backup*
@@ -64,6 +68,15 @@ data-small-notraps/
 
 # Heimdall skills
 heimdall-skills/
+# Content-addressed runtime copies of the same catalog. Rebuilt from the source
+# catalog and recorded by hash in each benchmark mode configuration.
+benchmarking/catalog-snapshots/
+benchmarking/cases/
+# Local benchmark runs may include full prompts, answers, traces and HR rows.
+# They are experiment artefacts, not source code; publish them deliberately.
+benchmarking/results/
+var/benchmark-catalog-snapshots/
+var/benchmark-live-config.json
 
 var/mlruns/
 var/eval-site/
