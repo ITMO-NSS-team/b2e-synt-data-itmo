@@ -12,7 +12,7 @@ from typing import Any, Iterable
 from .cases import BenchmarkCase, load_case, load_suite, validate_case
 from .execution import PinnedConfigActivator, StandSessionExecutor
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes
-from .path_lib import SCHEMA_RELATIVE
+from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
 from .results import ResultWriter
 from .runner import BenchmarkRunner
@@ -373,7 +373,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--eval-id")
     result.add_argument("--eval-prefix")
     result.add_argument("--check-only", action="store_true")
-    result.add_argument("--env-file", default="deploy/.env")
+    result.add_argument("--env-file", default=ENV_RELATIVE)
     result.add_argument("--timeout", type=float, default=1800.0)
     result.add_argument("--trace-attempts", type=int, default=30)
     return result

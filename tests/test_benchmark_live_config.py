@@ -1,6 +1,11 @@
 """Live stand manifests are captured without starting Docker or an LLM."""
 from __future__ import annotations
 
+import os
+
+import pytest
+
+from sim.benchmark.env import load_env, require_env
 from sim.benchmark.live_config import capture_live_config, pin_live_configs
 from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS
 from sim.registry import Registry
@@ -70,4 +75,30 @@ def test_model_override_is_pinned_without_changing_source_config(tmp_path) -> No
         "light-model"
     }
     registry.close()
+
+
+def test_load_env_reads_local_file_and_process_overrides(tmp_path, monkeypatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        'B2E_REGISTRY_DB="/from-file"\nHEIMDALL_URL=http://from-file:1\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("B2E_REGISTRY_DB", raising=False)
+    monkeypatch.delenv("HEIMDALL_URL", raising=False)
+    load_env(env_file)
+    assert os.getenv("B2E_REGISTRY_DB") == "/from-file"
+    assert os.getenv("HEIMDALL_URL") == "http://from-file:1"
+    monkeypatch.setenv("HEIMDALL_URL", "http://from-process:2")
+    load_env(env_file)
+    assert os.getenv("HEIMDALL_URL") == "http://from-process:2"
+
+
+def test_require_env_refuses_blank_instead_of_docker_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("B2E_REGISTRY_DB", raising=False)
+    with pytest.raises(ValueError, match="B2E_REGISTRY_DB is empty"):
+        require_env("B2E_REGISTRY_DB")
+    monkeypatch.setenv("HEIMDALL_URL", "  ")
+    with pytest.raises(ValueError, match="HEIMDALL_URL is empty"):
+        require_env("HEIMDALL_URL")
+
 

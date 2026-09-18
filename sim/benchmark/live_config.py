@@ -14,6 +14,7 @@ from sim.registry import Registry
 from sim.skill_eval.pin import pin
 from sim.skills import SkillStore
 
+from .env import load_env, require_env
 from .modes import BenchmarkMode
 
 
@@ -131,10 +132,12 @@ def fetch_json(url: str, *, opener: Callable[..., Any] | None = None) -> dict[st
 def main() -> None:
     """Print the live-stand manifest as JSON to stdout.
 
-    Reads ``B2E_REGISTRY_DB``, ``HEIMDALL_URL`` and optional ``B2E_BENCH_MODEL``.
+    Reads ``B2E_REGISTRY_DB``, ``HEIMDALL_URL`` and optional ``B2E_BENCH_MODEL``
+    from local ``deploy/.env``, overlaid by the process environment.
     """
-    registry_path = os.environ.get("B2E_REGISTRY_DB", "/app/registry/registry.db")
-    emulator_url = os.environ.get("HEIMDALL_URL", "http://heimdall-emulator:8081")
+    load_env()
+    registry_path = require_env("B2E_REGISTRY_DB")
+    emulator_url = require_env("HEIMDALL_URL")
     registry = Registry(registry_path)
     try:
         payload = capture_live_config(
@@ -142,7 +145,7 @@ def main() -> None:
             fetch_json(f"{emulator_url.rstrip('/')}/control/config"),
             pinner=lambda target: pin_live_configs(
                 target,
-                model_id=os.environ.get("B2E_BENCH_MODEL"),
+                model_id=(os.getenv("B2E_BENCH_MODEL") or "").strip() or None,
             ),
         )
     finally:

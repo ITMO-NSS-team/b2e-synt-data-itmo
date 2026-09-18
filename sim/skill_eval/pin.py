@@ -28,8 +28,10 @@ def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
 
 
 def main() -> None:
-    import os
-    path = os.environ.get("B2E_REGISTRY_DB", "/app/registry/registry.db")
+    from sim.benchmark.env import load_env, require_env
+
+    load_env()
+    path = require_env("B2E_REGISTRY_DB")
     registry = Registry(path)
     refs = pin(registry)
     print(f"skills_on={refs['skills_on']}")
