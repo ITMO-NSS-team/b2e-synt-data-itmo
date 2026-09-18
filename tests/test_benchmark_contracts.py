@@ -13,6 +13,7 @@ from sim.benchmark.contracts import (
     response_schema,
     validate_response_contract,
 )
+from sim.benchmark.path_lib import RESPONSE_PROMPT_PATH
 from tests.fixtures.constants import EXAMPLE
 
 
@@ -50,6 +51,8 @@ def test_renderer_is_deterministic_and_contains_only_public_information() -> Non
     assert "expected_outcome" not in first
     assert "gold_result" not in first
     assert PROMPT_RENDERER_VERSION == "benchmark-response-prompt@1"
+    assert "{{query}}" in RESPONSE_PROMPT_PATH.read_text(encoding="utf-8")
+    assert "{{schema}}" in RESPONSE_PROMPT_PATH.read_text(encoding="utf-8")
     assert response_contract_hash(contract()).startswith("sha256:")
 
 

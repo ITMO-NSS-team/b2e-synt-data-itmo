@@ -58,6 +58,7 @@ data-small-notraps/
 *.md
 *.txt
 !docs/benchmark-execution-description.md
+!sim/benchmark/prompts/benchmark-response-prompt.txt
 
 # Backups
 *backup*

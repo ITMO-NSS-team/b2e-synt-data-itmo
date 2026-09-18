@@ -12,8 +12,12 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from .path_lib import RESPONSE_PROMPT_PATH
+
 RESPONSE_PROTOCOL_VERSION = "1.0"
 PROMPT_RENDERER_VERSION = "benchmark-response-prompt@1"
+_QUERY_PLACEHOLDER = "{{query}}"
+_SCHEMA_PLACEHOLDER = "{{schema}}"
 
 
 def validate_response_contract(contract: Any) -> None:
@@ -105,14 +109,17 @@ def render_agent_query(query: str, contract: dict[str, Any]) -> str:
     schema = response_schema(contract)
     encoded = json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True)
     return (
-        f"{query.strip()}\n\n"
-        "Формат ответа для автоматической проверки:\n"
-        "В финальном ответе обязательно приведи ровно один JSON-объект по схеме ниже. "
-        "Не помещай этот объект в Markdown-блок. Если системный prompt требует "
-        "дополнительный структурированный хвост, выполни и это требование отдельно.\n"
-        "Если задача выполнена, запиши структурированный результат в result. "
-        "Если результат получить нельзя, верни result: null и кратко объясни "
-        "причину в message. При успешном ответе message может быть null.\n"
-        "Ответ должен соответствовать JSON Schema:\n"
-        f"{encoded}"
+        _response_prompt_template()
+        .replace(_QUERY_PLACEHOLDER, query.strip())
+        .replace(_SCHEMA_PLACEHOLDER, encoded)
     )
+
+
+def _response_prompt_template() -> str:
+    text = RESPONSE_PROMPT_PATH.read_text(encoding="utf-8")
+    if _QUERY_PLACEHOLDER not in text or _SCHEMA_PLACEHOLDER not in text:
+        raise ValueError(
+            f"{RESPONSE_PROMPT_PATH} must contain {_QUERY_PLACEHOLDER} and "
+            f"{_SCHEMA_PLACEHOLDER}"
+        )
+    return text.rstrip("\n")
