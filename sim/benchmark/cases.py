@@ -15,8 +15,7 @@ from typing import Any, Iterable
 from jsonschema import Draft202012Validator
 
 from .contracts import response_schema, validate_response_contract
-
-DEFAULT_SCHEMA_PATH = Path("benchmarking/schemas/benchmark-case-v3.schema.json")
+from .path_lib import DEFAULT_SCHEMA_PATH
 _EVALUATION_OUTCOMES = frozenset({
     "answer", "access_control", "no_data", "missing_skill", "out_of_scope",
 })

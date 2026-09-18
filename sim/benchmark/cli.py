@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from .cases import BenchmarkCase, load_case, load_suite, validate_case
 from .execution import PinnedConfigActivator, StandSessionExecutor
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes
+from .path_lib import SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
 from .results import ResultWriter
 from .runner import BenchmarkRunner
@@ -363,7 +364,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--catalog", default="heimdall-skills")
     result.add_argument("--catalog-snapshots", default="var/benchmark-catalog-snapshots")
     result.add_argument("--model-catalog", default="catalog/snapshot.json")
-    result.add_argument("--schema", default="benchmarking/schemas/benchmark-case-v3.schema.json")
+    result.add_argument("--schema", default=SCHEMA_RELATIVE)
     result.add_argument("--live-config", default="var/benchmark-live-config.json")
     result.add_argument("--results", default="benchmarking/results")
     result.add_argument("--modes", default=",".join(DEFAULT_MODES))
