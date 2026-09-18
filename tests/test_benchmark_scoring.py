@@ -30,12 +30,12 @@ def ready_case() -> BenchmarkCase:
     return BenchmarkCase(Path("/authorial/case-ready.json"), raw)
 
 
-def mode(name: str = "heimdall_skills") -> ModeConfig:
+def mode(name: str = "existing_skills") -> ModeConfig:
     common = CommonConditions(
         "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
     )
     enabled = name != BenchmarkMode.SKILLS_DISABLED
-    generated_names = ("generated_headcount",) if name == BenchmarkMode.GENERATED_SKILL else ()
+    generated_names = ("generated_headcount",) if name == BenchmarkMode.GENERATED_SKILLS else ()
     return ModeConfig(
         name, SKILL_TOOLS if enabled else DATA_TOOLS, None, None, None, None,
         generated_names, common, skills_enabled=enabled,
@@ -77,7 +77,7 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
         "mcp_query_calls": 1, "failed_tool_calls": 0, "total_tokens": 10,
         "latency_ms": 20, "agent_duration_ms": 18, "tool_time_ms": 4,
     }
-    metrics = calculate_metrics(case, mode("generated_skill"), actual, observations)
+    metrics = calculate_metrics(case, mode("generated_skills"), actual, observations)
     assert metrics["exact_match"] == 1
     assert metrics["answer_accuracy"] == 1
     assert metrics["generated_skill_loaded"] == 1

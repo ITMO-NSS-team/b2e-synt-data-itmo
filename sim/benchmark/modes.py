@@ -22,13 +22,13 @@ class BenchmarkMode(str, Enum):
     """Named experiment arms that share ``CommonConditions``.
 
     Attributes:
-        SKILLS_DISABLED: Base Heimdall tools only; no skill catalog.
-        HEIMDALL_SKILLS: Standard Heimdall skills plus ``find_skills``/``get_skill``.
-        GENERATED_SKILL: Combined catalog with generated skills; may still be a mock.
+        SKILLS_DISABLED: Base information-service tools only; no skill catalog.
+        EXISTING_SKILLS: Catalog of already-deployed skills plus ``find_skills``/``get_skill``.
+        GENERATED_SKILLS: Combined catalog with generated skills; may still be a mock.
     """
     SKILLS_DISABLED = "skills_disabled"
-    HEIMDALL_SKILLS = "heimdall_skills"
-    GENERATED_SKILL = "generated_skill"
+    EXISTING_SKILLS = "existing_skills"
+    GENERATED_SKILLS = "generated_skills"
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,27 +114,27 @@ class ModeConfigs:
 
     Attributes:
         skills_disabled: Baseline without skills.
-        heimdall_skills: Standard Heimdall catalog.
-        generated_skill: Combined catalog, possibly still a mock.
+        existing_skills: Catalog of already-deployed skills.
+        generated_skills: Combined catalog, possibly still a mock.
     """
     skills_disabled: ModeConfig
-    heimdall_skills: ModeConfig
-    generated_skill: ModeConfig
+    existing_skills: ModeConfig
+    generated_skills: ModeConfig
 
     def __post_init__(self) -> None:
         for mode, expected in (
             (self.skills_disabled, BenchmarkMode.SKILLS_DISABLED),
-            (self.heimdall_skills, BenchmarkMode.HEIMDALL_SKILLS),
-            (self.generated_skill, BenchmarkMode.GENERATED_SKILL),
+            (self.existing_skills, BenchmarkMode.EXISTING_SKILLS),
+            (self.generated_skills, BenchmarkMode.GENERATED_SKILLS),
         ):
             if mode.name != expected.value:
                 raise ValueError("mode key/name mismatch")
 
     def __iter__(self) -> Iterator[ModeConfig]:
-        """Yield the three arms in fixed order: disabled, Heimdall, generated."""
+        """Yield the three arms in fixed order: disabled, existing, generated."""
         yield self.skills_disabled
-        yield self.heimdall_skills
-        yield self.generated_skill
+        yield self.existing_skills
+        yield self.generated_skills
 
 
 def _skill_files(root: Path) -> list[Path]:
@@ -187,7 +187,7 @@ def build_modes(
 
     Args:
         common: Shared model, prompt, snapshot and emulator conditions.
-        base_catalog_path: Live Heimdall skill catalog to snapshot.
+        base_catalog_path: Live existing-skill catalog to snapshot.
         generated_skills_path: Optional overlay of generated skills.
         snapshots_root: Directory for content-addressed catalog copies.
             Required when ``generated_skills_path`` is set.
@@ -218,13 +218,13 @@ def build_modes(
         generated = Path(generated_skills_path).resolve()
         overlay = _loaded_registry(generated)
         if not _skill_files(generated):
-            raise ValueError("generated_skill mode requires at least one generated skill")
+            raise ValueError("generated_skills mode requires at least one generated skill")
         names = tuple(overlay.active())
         if len(names) != len(overlay.all_names()):
             raise ValueError("generated skills must be active")
         collisions = set(standard.all_names()) & set(overlay.all_names())
         if collisions:
-            raise ValueError(f"generated skill names collide with Heimdall: {sorted(collisions)}")
+            raise ValueError(f"generated skill names collide with existing catalog: {sorted(collisions)}")
         generated_path = str(generated)
         generated_hash = catalog_hash(generated)
         from .catalog_snapshots import compose_catalog
@@ -235,10 +235,10 @@ def build_modes(
         skills_disabled=ModeConfig(
             BenchmarkMode.SKILLS_DISABLED.value, DATA_TOOLS, None, None, None, None, (), common,
             skills_enabled=False),
-        heimdall_skills=ModeConfig(
-            BenchmarkMode.HEIMDALL_SKILLS.value, SKILL_TOOLS, str(base), base_hash, None, None, (), common),
-        generated_skill=ModeConfig(
-            BenchmarkMode.GENERATED_SKILL.value, SKILL_TOOLS, combined_path, combined_hash,
+        existing_skills=ModeConfig(
+            BenchmarkMode.EXISTING_SKILLS.value, SKILL_TOOLS, str(base), base_hash, None, None, (), common),
+        generated_skills=ModeConfig(
+            BenchmarkMode.GENERATED_SKILLS.value, SKILL_TOOLS, combined_path, combined_hash,
             generated_path, generated_hash, names, common, is_mock=is_mock),
     )
 
@@ -260,16 +260,16 @@ def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
         raise ValueError("all modes must share identical common conditions")
     if modes.skills_disabled.tool_subset != DATA_TOOLS or any(
         mode.tool_subset != SKILL_TOOLS
-        for mode in (modes.heimdall_skills, modes.generated_skill)
+        for mode in (modes.existing_skills, modes.generated_skills)
     ):
         raise ValueError("mode tool subsets do not match benchmark contract")
     if (
         modes.skills_disabled.skills_enabled
-        or modes.heimdall_skills.skills_enabled is not True
-        or modes.generated_skill.skills_enabled is not True
+        or modes.existing_skills.skills_enabled is not True
+        or modes.generated_skills.skills_enabled is not True
     ):
         raise ValueError("skill channel flags do not match benchmark modes")
-    generated = modes.generated_skill
+    generated = modes.generated_skills
     if generated.is_mock and (generated.generated_skills_path is not None or generated.generated_skill_names):
         raise ValueError("mock generated mode must not contain generated skills")
     if not generated.is_mock and not generated.generated_skill_names:

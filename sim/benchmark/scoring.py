@@ -109,7 +109,7 @@ def calculate_metrics(
         outcome_accuracy if expected_outcome in _REFUSAL_OUTCOMES else None
     )
     generated_loaded: int | None = None
-    if mode.name == BenchmarkMode.GENERATED_SKILL and not mode.is_mock:
+    if mode.name == BenchmarkMode.GENERATED_SKILLS and not mode.is_mock:
         targets = set(mode.generated_skill_names)
         generated_loaded = int(bool(targets & set(observations["loaded_skills"])))
     return {

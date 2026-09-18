@@ -85,12 +85,12 @@ def test_preflight_skips_draft_and_generated_mock_without_llm(tmp_path: Path) ->
     draft_raw.update({"status": "draft", "employee_id": None, "evaluation_contract": None})
     draft = BenchmarkCase(EXAMPLE, draft_raw)
     draft_result = preflight_case(
-        draft, modes.heimdall_skills, snapshot_root=tmp_path / "missing",
+        draft, modes.existing_skills, snapshot_root=tmp_path / "missing",
         standard_catalog_path=tmp_path / "missing", model_catalog_path=MODEL_CATALOG,
         agent_config_version="", schema_path=SCHEMA,
     )
     mock_result = preflight_case(
-        ready_case(), modes.generated_skill, snapshot_root=tmp_path / "missing",
+        ready_case(), modes.generated_skills, snapshot_root=tmp_path / "missing",
         standard_catalog_path=tmp_path / "missing", model_catalog_path=MODEL_CATALOG,
         agent_config_version="", identity_factory=FakeIdentity, schema_path=SCHEMA,
     )
@@ -101,7 +101,7 @@ def test_preflight_skips_draft_and_generated_mock_without_llm(tmp_path: Path) ->
 def test_ready_preflight_validates_all_inputs_and_builds_fingerprint(tmp_path: Path) -> None:
     standard = make_catalog(tmp_path / "standard")
     modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
-    mode = modes.heimdall_skills
+    mode = modes.existing_skills
     result = preflight_case(
         ready_case(), mode, snapshot_root=data_snapshot(tmp_path / "data"),
         standard_catalog_path=mode.catalog_path, model_catalog_path=MODEL_CATALOG,
@@ -116,7 +116,7 @@ def test_ready_preflight_validates_all_inputs_and_builds_fingerprint(tmp_path: P
 def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:
     standard = make_catalog(tmp_path / "standard")
     modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
-    mode = modes.heimdall_skills
+    mode = modes.existing_skills
     kwargs = {
         "snapshot_root": data_snapshot(tmp_path / "data"),
         "standard_catalog_path": mode.catalog_path,
@@ -144,7 +144,7 @@ def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:
 
     invalid = make_catalog(tmp_path / "invalid", "bad", metric="does_not_exist")
     invalid_modes = build_modes(common(), invalid, snapshots_root=tmp_path / "invalid-snaps")
-    invalid_mode = invalid_modes.heimdall_skills
+    invalid_mode = invalid_modes.existing_skills
     kwargs["standard_catalog_path"] = invalid_mode.catalog_path
     with pytest.raises(ValueError, match="invalid mcp_query"):
         preflight_case(ready_case(), invalid_mode, **kwargs)
@@ -155,7 +155,7 @@ def test_preflight_rejects_unavailable_snapshot_and_invalid_reference_example(
 ) -> None:
     standard = make_catalog(tmp_path / "standard")
     modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
-    mode = modes.heimdall_skills
+    mode = modes.existing_skills
     kwargs = {
         "snapshot_root": tmp_path / "missing-data",
         "standard_catalog_path": mode.catalog_path,
@@ -181,9 +181,9 @@ def test_preflight_rejects_unavailable_snapshot_and_invalid_reference_example(
     )
     kwargs.update({
         "snapshot_root": data_snapshot(tmp_path / "data"),
-        "standard_catalog_path": invalid_modes.heimdall_skills.catalog_path,
+        "standard_catalog_path": invalid_modes.existing_skills.catalog_path,
     })
     with pytest.raises(ValueError, match="invalid JSON example"):
         preflight_case(
-            ready_case(), invalid_modes.heimdall_skills, **kwargs
+            ready_case(), invalid_modes.existing_skills, **kwargs
         )

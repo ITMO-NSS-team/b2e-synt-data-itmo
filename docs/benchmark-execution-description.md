@@ -1,6 +1,6 @@
 # Запуск и оценка benchmark-кейсов
 
-Модуль `sim.benchmark` запускает эталонные бизнес-задачи на доступном B2E-стенде и сравнивает ответы агента в режимах с навыками Heimdall и без них. HTTP-клиент получает адрес стенда из `PUBLIC_URL`, поэтому сам runner не ограничен локальным развёртыванием.
+Модуль `sim.benchmark` запускает эталонные бизнес-задачи на доступном B2E-стенде и сравнивает ответы агента в режимах с уже существующими навыками информационного сервиса и без них. HTTP-клиент получает адрес стенда из `PUBLIC_URL`, поэтому сам runner не ограничен локальным развёртыванием.
 
 В текущей реализации доступны:
 
@@ -13,7 +13,7 @@
 - расчёт accuracy, инструментальных и ресурсных метрик;
 - агрегирование результатов и сравнение режимов.
 
-Режим `generated_skill` описан в модели данных, но пока не подключён к CLI: без каталога сгенерированных навыков он считается mock и не запускается. LLM-as-judge также пока не выполняется — в результатах для него сохраняется только пустая структура.
+Режим `generated_skills` описан в модели данных, но пока не подключён к CLI: без каталога сгенерированных навыков он считается mock и не запускается. LLM-as-judge также пока не выполняется — в результатах для него сохраняется только пустая структура.
 
 ## Компоненты
 
@@ -131,10 +131,10 @@
 | Режим | Инструменты | Каталог навыков | Статус |
 | --- | --- | --- | --- |
 | `skills_disabled` | `list_models`, `describe_model`, `get_docs`, `mcp_query` | отсутствует | реализован |
-| `heimdall_skills` | те же инструменты плюс `find_skills`, `get_skill` | стандартный каталог Heimdall | реализован |
-| `generated_skill` | инструменты режима `heimdall_skills` | стандартный каталог плюс generated overlay | описан; CLI пока создаёт mock-конфигурацию и отклоняет её выбор |
+| `existing_skills` | те же инструменты плюс `find_skills`, `get_skill` | уже существующий каталог навыков информационного сервиса | реализован |
+| `generated_skills` | инструменты режима `existing_skills` | стандартный каталог плюс generated overlay | описан; CLI пока создаёт mock-конфигурацию и отклоняет её выбор |
 
-`skills_disabled` не отключает Heimdall. Агент по-прежнему может читать разрешённые витрины через структурированный `mcp_query`, но не видит `recipe/reference`.
+`skills_disabled` не отключает информационный сервис. Агент по-прежнему может читать разрешённые витрины через структурированный `mcp_query`, но не видит `recipe/reference`.
 
 Для сравнимости режимов фиксируются одинаковые:
 
@@ -216,7 +216,7 @@ make benchmark-check CASES=benchmarking/cases
 make benchmark-smoke CASES=benchmarking/cases
 ```
 
-Smoke проверяет полный технический путь `case → agent → Heimdall → trace → normalization → metrics`. Низкая accuracy не считается технической ошибкой. Ошибка стенда, несовпадение fingerprint или ненормализуемый ответ приводят к ненулевому коду завершения.
+Smoke проверяет полный технический путь `case → agent → information service → trace → normalization → metrics`. Низкая accuracy не считается технической ошибкой. Ошибка стенда, несовпадение fingerprint или ненормализуемый ответ приводят к ненулевому коду завершения.
 
 ### Полный прогон
 
@@ -232,7 +232,7 @@ make benchmark-run \
 | --- | --- | --- |
 | `CASES` | `benchmarking/cases` | источник кейсов |
 | `BENCH_DATA` | `DATA_DIR` из `deploy/.env` или `data-small` | снимок данных, доступный процессу benchmark |
-| `BENCH_MODES` | `skills_disabled,heimdall_skills` | режимы запуска |
+| `BENCH_MODES` | `skills_disabled,existing_skills` | режимы запуска |
 | `BENCH_REPETITIONS` | `1` | число повторов полного прогона |
 | `BENCH_RESULTS` | `benchmarking/results` | каталог результатов |
 | `BENCH_EVAL_ID` | генерируется автоматически | идентификатор запуска |
@@ -250,7 +250,7 @@ make benchmark-run \
 | `outcome_accuracy` | совпадение фактического и ожидаемого outcome |
 | `correct_refusal` | правильность отказа для `access_control`, `missing_skill` и `out_of_scope` |
 | `generated_skill_loaded` | загружен ли целевой generated skill; пока неприменима для стандартных режимов |
-| `heimdall_calls` | число обращений к инструментам Heimdall |
+| `heimdall_calls` | число обращений к инструментам информационного сервиса (в текущем стенде — Heimdall) |
 | `mcp_query_calls` | число вызовов `mcp_query` |
 | `failed_tool_calls` | число завершившихся ошибкой инструментальных вызовов |
 | `total_tokens` | суммарное число токенов |
@@ -267,9 +267,9 @@ make benchmark-run \
 
 `summary.json` содержит средние значения по режимам и парные сравнения:
 
-- `heimdall_skills` относительно `skills_disabled`;
-- `generated_skill` относительно `skills_disabled`, когда режим будет подключён;
-- `generated_skill` относительно `heimdall_skills`, когда режим будет подключён.
+- `existing_skills` относительно `skills_disabled`;
+- `generated_skills` относительно `skills_disabled`, когда режим будет подключён;
+- `generated_skills` относительно `existing_skills`, когда режим будет подключён.
 
 Для метрик сохраняются абсолютная разница и относительное изменение. Для `answer_accuracy` дополнительно рассчитываются разница в процентных пунктах и сокращение ошибки.
 
@@ -317,8 +317,8 @@ benchmarking/results/<eval_id>/
 
 ## Текущие ограничения
 
-- CLI запускает только `skills_disabled` и `heimdall_skills`.
-- `generated_skill` требует отдельного механизма подключения combined-каталога.
+- CLI запускает только `skills_disabled` и `existing_skills`.
+- `generated_skills` требует отдельного механизма подключения combined-каталога.
 - LLM-as-judge не реализован; поле `llm_judge` в score остаётся незаполненным.
 - Порядок режимов детерминированный и пока не перемешивается.
 - Создание кейсов, получение gold и перевод `draft → ready` выполняются вне runner.

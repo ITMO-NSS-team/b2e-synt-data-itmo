@@ -58,11 +58,11 @@ def test_three_modes_pin_same_common_conditions(
     assert all(mode.common is common for mode in modes)
     assert modes.skills_disabled.tool_subset == DATA_TOOLS
     assert modes.skills_disabled.catalog_path is None
-    assert modes.heimdall_skills.tool_subset == SKILL_TOOLS
-    assert modes.generated_skill.tool_subset == SKILL_TOOLS
-    assert modes.heimdall_skills.catalog_hash == catalog_hash(base)
-    assert modes.generated_skill.catalog_hash != modes.heimdall_skills.catalog_hash
-    assert modes.generated_skill.generated_skill_names == ("generated",)
+    assert modes.existing_skills.tool_subset == SKILL_TOOLS
+    assert modes.generated_skills.tool_subset == SKILL_TOOLS
+    assert modes.existing_skills.catalog_hash == catalog_hash(base)
+    assert modes.generated_skills.catalog_hash != modes.existing_skills.catalog_hash
+    assert modes.generated_skills.generated_skill_names == ("generated",)
 
 
 def test_config_file_explicitly_contains_all_required_variables(
@@ -81,7 +81,7 @@ def test_config_file_explicitly_contains_all_required_variables(
         assert "tool_subset" in mode
         assert "catalog_path" in mode
         assert "catalog_hash" in mode
-    assert saved["modes"][BenchmarkMode.GENERATED_SKILL]["generated_skill_names"] == ["generated"]
+    assert saved["modes"][BenchmarkMode.GENERATED_SKILLS]["generated_skill_names"] == ["generated"]
 
 
 def test_hash_changes_only_when_skill_files_change(catalogs: tuple[Path, Path]) -> None:
@@ -124,7 +124,7 @@ def test_writer_rejects_mismatched_common_conditions(
     modes = build_modes(common, *catalogs, snapshots_root=tmp_path / "snapshots")
     other = CommonConditions("other-model", 0.0, "system_prompt@1", "heimdall-sandbox@test",
                              True, "instant", ("999999",))
-    modes = replace(modes, generated_skill=replace(modes.generated_skill, common=other))
+    modes = replace(modes, generated_skills=replace(modes.generated_skills, common=other))
     with pytest.raises(ValueError, match="identical common conditions"):
         write_mode_config(modes, tmp_path / "invalid.json")
 
@@ -139,8 +139,8 @@ def test_disabled_and_mock_generated_modes_are_explicit(
     assert modes.skills_disabled.skills_enabled is False
     assert "find_skills" not in modes.skills_disabled.tool_subset
     assert "get_skill" not in modes.skills_disabled.tool_subset
-    assert modes.generated_skill.is_mock is True
-    assert modes.generated_skill.generated_skill_names == ()
+    assert modes.generated_skills.is_mock is True
+    assert modes.generated_skills.generated_skill_names == ()
 
 
 def test_generated_mode_builds_combined_snapshot_and_rejects_duplicates(
@@ -148,7 +148,7 @@ def test_generated_mode_builds_combined_snapshot_and_rejects_duplicates(
 ) -> None:
     base, generated = catalogs
     modes = build_modes(common, base, generated, snapshots_root=tmp_path / "snapshots")
-    mode = modes.generated_skill
+    mode = modes.generated_skills
     assert mode.is_mock is False
     assert {path.stem for path in Path(mode.catalog_path).rglob("*.yaml")} == {
         "standard", "generated",

@@ -55,7 +55,7 @@ def validate_skill_catalog(root: str | Path, model_catalog: Catalog) -> Registry
 
     Args:
         root: Skill catalog or content-addressed snapshot directory.
-        model_catalog: Compiled Heimdall model catalog used to compile queries.
+        model_catalog: Compiled information-service model catalog used to compile queries.
 
     Returns:
         Loaded skill registry after every recipe and JSON example compiles.
@@ -137,7 +137,7 @@ def preflight_case(
             raise ValueError("skills_disabled must deny find_skills/get_skill and have no catalog")
     elif not mode.skills_enabled or mode.tool_subset != SKILL_TOOLS:
         raise ValueError(f"{mode.name}: skill channel and tool subset must be enabled")
-    if mode.name == BenchmarkMode.GENERATED_SKILL and mode.is_mock:
+    if mode.name == BenchmarkMode.GENERATED_SKILLS and mode.is_mock:
         return PreflightResult(case.case_id, mode.name, "mock_skipped")
     if not _PINNED_VERSION.fullmatch(agent_config_version):
         raise ValueError("agent_config_version must be pinned, e.g. benchmark_agent@1")
@@ -171,7 +171,7 @@ def preflight_case(
             raise ValueError(f"{mode.name}: configured catalog hash differs from snapshot")
         if Path(mode.catalog_path).resolve() != standard.resolve():
             registry = validate_skill_catalog(mode.catalog_path, model_catalog)
-            if mode.name == BenchmarkMode.GENERATED_SKILL:
+            if mode.name == BenchmarkMode.GENERATED_SKILLS:
                 missing = set(mode.generated_skill_names) - set(registry.active())
                 if missing:
                     raise ValueError(f"generated target skills missing or inactive: {sorted(missing)}")

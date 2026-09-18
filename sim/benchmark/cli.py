@@ -19,7 +19,7 @@ from .runner import BenchmarkRunner
 
 DEFAULT_MODES = (
     BenchmarkMode.SKILLS_DISABLED.value,
-    BenchmarkMode.HEIMDALL_SKILLS.value,
+    BenchmarkMode.EXISTING_SKILLS.value,
 )
 
 
@@ -182,7 +182,7 @@ def select_modes(all_modes: Iterable[ModeConfig], names: str) -> dict[str, ModeC
         Ordered mapping of requested name to config.
 
     Raises:
-        ValueError: If a name is unknown, duplicated, or generated_skill is a mock.
+        ValueError: If a name is unknown, duplicated, or generated_skills is a mock.
     """
     requested = [item.strip() for item in names.split(",") if item.strip()]
     if not requested:
@@ -194,10 +194,10 @@ def select_modes(all_modes: Iterable[ModeConfig], names: str) -> dict[str, ModeC
     if unknown:
         raise ValueError(f"unknown benchmark modes: {sorted(unknown)}")
     selected = {name: available[name] for name in requested}
-    generated = selected.get(BenchmarkMode.GENERATED_SKILL.value)
+    generated = selected.get(BenchmarkMode.GENERATED_SKILLS.value)
     if generated is not None and generated.is_mock:
         raise ValueError(
-            "generated_skill is still a mock; provide and mount a generated catalog first"
+            "generated_skills is still a mock; provide and mount a generated catalog first"
         )
     return selected
 
@@ -252,7 +252,7 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
                 case,
                 mode,
                 snapshot_root=args.data,
-                standard_catalog_path=modes.heimdall_skills.catalog_path,
+                standard_catalog_path=modes.existing_skills.catalog_path,
                 model_catalog_path=args.model_catalog,
                 agent_config_version=refs[mode.name],
                 schema_path=args.schema,

@@ -75,7 +75,7 @@ def capture_live_config(
     pinned = pinner(registry)
     refs = {
         BenchmarkMode.SKILLS_DISABLED.value: pinned["skills_off"],
-        BenchmarkMode.HEIMDALL_SKILLS.value: pinned["skills_on"],
+        BenchmarkMode.EXISTING_SKILLS.value: pinned["skills_on"],
     }
     configs: dict[str, dict[str, Any]] = {}
     prompt_versions: dict[str, str] = {}

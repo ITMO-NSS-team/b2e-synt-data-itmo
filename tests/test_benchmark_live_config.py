@@ -37,7 +37,7 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
         "ignored_operator_field": "not persisted",
     }, pinner=pinner)
     disabled = payload["refs"]["skills_disabled"]
-    enabled = payload["refs"]["heimdall_skills"]
+    enabled = payload["refs"]["existing_skills"]
     assert tuple(payload["configs"][disabled]["tool_subset"]) == DATA_TOOLS
     assert tuple(payload["configs"][enabled]["tool_subset"]) == SKILL_TOOLS
     assert payload["prompt_versions"][disabled].startswith("system_prompt@")

@@ -1,4 +1,4 @@
-"""Content-addressed, additive snapshots of Heimdall skill catalogs."""
+"""Content-addressed, additive snapshots of skill catalogs."""
 from __future__ import annotations
 
 import json
@@ -103,11 +103,11 @@ def compose_catalog(
     overlay_registry = _loaded_registry(generated)
     collisions = set(base_registry.all_names()) & set(overlay_registry.all_names())
     if collisions:
-        raise ValueError(f"generated skill names collide with Heimdall: {sorted(collisions)}")
+        raise ValueError(f"generated skill names collide with existing catalog: {sorted(collisions)}")
     files = {p.relative_to(standard): p for p in _skill_files(standard)}
     for path in _skill_files(generated):
         relative = path.relative_to(generated)
         if relative in files:
-            raise ValueError(f"generated skill path collides with Heimdall: {relative}")
+            raise ValueError(f"generated skill path collides with existing catalog: {relative}")
         files[relative] = path
     return _install(files, snapshots_root)

@@ -137,7 +137,7 @@ CASES ?= benchmarking/cases
 # corpus and run against another.  An explicit BENCH_DATA still takes priority.
 DEPLOY_DATA_DIR := $(shell awk -F= '/^DATA_DIR=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
 BENCH_DATA ?= $(if $(DEPLOY_DATA_DIR),$(if $(filter /%,$(DEPLOY_DATA_DIR)),$(DEPLOY_DATA_DIR),deploy/$(DEPLOY_DATA_DIR)),data-small)
-BENCH_MODES ?= skills_disabled,heimdall_skills
+BENCH_MODES ?= skills_disabled,existing_skills
 BENCH_REPETITIONS ?= 1
 BENCH_RESULTS ?= benchmarking/results
 BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json

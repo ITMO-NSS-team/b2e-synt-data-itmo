@@ -37,14 +37,14 @@ def ready_case(case_id: str = "case-ready") -> BenchmarkCase:
     return BenchmarkCase(Path(f"/authorial/{case_id}.json"), raw)
 
 
-def mode(name: str = "heimdall_skills", *, mock: bool = False) -> ModeConfig:
+def mode(name: str = "existing_skills", *, mock: bool = False) -> ModeConfig:
     common = CommonConditions(
         "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
     )
     enabled = name != BenchmarkMode.SKILLS_DISABLED
     generated_names = (
         ("generated_headcount",)
-        if not mock and name == BenchmarkMode.GENERATED_SKILL else ()
+        if not mock and name == BenchmarkMode.GENERATED_SKILLS else ()
     )
     return ModeConfig(
         name, SKILL_TOOLS if enabled else DATA_TOOLS, None, None, None, None,
@@ -119,7 +119,7 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
         ),
         activator=activator, executor=executor,
     )
-    results = runner.run([ready_case()], {"heimdall_skills": mode()}, repetitions=2)
+    results = runner.run([ready_case()], {"existing_skills": mode()}, repetitions=2)
     assert len(results) == 2
     assert len({request.metadata["run_id"] for request in executor.requests}) == 2
     for request in executor.requests:
@@ -137,7 +137,7 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
         assert "gold_result" not in repr(request)
         assert "employee_count\": 3" not in repr(request)
         assert "expected_skills" not in repr(request)
-    assert activator.activated == ["heimdall_skills", "heimdall_skills"]
+    assert activator.activated == ["existing_skills", "existing_skills"]
     assert activator.deactivated == activator.activated
     assert all(result.score["metrics"]["answer_accuracy"] == 1 for result in results)
 
@@ -145,8 +145,8 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
 def test_runner_skips_draft_and_mock_without_activation() -> None:
     executor, activator = FakeExecutor(), FakeActivator()
     states = {
-        "heimdall_skills": "draft_skipped",
-        "generated_skill": "mock_skipped",
+        "existing_skills": "draft_skipped",
+        "generated_skills": "mock_skipped",
     }
     runner = BenchmarkRunner(
         "eval-1",
@@ -158,8 +158,8 @@ def test_runner_skips_draft_and_mock_without_activation() -> None:
     results = runner.run(
         [ready_case()],
         {
-            "heimdall_skills": mode(),
-            "generated_skill": mode("generated_skill", mock=True),
+            "existing_skills": mode(),
+            "generated_skills": mode("generated_skills", mock=True),
         },
     )
     assert {result.status for result in results} == {"draft_skipped", "mock_skipped"}
@@ -183,7 +183,7 @@ def test_unstructured_answer_is_pending_not_counted_as_incorrect() -> None:
         ),
         activator=FakeActivator(), executor=ProseExecutor(),
     )
-    result = runner.run([ready_case()], {"heimdall_skills": mode()})[0]
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
     assert result.status == "normalization_pending"
     assert result.score["metrics"]["answer_accuracy"] is None
     assert summarize_results([result])["n_normalization_pending"] == 1
@@ -208,7 +208,7 @@ def test_runner_rejects_a_live_fingerprint_different_from_preflight() -> None:
         ),
         activator=FakeActivator(), executor=DriftedExecutor(),
     )
-    result = runner.run([ready_case()], {"heimdall_skills": mode()})[0]
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
     assert result.status == "execution_failed"
     assert result.response["response"]["error"].endswith("model_id")
     assert result.score["metrics"]["answer_accuracy"] == 0
@@ -227,7 +227,7 @@ def test_runner_keeps_the_full_executor_traceback() -> None:
         ),
         activator=FakeActivator(), executor=BoomExecutor(),
     )
-    result = runner.run([ready_case()], {"heimdall_skills": mode()})[0]
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
     error = result.response["response"]["error"]
     assert result.status == "execution_failed"
     assert "Traceback (most recent call last)" in error
@@ -244,7 +244,7 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
         ),
         activator=FakeActivator(), executor=FakeExecutor(), writer=writer,
     )
-    results = runner.run([ready_case()], {"heimdall_skills": mode()})
+    results = runner.run([ready_case()], {"existing_skills": mode()})
     response = json.loads(writer.responses_path.read_text(encoding="utf-8"))
     score = json.loads(writer.scores_path.read_text(encoding="utf-8"))
     summary = json.loads((writer.root / "summary.json").read_text(encoding="utf-8"))
@@ -256,7 +256,7 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     assert response["case_snapshot"]["response_contract_hash"].startswith("sha256:")
     assert (writer.root / response["trace_path"]).is_file()
     assert score["metrics"]["answer_accuracy"] == 1
-    assert summary["by_mode"]["heimdall_skills"]["answer_accuracy"] == 1
+    assert summary["by_mode"]["existing_skills"]["answer_accuracy"] == 1
     assert (writer.root / "run-manifest.json").is_file()
     with pytest.raises(ValueError, match="already exists"):
         ResultWriter(tmp_path, "eval-1")

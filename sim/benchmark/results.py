@@ -146,9 +146,9 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
         }
     comparisons = {}
     pairs = (
-        ("heimdall_skills", "skills_disabled"),
-        ("generated_skill", "skills_disabled"),
-        ("generated_skill", "heimdall_skills"),
+        ("existing_skills", "skills_disabled"),
+        ("generated_skills", "skills_disabled"),
+        ("generated_skills", "existing_skills"),
     )
     for target, baseline in pairs:
         if target not in by_mode or baseline not in by_mode:

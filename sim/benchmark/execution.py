@@ -20,7 +20,7 @@ class AgentRequest:
 
     Attributes:
         query: Rendered user message, including the public response schema.
-        employee_id: Runtime actor for Heimdall scope.
+        employee_id: Runtime actor for information-service scope.
         config_ref: Pinned agent config, e.g. ``agent_config_benchmark_skills_on@2``.
         metadata: Non-secret run labels copied into the stand session.
     """
@@ -106,7 +106,7 @@ class ModeActivator(Protocol):
 class PinnedConfigActivator:
     """Use already-created pinned agent configs.
 
-    This is sufficient for skills_disabled and heimdall_skills, which share
+    This is sufficient for skills_disabled and existing_skills, which share
     the same mounted standard catalog. A future non-mock generated mode needs a
     deployment-specific activator that mounts its combined catalog first.
     """
@@ -154,8 +154,8 @@ class PinnedConfigActivator:
             or config.get("conversation_mode") != "stateless"
         ):
             raise ValueError(f"{mode.name}: live agent behavior differs from mode")
-        if mode.name == BenchmarkMode.GENERATED_SKILL and not mode.is_mock:
-            raise ValueError("generated_skill requires a catalog-mounting ModeActivator")
+        if mode.name == BenchmarkMode.GENERATED_SKILLS and not mode.is_mock:
+            raise ValueError("generated_skills requires a catalog-mounting ModeActivator")
         if mode.catalog_path is not None:
             actual = catalog_hash(mode.catalog_path)
             if actual != mode.catalog_hash:

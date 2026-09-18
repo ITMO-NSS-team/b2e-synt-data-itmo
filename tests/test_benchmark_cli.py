@@ -27,7 +27,7 @@ def live_payload() -> dict:
     return {
         "refs": {
             "skills_disabled": "benchmark_off@1",
-            "heimdall_skills": "benchmark_on@1",
+            "existing_skills": "benchmark_on@1",
         },
         "configs": {
             "benchmark_off@1": off,
@@ -114,7 +114,7 @@ def test_generated_mock_cannot_be_selected(tmp_path) -> None:
         "instant", (),
     )
     modes = build_modes(common, base, snapshots_root=tmp_path / "snapshots")
-    selected = select_modes(modes, "skills_disabled,heimdall_skills")
-    assert set(selected) == {"skills_disabled", "heimdall_skills"}
+    selected = select_modes(modes, "skills_disabled,existing_skills")
+    assert set(selected) == {"skills_disabled", "existing_skills"}
     with pytest.raises(ValueError, match="still a mock"):
-        select_modes(modes, "generated_skill")
+        select_modes(modes, "generated_skills")
