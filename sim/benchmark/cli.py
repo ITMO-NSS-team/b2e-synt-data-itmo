@@ -137,7 +137,7 @@ def common_conditions(
 
     Args:
         payload: Validated live-stand manifest.
-        mode_names: Configurations to compare; remote can use only existing_skills.
+        mode_names: Configurations to compare.
 
     Returns:
         CommonConditions copied into every mode.

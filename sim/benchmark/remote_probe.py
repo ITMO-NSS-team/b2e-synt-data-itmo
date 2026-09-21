@@ -1,7 +1,9 @@
-"""Read-only SSH probe. Returns hashes/settings/checks, never skill contents.
+"""SSH probe. Returns hashes/settings/checks, never skill contents.
 
-The local driver appends shared validator functions and an entry point before
-sending this source to Python's stdin. No installation on the server is needed.
+The registry probe append-only pins ``general_knowledge`` and
+``existing_skills`` from the live ``agent_config``. Catalog validation stays
+read-only. The local driver appends shared validators and an entry point
+before sending this source to Python's stdin.
 """
 from __future__ import annotations
 
@@ -27,19 +29,27 @@ def probe(kind: str, options: dict) -> dict:
         from sim.registry import Registry as ConfigRegistry
         from sim.skills import SkillStore
 
-        registry = ConfigRegistry(require_env("B2E_REGISTRY_DB"), readonly=True)
+        registry = ConfigRegistry(require_env("B2E_REGISTRY_DB"))
         try:
-            version, config = registry.load(options["config_ref"])
-            prompt_version, _ = registry.load(config["system_prompt_ref"])
+            from sim.skill_eval.pin import pin
+
+            pinned = pin(registry, source_ref=options.get("config_ref") or "agent_config")
             keys = ("model_id", "temperature", "harness", "tool_subset",
                     "code_execution", "conversation_mode", "system_prompt_ref",
                     "skill_registry_ref")
+            configs = {}
+            prompt_versions = {}
+            for ref in pinned.values():
+                _version, config = registry.load(ref)
+                prompt_version, _prompt = registry.load(config["system_prompt_ref"])
+                configs[ref] = {key: config.get(key) for key in keys}
+                prompt_versions[ref] = prompt_version.ref
             result = {
                 "schema_version": "1.0",
                 "phoenix_project": os.environ.get("PHOENIX_PROJECT", "b2e-itmo"),
-                "refs": {"existing_skills": version.ref},
-                "configs": {version.ref: {key: config.get(key) for key in keys}},
-                "prompt_versions": {version.ref: prompt_version.ref},
+                "refs": pinned,
+                "configs": configs,
+                "prompt_versions": prompt_versions,
                 "skill_registry_hash": SkillStore(registry).registry_hash(),
             }
         finally:

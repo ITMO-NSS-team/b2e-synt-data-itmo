@@ -180,11 +180,12 @@ benchmark-run: benchmark-live-config  ## все ready-кейсы × режимы
 		--repetitions "$(BENCH_REPETITIONS)" --eval-prefix benchmark \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
-benchmark-remote:  ## текущая модель сервера, первый ready-кейс; без Compose и изменения конфигов
+benchmark-remote:  ## текущая модель сервера, general_knowledge+existing_skills; без Compose
 	$(PY) -m sim.benchmark.remote --cases "$(CASES)" \
 		--ssh "$(BENCH_REMOTE_SSH)" --public-url "$(BENCH_REMOTE_URL)" \
 	--env-file "$(BENCH_REMOTE_ENV)" --limit "$(BENCH_REMOTE_LIMIT)" \
 	--repetitions "$(BENCH_REPETITIONS)" --timeout "$(BENCH_TIMEOUT)" \
 	--trace-timeout "$(BENCH_TRACE_TIMEOUT)" \
+	--modes "$(BENCH_MODES)" \
 	--results "$(BENCH_RESULTS)" \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)

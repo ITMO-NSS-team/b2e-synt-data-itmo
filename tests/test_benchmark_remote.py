@@ -10,21 +10,33 @@ import pytest
 
 from sim.benchmark import cli, remote
 from sim.benchmark.execution import AgentTurn
-from sim.benchmark.modes import SKILL_TOOLS
+from sim.benchmark.modes import GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS
 from tests.fixtures.constants import EXAMPLE
 
 
 def reports(case):
     raw = case.raw
+    on = {
+        "model_id": "server-model", "temperature": 0.0,
+        "tool_subset": list(SKILL_TOOLS), "code_execution": "forbidden",
+        "conversation_mode": "stateless",
+    }
+    general = dict(on)
+    general["tool_subset"] = list(GENERAL_KNOWLEDGE_TOOLS)
     live = {
         "schema_version": "1.0",
-        "refs": {"existing_skills": "agent_config@2"},
-        "configs": {"agent_config@2": {
-            "model_id": "server-model", "temperature": 0.0,
-            "tool_subset": list(SKILL_TOOLS), "code_execution": "forbidden",
-            "conversation_mode": "stateless",
-        }},
-        "prompt_versions": {"agent_config@2": "system_prompt@1"},
+        "refs": {
+            "general_knowledge": "benchmark_general@1",
+            "existing_skills": "agent_config@2",
+        },
+        "configs": {
+            "benchmark_general@1": general,
+            "agent_config@2": on,
+        },
+        "prompt_versions": {
+            "benchmark_general@1": "system_prompt@1",
+            "agent_config@2": "system_prompt@1",
+        },
         "skill_registry_hash": raw["skill_registry_hash"],
         "emulator": {"data_snapshot_hash": raw["snapshot_id"], "traps_enabled": True,
                      "latency_profile": "instant", "hr_employee_ids": []},
@@ -41,7 +53,9 @@ def reports(case):
 
 def test_defaults_use_one_case_current_config_and_phoenix():
     args = remote.parser().parse_args(["--cases", str(EXAMPLE)])
-    assert (args.limit, args.repetitions, args.modes) == (1, 1, "existing_skills")
+    assert (args.limit, args.repetitions, args.modes) == (
+        1, 1, "general_knowledge,existing_skills",
+    )
     assert args.config_ref == "agent_config"
     assert args.trace_backend == "phoenix"
     assert args.trace_timeout == 300.0
@@ -52,6 +66,7 @@ def test_readonly_report_reuses_pinned_config_without_local_data():
     cases = cli.load_cases_path(EXAMPLE)
     report, catalog = reports(cases[0])
     prepared = remote.prepare_remote(None, cases, report, catalog)
+    assert set(prepared.selected_modes) == {"general_knowledge", "existing_skills"}
     mode = prepared.selected_modes["existing_skills"]
     assert mode.common.model_id == "server-model"
     assert mode.catalog_path is None
@@ -104,7 +119,7 @@ def test_probe_is_self_contained_and_uses_shared_validators(monkeypatch, tmp_pat
     registry = namespace["validate_skill_catalog"](skills, catalog)
     assert registry.all_names() == ["one"]
     assert namespace["catalog_hash"](skills).startswith("sha256:")
-    assert 'readonly=True' in source
+    assert 'from sim.skill_eval.pin import pin' in source
     assert 'registry.commit(' not in source
     assert 'truth/' not in source
     assert "heimdall-emulator:8081" not in source
@@ -167,7 +182,11 @@ def test_remote_entrypoint_one_case_and_saved_results(monkeypatch, tmp_path, che
         def execute(self, request):
             requests.append(request)
             prepared = remote.prepare_remote(None, selected, deepcopy(report), deepcopy(catalog))
-            fingerprint = next(iter(prepared.checked.values())).fingerprint.as_dict()
+            mode = next(
+                name for name, ref in report["live"]["refs"].items()
+                if ref == request.config_ref
+            )
+            fingerprint = prepared.checked[(selected[0].case_id, mode)].fingerprint.as_dict()
             return AgentTurn(
                 json.dumps({"result": raw["evaluation_contract"]["gold_result"], "message": None}),
                 stats={"total_tokens": 10}, trace={"spans": []}, fingerprint=fingerprint,
@@ -176,16 +195,29 @@ def test_remote_entrypoint_one_case_and_saved_results(monkeypatch, tmp_path, che
     output = tmp_path / "results"
     args = ["--cases", str(cases_dir), "--results", str(output), "--eval-id", "test"]
     assert remote.main(args + (["--check-only"] if check_only else [])) == 0
-    assert len(requests) == (0 if check_only else 1)
+    assert len(requests) == (0 if check_only else 2)
     manifest = json.loads((output / "test/run-manifest.json").read_text())
     assert manifest["case_ids"] == ["case-0001"]
     assert manifest["live_stand"]["remote_catalog_validation"]["validated"] is True
     if not check_only:
-        assert requests[0].config_ref == "agent_config@2"
+        assert {request.config_ref for request in requests} == {
+            "benchmark_general@1", "agent_config@2",
+        }
         assert "headcount_by_dimension" not in requests[0].query
         assert "gold_result" not in requests[0].query
-        scores = json.loads((output / "test/scores.jsonl").read_text())
-        assert scores["metrics"]["answer_accuracy"] == 1
+        scores = [
+            json.loads(line)
+            for line in (output / "test/scores.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert len(scores) == 2
+        assert {row["metrics"]["answer_accuracy"] for row in scores} == {1}
+
+
+def test_remote_refuses_generated_skills_mock():
+    args = remote.parser().parse_args(["--cases", str(EXAMPLE), "--modes", "generated_skills"])
+    with pytest.raises(ValueError, match="still a mock"):
+        remote.selected_mode_names(args)
 
 
 def test_make_remote_does_not_start_compose_and_limits_one_case():

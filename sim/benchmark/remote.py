@@ -1,7 +1,9 @@
-"""Local benchmark against an unchanged remote stand and its current model.
+"""Local driver against a remote stand: pin two benchmark configs, then run.
 
-SSH reads settings and validates catalogs in place; only metadata is returned.
-Sessions and traces use HTTPS. No server config writes, Compose or migrations.
+SSH pins append-only ``general_knowledge`` / ``existing_skills`` clones of the
+live ``agent_config`` and validates catalogs in place. Sessions and traces use
+HTTPS. The live ``agent_config`` head, Compose and the skill catalog are not
+rewritten. ``generated_skills`` stays a mock.
 """
 from __future__ import annotations
 
@@ -24,7 +26,10 @@ from . import cli
 from .catalog_snapshots import verify_snapshot
 from .env import load_env, require_env
 from .execution import PinnedConfigActivator, StandSessionExecutor
-from .modes import ModeConfig, SKILL_TOOLS, _loaded_registry, _skill_files, catalog_hash
+from .modes import (
+    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, ModeConfig,
+    _loaded_registry, _skill_files, catalog_hash,
+)
 from .preflight import PreflightResult, _check_query, validate_skill_catalog
 from .path_lib import SCHEMA_RELATIVE
 
@@ -56,7 +61,10 @@ def read_container(
     ssh: str, container: str, kind: str, options: dict,
     *, control_path: str | None = None,
 ) -> dict:
-    """Execute a read-only probe, without installing files on the server."""
+    """Execute a probe on the server without installing files.
+
+    The registry probe append-only pins the two benchmark agent configs.
+    """
     if not ssh or ssh.startswith("-"):
         raise ValueError("--ssh must be a hostname or user@hostname")
     command = shlex.join([
@@ -152,10 +160,46 @@ def close_ssh_master(ssh: str, control_path: str) -> None:
     )
 
 
+def selected_mode_names(args=None) -> tuple[str, ...]:
+    """Parse remote ``--modes``; generated_skills stays a refused mock."""
+    raw = cli.DEFAULT_MODES if args is None else args.modes
+    if not isinstance(raw, str):
+        names = tuple(raw)
+    else:
+        names = tuple(item.strip() for item in raw.split(",") if item.strip())
+    if not names:
+        raise ValueError("at least one benchmark mode is required")
+    if len(names) != len(set(names)):
+        raise ValueError("benchmark modes contain duplicates")
+    allowed = {
+        BenchmarkMode.GENERAL_KNOWLEDGE.value,
+        BenchmarkMode.EXISTING_SKILLS.value,
+    }
+    unknown = set(names) - allowed
+    if unknown:
+        raise ValueError(
+            "remote run supports general_knowledge and existing_skills; "
+            "generated_skills is still a mock: " + ", ".join(sorted(unknown))
+        )
+    return names
+
+
+def _remote_mode(name: str, common, catalog_hash: str) -> ModeConfig:
+    if name == BenchmarkMode.GENERAL_KNOWLEDGE.value:
+        return ModeConfig(
+            name, GENERAL_KNOWLEDGE_TOOLS, None, None, None, None, (), common,
+            skills_enabled=False,
+        )
+    return ModeConfig(
+        name, SKILL_TOOLS, None, catalog_hash, None, None, (), common,
+    )
+
+
 def prepare_remote(args, cases, report: dict, catalog: dict) -> cli.PreparedBenchmark:
     """Check public contracts, live conditions, validation report and scopes."""
     live = report["live"]
-    common = cli.common_conditions(live, ("existing_skills",))
+    names = selected_mode_names(args)
+    common = cli.common_conditions(live, names)
     for key in ("data_snapshot_hash", "traps_enabled", "latency_profile", "hr_employee_ids"):
         if live["emulator"][key] != catalog["emulator"][key]:
             raise ValueError(f"remote conditions changed during discovery: {key}")
@@ -164,14 +208,13 @@ def prepare_remote(args, cases, report: dict, catalog: dict) -> cli.PreparedBenc
     if (catalog.get("validated") is not True or catalog.get("skill_count", 0) < 1
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", catalog.get("catalog_hash", ""))):
         raise ValueError("remote skill catalog was not validated")
-    # No local copy: remote location/hash and validation proof stay in manifest.
-    mode = ModeConfig("existing_skills", SKILL_TOOLS, None, catalog["catalog_hash"],
-                      None, None, (), common)
-    ref = live["refs"][mode.name]
+    selected = {name: _remote_mode(name, common, catalog["catalog_hash"]) for name in names}
     activator = PinnedConfigActivator(
-        {mode.name: ref}, config_reader=lambda name: live["configs"][name],
+        {name: live["refs"][name] for name in selected},
+        config_reader=lambda name: live["configs"][name],
     )
-    activator.activate(mode)
+    for mode in selected.values():
+        activator.activate(mode)
     checked = {}
     for case in cases:
         for field, expected in (("snapshot_id", common.snapshot_id),
@@ -183,27 +226,37 @@ def prepare_remote(args, cases, report: dict, catalog: dict) -> cli.PreparedBenc
         if (str(scope["employee_id"]) != str(case.raw["employee_id"])
                 or scope["role"] != case.raw["employee_role"]):
             raise ValueError(f"{case.case_id}: remote employee role/identity mismatch")
-        fingerprint = RunFingerprint.create(
-            agent_config_version=ref, prompt_registry_version=common.prompt_registry_version,
-            skill_registry_hash=live["skill_registry_hash"], model_id=common.model_id,
-            temperature=common.temperature, data_snapshot_hash=common.snapshot_id,
-            traps_enabled=common.traps_enabled, latency_profile=common.latency_profile,
-            hr_employee_ids=common.hr_employee_ids,
-        )
-        checked[(case.case_id, mode.name)] = PreflightResult(case.case_id, mode.name, "ready", fingerprint)
+        for mode in selected.values():
+            fingerprint = RunFingerprint.create(
+                agent_config_version=live["refs"][mode.name],
+                prompt_registry_version=common.prompt_registry_version,
+                skill_registry_hash=live["skill_registry_hash"],
+                model_id=common.model_id,
+                temperature=common.temperature,
+                data_snapshot_hash=common.snapshot_id,
+                traps_enabled=common.traps_enabled,
+                latency_profile=common.latency_profile,
+                hr_employee_ids=common.hr_employee_ids,
+            )
+            checked[(case.case_id, mode.name)] = PreflightResult(
+                case.case_id, mode.name, "ready", fingerprint,
+            )
     live["remote_catalog_validation"] = catalog
-    return cli.PreparedBenchmark(cases, live, {mode.name: mode}, activator, checked)
+    return cli.PreparedBenchmark(cases, live, selected, activator, checked)
 
 
 def parser():
     result = argparse.ArgumentParser(
-        description="Run locally against the unchanged remote agent, with its existing model/skills.")
+        description="Run locally against the remote agent: general_knowledge and existing_skills.")
     result.add_argument("--cases", required=True, help="Directory, JSON case, or JSONL suite")
     result.add_argument("--schema", default=SCHEMA_RELATIVE)
     result.add_argument("--results", default="benchmarking/results")
     result.add_argument("--limit", type=int, default=1, help="Number of ready cases (default: 1)")
     result.add_argument("--repetitions", type=int, default=1)
-    result.add_argument("--modes", default="existing_skills", help="Only existing_skills is supported")
+    result.add_argument(
+        "--modes", default=",".join(cli.DEFAULT_MODES),
+        help="general_knowledge,existing_skills; generated_skills is still a mock",
+    )
     result.add_argument("--eval-id")
     result.add_argument("--eval-prefix", default="remote")
     result.add_argument("--check-only", action="store_true")
@@ -228,8 +281,7 @@ def main(argv=None) -> int:
         args = parser().parse_args(argv)
         if args.repetitions < 1:
             raise ValueError("repetitions must be >= 1")
-        if args.modes != "existing_skills":
-            raise ValueError("remote run supports only existing_skills without modifying server configs")
+        selected_mode_names(args)
         cases = cli.load_cases_path(args.cases, schema_path=args.schema, limit=args.limit)
         stand = StandClient(env_file=args.env_file, public_url=args.public_url, timeout=30)
         try:
@@ -243,7 +295,7 @@ def main(argv=None) -> int:
         with tempfile.TemporaryDirectory(prefix="b2e-bench-", dir="/tmp") as ssh_dir:
             control_path = str(Path(ssh_dir) / "ssh")
             try:
-                print("Reading remote conditions and validating catalogs in place (no LLM calls)...", flush=True)
+                print("Pinning benchmark configs and validating catalogs in place (no LLM calls)...", flush=True)
                 report = read_container(args.ssh, args.admin_container, "registry", {
                     "config_ref": args.config_ref,
                     "employee_ids": sorted({str(case.raw["employee_id"]) for case in cases}),
@@ -259,9 +311,13 @@ def main(argv=None) -> int:
                     writer.write_manifest(cli._manifest(args, prepared, writer.root.name, check_only=True))
                     print(json.dumps({"preflight": "ok", "agent_calls": 0, "results_dir": str(writer.root)}, indent=2))
                     return 0
-                print(f"Running {len(cases)} case(s) × {args.repetitions} repeat(s), existing_skills, "
-                      f"model={next(iter(prepared.selected_modes.values())).common.model_id}. "
-                      "This uses the server's paid API account.", flush=True)
+                print(
+                    f"Running {len(cases)} case(s) × {args.repetitions} repeat(s), "
+                    f"{', '.join(prepared.selected_modes)}, "
+                    f"model={next(iter(prepared.selected_modes.values())).common.model_id}. "
+                    "This uses the server's paid API account.",
+                    flush=True,
+                )
                 executor = StandSessionExecutor(
                     env_file=args.env_file,
                     public_url=args.public_url,
