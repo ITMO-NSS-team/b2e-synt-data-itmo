@@ -315,7 +315,7 @@ benchmarking/results/<eval_id>/
 Удалённый стенд: клиент и результаты находятся на ноутбуке; вопросы обрабатывает уже работающий сервер с его текущей моделью и API-ключом. **Вызовы модели платные по тарифу серверного аккаунта.**
 
 1. Включить VPN. Проверить SSH: `ssh nnikitin@10.32.1.71`. Затем выйти командой `exit`. Пользователь SSH должен иметь доступ к `docker exec`.
-2. В локальном корне репозитория выполнить `cp deploy/.env.remote.example deploy/.env.remote` и заполнить `RESEARCHER_PASSWORD` в новом файле. Он исключён из Git. Локальный ключ LLM не нужен.
+2. HTTPS Basic: пароль исследователя со стенда. Если он уже в `deploy/.env`, больше ничего не нужно. Иначе одной командой: `RESEARCHER_PASSWORD='…' make benchmark-remote CASES=benchmarking/cases`. Локальный ключ LLM не нужен.
 3. Запустить один готовый кейс:
 
    ```bash
@@ -340,7 +340,7 @@ make benchmark-remote CASES=benchmarking/cases \
 - `BENCH_REMOTE_LIMIT=1` — число выбранных кейсов, по умолчанию один.
 - `BENCH_REMOTE_SSH=nnikitin@10.32.1.71` — SSH-адрес или alias из SSH config.
 - `BENCH_REMOTE_URL=https://10.32.1.71:8443` — адрес HTTPS.
-- `BENCH_REMOTE_ENV=deploy/.env.remote` — локальные учётные данные исследователя.
+- `BENCH_REMOTE_ENV=deploy/.env` — откуда читать `RESEARCHER_PASSWORD`, если переменная окружения не задана.
 - `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — как у остальных запусков.
 - `BENCH_MODES` — по умолчанию `general_knowledge,existing_skills`; `generated_skills` remote отклоняет.
 - `BENCH_MODEL` к этой команде не применяется: используется модель сервера.

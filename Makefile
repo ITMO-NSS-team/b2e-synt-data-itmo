@@ -147,8 +147,10 @@ BENCH_TRACE_TIMEOUT ?= 300
 BENCH_MODEL ?=
 BENCH_REMOTE_SSH ?= nnikitin@10.32.1.71
 BENCH_REMOTE_URL ?= https://10.32.1.71:8443
-BENCH_REMOTE_ENV ?= deploy/.env.remote
+BENCH_REMOTE_ENV ?= deploy/.env
 BENCH_REMOTE_LIMIT ?= 1
+# So `make benchmark-remote RESEARCHER_PASSWORD=...` reaches the Python process.
+export RESEARCHER_PASSWORD
 
 benchmark-data-check:  ## убедиться, что локальный снимок данных существует
 	@test -f "$(BENCH_DATA)/manifest.json" || { \

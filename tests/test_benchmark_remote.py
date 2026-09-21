@@ -59,6 +59,7 @@ def test_defaults_use_one_case_current_config_and_phoenix():
     assert args.config_ref == "agent_config"
     assert args.trace_backend == "phoenix"
     assert args.trace_timeout == 300.0
+    assert args.env_file == "deploy/.env"
     assert not hasattr(args, "trace_attempts")
 
 

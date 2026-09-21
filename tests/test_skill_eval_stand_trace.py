@@ -186,7 +186,8 @@ def test_direct_phoenix_reads_paginated_trace_waits_and_filters(monkeypatch):
     assert observed["loaded_skills"] == []
 
 
-def test_explicit_remote_url_wins_over_env_and_host_defaults_to_remote(tmp_path):
+def test_explicit_remote_url_wins_over_env_and_host_defaults_to_remote(tmp_path, monkeypatch):
+    monkeypatch.delenv("RESEARCHER_PASSWORD", raising=False)
     env = tmp_path / ".env"
     env.write_text("RESEARCHER_PASSWORD=test-only\nPUBLIC_URL=https://localhost:8443\n")
     stand = StandClient(env_file=str(env), public_url="https://remote:8443")
@@ -271,7 +272,8 @@ def test_direct_phoenix_keeps_polling_before_any_span_lands(monkeypatch):
     assert trace["spans"] == [root]
 
 
-def test_stand_reads_phoenix_project_from_env(tmp_path):
+def test_stand_reads_phoenix_project_from_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("RESEARCHER_PASSWORD", raising=False)
     env = tmp_path / ".env"
     env.write_text(
         "RESEARCHER_PASSWORD=test-only\nPHOENIX_PROJECT=custom-project\n",
@@ -280,6 +282,17 @@ def test_stand_reads_phoenix_project_from_env(tmp_path):
     stand = StandClient(env_file=str(env), public_url="https://stand")
     try:
         assert stand.phoenix_project == "custom-project"
+    finally:
+        stand._client.close()
+        stand.phoenix_http().close()
+
+
+def test_stand_password_from_environment_does_not_need_env_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESEARCHER_PASSWORD", "from-env")
+    missing = tmp_path / "missing.env"
+    stand = StandClient(env_file=str(missing), public_url="https://stand")
+    try:
+        assert isinstance(stand._client.auth, httpx.BasicAuth)
     finally:
         stand._client.close()
         stand.phoenix_http().close()

@@ -260,7 +260,7 @@ def parser():
     result.add_argument("--eval-id")
     result.add_argument("--eval-prefix", default="remote")
     result.add_argument("--check-only", action="store_true")
-    result.add_argument("--env-file", default="deploy/.env.remote")
+    result.add_argument("--env-file", default="deploy/.env")
     result.add_argument("--timeout", type=float, default=1800.0)
     result.add_argument(
         "--trace-timeout", type=float, default=300.0,

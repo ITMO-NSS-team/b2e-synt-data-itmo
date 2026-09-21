@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -52,10 +53,15 @@ class StandClient:
         phoenix_trace_fetcher: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         env_path = Path(env_file)
-        password = dotenv_value(env_path, "RESEARCHER_PASSWORD")
+        password = (
+            (os.environ.get("RESEARCHER_PASSWORD") or "").strip()
+            or dotenv_value(env_path, "RESEARCHER_PASSWORD")
+        )
         if not password:
             raise RuntimeError(
-                f"RESEARCHER_PASSWORD is empty. Put it in {env_file}.")
+                "RESEARCHER_PASSWORD is empty. Export it or put it in "
+                f"{env_file}."
+            )
         if trace_backend not in {"research", "phoenix"}:
             raise ValueError("trace_backend must be research or phoenix")
         self.trace_backend = trace_backend
