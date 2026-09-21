@@ -44,6 +44,44 @@ class PhoenixClient:
 
     # ---------------------------------------------------------------- spans
 
+    def spans_for_trace(self, trace_id: str, *, limit: int = 20000) -> list[dict[str, Any]]:
+        """Fetch one complete trace; reject truncated or looping pagination."""
+        spans: dict[str, dict[str, Any]] = {}
+        scanned = 0
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        try:
+            while True:
+                params = {"trace_id": trace_id, "limit": 1000}
+                if cursor:
+                    params["cursor"] = cursor
+                response = self._client.get(
+                    f"/v1/projects/{self.project}/spans", params=params)
+                if response.status_code != 200:
+                    raise PhoenixUnavailable(f"Phoenix returned {response.status_code} fetching trace")
+                body = response.json()
+                batch = _as_span_list(body)
+                scanned += len(batch)
+                for span in batch:
+                    context = span.get("context") or {}
+                    if (context.get("trace_id") or span.get("trace_id")) == trace_id:
+                        span_id = context.get("span_id") or span.get("span_id")
+                        if not span_id:
+                            raise PhoenixUnavailable("Phoenix span has no span_id")
+                        spans[str(span_id)] = span
+                cursor = body.get("next_cursor") if isinstance(body, dict) else None
+                if scanned > limit:
+                    raise PhoenixUnavailable("Phoenix exceeded scan limit; trace filter may be ignored")
+                if len(spans) > limit or (len(spans) == limit and cursor):
+                    raise PhoenixUnavailable("Phoenix trace exceeds span limit; refusing partial metrics")
+                if not cursor:
+                    return list(spans.values())
+                if cursor in seen_cursors:
+                    raise PhoenixUnavailable("Phoenix pagination cursor repeated")
+                seen_cursors.add(cursor)
+        except httpx.HTTPError as exc:
+            raise PhoenixUnavailable(str(exc)) from exc
+
     def spans_for_session(self, session_id: str, *, limit: int = 1000) -> list[dict[str, Any]]:
         """Return only the traces whose root carries ``session.id``.
 
@@ -82,6 +120,7 @@ class PhoenixClient:
 
             spans: list[dict[str, Any]] = []
             cursor: str | None = None
+            seen_cursors: set[str] = set()
             trace_id_set = set(trace_ids)
             while len(spans) < limit:
                 params: list[tuple[str, Any]] = [
@@ -104,6 +143,11 @@ class PhoenixClient:
                 cursor = body.get("next_cursor") if isinstance(body, dict) else None
                 if not cursor or not batch:
                     break
+                if cursor in seen_cursors:
+                    raise PhoenixUnavailable("Phoenix pagination cursor repeated")
+                seen_cursors.add(cursor)
+            if cursor or len(spans) > limit:
+                raise PhoenixUnavailable("Phoenix session trace is truncated; refusing partial metrics")
             return spans[:limit]
         except httpx.HTTPError as exc:
             raise PhoenixUnavailable(str(exc)) from exc

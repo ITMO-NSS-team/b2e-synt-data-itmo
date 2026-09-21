@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from sim.skill_eval.stand import StandClient
 from sim.skill_eval.types import EvalCase, SessionSpec
+import httpx
 
 
 class Response:
@@ -135,3 +136,105 @@ def test_message_http_error_still_stores_the_session_trace(monkeypatch) -> None:
     assert turn.trace is not None
     assert turn.trace_id == "trace-target"
     assert turn.live_snapshot_id == "snap@1"
+
+
+def test_mixed_research_response_discards_foreign_spans():
+    from sim.skill_eval.stand import _owned_trace
+    mixed = {"tree": [
+        {"name": "b2e.turn", "context": {"trace_id": "ours"},
+         "attributes": {"session.id": "ses-ours"}, "children": [
+             {"name": "heimdall.mcp_query", "context": {"trace_id": "ours"}},
+         ]},
+        {"name": "b2e.turn", "context": {"trace_id": "foreign"},
+         "attributes": {"session.id": "ses-other"}, "children": [
+             {"name": "heimdall.get_skill", "context": {"trace_id": "foreign"}},
+         ]},
+    ]}
+    owned = _owned_trace(mixed, "ses-ours", "ours")
+    assert len(owned["spans"]) == 2
+    assert {s["context"]["trace_id"] for s in owned["spans"]} == {"ours"}
+    assert _owned_trace(mixed, "ses-ours", "foreign") is None
+
+
+def test_direct_phoenix_reads_paginated_trace_waits_and_filters(monkeypatch):
+    requests = []
+    root = {"name": "b2e.turn", "context": {"trace_id": "ours", "span_id": "root"},
+            "end_time": "2026-01-01T00:00:01Z", "attributes": {"session.id": "ses-ours"}}
+    child = {"name": "heimdall.mcp_query", "context": {"trace_id": "ours", "span_id": "child"}}
+    foreign = {"name": "heimdall.get_skill", "context": {"trace_id": "foreign", "span_id": "bad"}}
+    def handler(request):
+        requests.append(request)
+        assert request.url.path == "/phoenix/v1/projects/b2e-sim/spans"
+        assert request.url.params["trace_id"] == "ours"
+        assert "filter" not in request.url.params
+        if request.url.params.get("cursor") == "page2":
+            return httpx.Response(200, json={"data": [child, foreign]})
+        return httpx.Response(200, json={"data": [root], "next_cursor": "page2"})
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_attempts = 3
+    stand._phoenix_http = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    trace = stand._wait_trace("ses-ours", trace_id="ours")
+    assert len(requests) == 4  # two complete identical reads
+    assert len(trace["spans"]) == 2
+    from sim.benchmark.execution import AgentTurn, trace_observations
+    observed = trace_observations(AgentTurn("", trace=trace))
+    assert observed["mcp_query_calls"] == 1
+    assert observed["loaded_skills"] == []
+
+
+def test_direct_phoenix_rejects_wrong_session_even_with_requested_trace_id(monkeypatch):
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_attempts = 2
+    stand._phoenix_http = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": [{
+            "name": "b2e.turn", "context": {"trace_id": "ours", "span_id": "root"},
+            "end_time": "2026-01-01", "attributes": {"session.id": "other"},
+        }]})), base_url="https://stand/phoenix")
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    assert stand._wait_trace("ses-ours", trace_id="ours") is None
+
+
+def test_explicit_remote_url_wins_over_env_and_host_defaults_to_remote(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("RESEARCHER_PASSWORD=test-only\nPUBLIC_URL=https://localhost:8443\n")
+    stand = StandClient(env_file=str(env), public_url="https://remote:8443")
+    try:
+        assert stand.public_url == "https://remote:8443"
+        assert stand._client.headers["Host"] == "remote"
+    finally:
+        stand._client.close()
+        stand.phoenix_http().close()
+
+
+def test_direct_phoenix_waits_for_reported_heimdall_calls(monkeypatch):
+    root = {"name": "b2e.turn", "context": {"trace_id": "ours", "span_id": "zzz-root"},
+            "end_time": "2026-01-01", "attributes": {"session.id": "ses-ours"}}
+    child = {"name": "heimdall.mcp_query", "context": {"trace_id": "ours", "span_id": "aaa-child"},
+             "attributes": {"b2e.heimdall.endpoint": "mcp_query"}}
+    calls = []
+    def handler(request):
+        calls.append(request)
+        # A stable ended root alone is not proof that tool spans arrived.
+        return httpx.Response(200, json={"data": [root] if len(calls) <= 2 else [root, child]})
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_attempts = 4
+    stand._phoenix_http = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    trace = stand._wait_trace("ses-ours", trace_id="ours", expected_heimdall_calls=1)
+    assert len(calls) == 4
+    from sim.skill_eval.scoring.trace import root_span_id
+    assert root_span_id(trace) == "zzz-root"
+
+
+def test_failed_phoenix_never_falls_back_to_unfiltered_research(monkeypatch):
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_attempts = 2
+    stand._phoenix_http = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(503)), base_url="https://stand/phoenix")
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    assert stand._wait_trace("ses-ours", trace_id="ours") is None

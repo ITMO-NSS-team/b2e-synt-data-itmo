@@ -142,6 +142,30 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
     assert all(result.score["metrics"]["answer_accuracy"] == 1 for result in results)
 
 
+def test_runner_treats_blocked_bash_as_completed_when_answer_exists() -> None:
+    class DeniedExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            turn = super().execute(request)
+            return AgentTurn(
+                turn.answer, turn.stats, turn.trace, error="['denied:Bash']",
+                session_id=turn.session_id, trace_id=turn.trace_id,
+                fingerprint=turn.fingerprint,
+            )
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=DeniedExecutor(),
+    )
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+    assert result.status == "completed"
+    assert result.response["response"]["error"] is None
+    assert result.score["metrics"]["answer_accuracy"] == 1
+    assert result.score["reasons"] == []
+
+
 def test_runner_skips_draft_and_mock_without_activation() -> None:
     executor, activator = FakeExecutor(), FakeActivator()
     states = {

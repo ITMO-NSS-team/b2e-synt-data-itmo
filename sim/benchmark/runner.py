@@ -10,7 +10,8 @@ from .contracts import (
     PROMPT_RENDERER_VERSION, render_agent_query, response_contract_hash,
 )
 from .execution import (
-    AgentRequest, AgentTurn, ModeActivator, SessionExecutor, trace_observations,
+    AgentRequest, AgentTurn, ModeActivator, SessionExecutor,
+    fatal_turn_error, trace_observations,
 )
 from .modes import ModeConfig, ModeConfigs
 from .preflight import PreflightResult
@@ -122,8 +123,9 @@ class BenchmarkRunner:
         finally:
             self.activator.deactivate(mode)
 
-        fingerprint_error = _fingerprint_error(checked, turn)
-        effective_error = turn.error or fingerprint_error
+        fatal_error = fatal_turn_error(turn.error, answer=turn.answer)
+        fingerprint_error = None if fatal_error else _fingerprint_error(checked, turn)
+        effective_error = fatal_error or fingerprint_error
         observations = trace_observations(turn)
         normalized = normalize_answer(turn.answer, case.raw["response_contract"])
         metrics = calculate_metrics(case, mode, normalized, observations)
@@ -206,7 +208,7 @@ def _fingerprint_error(
         Error string if fingerprints differ or are missing; ``None`` if the
         turn already failed or fingerprints match.
     """
-    if turn.error:
+    if fatal_turn_error(turn.error, answer=turn.answer):
         return None
     if checked.fingerprint is None:
         return "preflight returned no experiment fingerprint"

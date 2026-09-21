@@ -42,21 +42,25 @@ def proxy_client(base: str, *, public_host: str, auth: tuple[str, str],
 class StandClient:
     def __init__(
         self,
-        public_url: str = "https://localhost:8443",
-        public_host: str = "localhost",
+        public_url: str | None = None,
+        public_host: str | None = None,
         env_file: str = "deploy/.env",
         timeout: float = 180.0,
         trace_attempts: int = 12,
+        trace_backend: str = "research",
     ) -> None:
         env_path = Path(env_file)
         password = dotenv_value(env_path, "RESEARCHER_PASSWORD")
         if not password:
             raise RuntimeError(
-                "RESEARCHER_PASSWORD is empty. Put it in deploy/.env.")
+                f"RESEARCHER_PASSWORD is empty. Put it in {env_file}.")
+        if trace_backend not in {"research", "phoenix"}:
+            raise ValueError("trace_backend must be research or phoenix")
+        self.trace_backend = trace_backend
         self.public_url = (
-            dotenv_value(env_path, "PUBLIC_URL") or public_url
+            public_url or dotenv_value(env_path, "PUBLIC_URL") or "https://localhost:8443"
         ).rstrip("/")
-        self.public_host = dotenv_value(env_path, "PUBLIC_HOST") or public_host
+        self.public_host = public_host or dotenv_value(env_path, "PUBLIC_HOST") or urlparse(self.public_url).hostname or "localhost"
         self.timeout = timeout
         self.trace_attempts = trace_attempts
         auth = ("researcher", password)
@@ -99,34 +103,81 @@ class StandClient:
             )
         payload = reply.json()
         stats = payload.get("stats") or {}
-        trace = self._wait_trace(session_id)
+        trace = self._wait_trace(
+            session_id, trace_id=payload.get("trace_id"),
+            expected_heimdall_calls=int(stats.get("heimdall_calls") or 0),
+        )
         skills = retrieved_skills(trace)
         return TurnResult(
             session_id=session_id,
             answer=str(payload.get("answer") or ""),
             stats=stats,
             trace=trace,
-            error=None,
+            error=(str(payload.get("errors")) if payload.get("errors") else None),
             retrieved_skills=skills,
             heimdall_calls=int(stats.get("heimdall_calls") or 0),
             tool_calls=int(stats.get("tool_calls") or 0),
             total_tokens=int(stats.get("total_tokens") or 0),
             latency_ms=_ms(started),
-            trace_id=_trace_id(trace),
+            trace_id=payload.get("trace_id") or _trace_id(trace),
             root_span_id=root_span_id(trace),
             live_snapshot_id=live_snapshot,
             fingerprint=fingerprint,
         )
 
-    def _wait_trace(self, session_id: str) -> dict[str, Any] | None:
+    def _wait_trace(
+        self, session_id: str, *, trace_id: str | None = None,
+        expected_heimdall_calls: int = 0,
+    ) -> dict[str, Any] | None:
+        if getattr(self, "trace_backend", "research") == "phoenix":
+            return self._wait_phoenix_trace(session_id, trace_id, expected_heimdall_calls)
         last: httpx.Response | None = None
         for _ in range(self.trace_attempts):
             last = self._client.get(f"/research/traces/{session_id}")
             if last.status_code == 200:
                 payload = last.json()
-                if _trace_contains_session(payload, session_id):
-                    return payload
+                owned = _owned_trace(payload, session_id, trace_id)
+                if owned is not None:
+                    return owned
             time.sleep(1.0)
+        return None
+
+    def _wait_phoenix_trace(
+        self, session_id: str, trace_id: str | None, expected_heimdall_calls: int,
+    ) -> dict[str, Any] | None:
+        """Bypass old research-api filtering; accept only this session's trace.
+
+        Wait for two identical complete paginated reads, including an ended
+        root. Never fall back to a project-wide trace on failure.
+        """
+        from sim.research.phoenix_client import PhoenixClient, PhoenixUnavailable
+        phoenix = PhoenixClient("", client=self._phoenix_http)
+        previous: list[dict[str, Any]] | None = None
+        for attempt in range(self.trace_attempts):
+            try:
+                spans = (
+                    phoenix.spans_for_trace(trace_id)
+                    if trace_id else phoenix.spans_for_session(session_id, limit=20000)
+                )
+                owned = _owned_trace({"spans": spans}, session_id, trace_id)
+                ended = any(
+                    span.get("end_time") and _trace_contains_session({"spans": [span]}, session_id)
+                    for span in spans
+                )
+                if owned is not None and ended and _bridge_count(owned["spans"]) >= expected_heimdall_calls:
+                    current = sorted(owned["spans"], key=lambda s: (
+                        not _trace_contains_session({"spans": [s]}, session_id),
+                        str(s.get("context", {}).get("span_id", "")),
+                    ))
+                    if current == previous:
+                        return {"session_id": session_id, "spans": current, "source": "phoenix"}
+                    previous = current
+                else:
+                    previous = None
+            except (PhoenixUnavailable, ValueError):
+                previous = None
+            if attempt + 1 < self.trace_attempts:
+                time.sleep(1.0)
         return None
 
     def phoenix_http(self) -> httpx.Client:
@@ -199,3 +250,31 @@ def _trace_contains_session(trace: dict[str, Any], session_id: str) -> bool:
         if isinstance(children, list):
             pending.extend(children)
     return False
+
+
+def _owned_trace(
+    trace: dict[str, Any], session_id: str, expected_trace_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Drop foreign spans even when an old server returns a mixed tree."""
+    def flatten(items):
+        for span in items:
+            if isinstance(span, dict):
+                yield {key: value for key, value in span.items() if key != "children"}
+                yield from flatten(span.get("children") or [])
+
+    spans = list(flatten(trace.get("tree") or trace.get("spans") or []))
+    def tid(span):
+        return (span.get("context") or {}).get("trace_id") or span.get("trace_id")
+
+    ids = {tid(span) for span in spans if _trace_contains_session({"spans": [span]}, session_id)} - {None}
+    if expected_trace_id:
+        ids &= {expected_trace_id}
+    if not ids:
+        return None
+    return {"session_id": session_id, "spans": [span for span in spans if tid(span) in ids]}
+
+
+def _bridge_count(spans: list[dict[str, Any]]) -> int:
+    """Actual Heimdall HTTP spans, not duplicated harness tool spans."""
+    from sim.research.phoenix_client import _attr
+    return sum(bool(_attr(span, "b2e.heimdall.endpoint")) for span in spans)

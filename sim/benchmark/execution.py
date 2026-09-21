@@ -4,6 +4,7 @@ No gold fields enter this module's request contract.
 """
 from __future__ import annotations
 
+import ast
 import json
 import re
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from typing import Any, Callable, Mapping, Protocol
 from .modes import BenchmarkMode, ModeConfig, catalog_hash
 
 _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
+_HARNESS_DENIAL = re.compile(r"^denied:[A-Z][A-Za-z0-9]*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,8 @@ class AgentTurn:
         stats: Duration, token and tool counters from the stand client.
         trace: Phoenix-style span tree, if retrieved.
         error: Transport or missing-trace error; ``None`` on a finished turn.
+            Successful harness denials such as ``denied:Bash`` stay on the
+            stand payload but are not treated as a failed turn.
         session_id: Stand session id.
         trace_id: Root trace id, when present.
         fingerprint: Live experiment fingerprint reported by the agent.
@@ -62,6 +66,45 @@ class ActivatedMode:
     """
     config_ref: str
     catalog_hash: str | None
+
+
+def fatal_turn_error(error: str | None, *, answer: str) -> str | None:
+    """Keep transport failures; drop successful harness denials when an answer exists.
+
+    The agent reports ``denied:Bash`` after Claude Code refuses a forbidden
+    tool. That is the intended boundary, not a broken session: the model still
+    finished the turn. Mixed or non-denial errors stay fatal.
+
+    Args:
+        error: Stand ``errors`` payload, already stringified.
+        answer: Final model text for this turn.
+
+    Returns:
+        The original error when the turn should be ``execution_failed``;
+        ``None`` when only harness denials remain and ``answer`` is non-empty.
+    """
+    if not error:
+        return None
+    items = _error_items(error)
+    if (
+        items
+        and all(_HARNESS_DENIAL.fullmatch(item) for item in items)
+        and answer.strip()
+    ):
+        return None
+    return error
+
+
+def _error_items(error: str) -> list[str]:
+    try:
+        value = ast.literal_eval(error)
+    except (SyntaxError, ValueError):
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return value
+    return []
 
 
 class SessionExecutor(Protocol):

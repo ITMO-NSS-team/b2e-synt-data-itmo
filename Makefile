@@ -15,7 +15,7 @@ PROFILE ?=
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
         rebuild sim-test demo eval-skills eval-deps pin-eval-configs \
         benchmark-data-check benchmark-live-config benchmark-check \
-        benchmark-smoke benchmark-run
+        benchmark-smoke benchmark-run benchmark-remote
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -144,6 +144,10 @@ BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
 BENCH_EVAL_ID ?=
 BENCH_TIMEOUT ?= 1800
 BENCH_MODEL ?=
+BENCH_REMOTE_SSH ?= nnikitin@10.32.1.71
+BENCH_REMOTE_URL ?= https://10.32.1.71:8443
+BENCH_REMOTE_ENV ?= deploy/.env.remote
+BENCH_REMOTE_LIMIT ?= 1
 
 benchmark-data-check:  ## убедиться, что локальный снимок данных существует
 	@test -f "$(BENCH_DATA)/manifest.json" || { \
@@ -164,12 +168,20 @@ benchmark-check: benchmark-live-config  ## полный preflight всех ready
 	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) --check-only --eval-prefix check \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
-benchmark-smoke: benchmark-live-config  ## первые два ready-кейса × режимы, один повтор
-	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) --limit 2 --repetitions 1 \
+benchmark-smoke: benchmark-live-config  ## первый ready-кейс × режимы, один повтор
+	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) --limit 1 --repetitions 1 \
 		--eval-prefix smoke \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
 benchmark-run: benchmark-live-config  ## все ready-кейсы × режимы; BENCH_REPETITIONS=N
 	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) \
 		--repetitions "$(BENCH_REPETITIONS)" --eval-prefix benchmark \
+		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
+
+benchmark-remote:  ## текущая модель сервера, первый ready-кейс; без Compose и изменения конфигов
+	$(PY) -m sim.benchmark.remote --cases "$(CASES)" \
+		--ssh "$(BENCH_REMOTE_SSH)" --public-url "$(BENCH_REMOTE_URL)" \
+		--env-file "$(BENCH_REMOTE_ENV)" --limit "$(BENCH_REMOTE_LIMIT)" \
+		--repetitions "$(BENCH_REPETITIONS)" --timeout "$(BENCH_TIMEOUT)" \
+		--results "$(BENCH_RESULTS)" \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)

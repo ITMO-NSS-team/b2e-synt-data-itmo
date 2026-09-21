@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
-from sim.research.phoenix_client import PhoenixClient
+from sim.research.phoenix_client import PhoenixClient, PhoenixUnavailable
 
 
 def _span(session_id: str | None, trace_id: str, span_id: str) -> dict:
@@ -54,3 +55,16 @@ def test_spans_for_session_does_not_fetch_project_when_root_is_absent() -> None:
 
     assert client.spans_for_session("ses-missing") == []
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize("limit, match", [(1, "span limit"), (20000, "cursor repeated")])
+def test_trace_rejects_truncation_or_repeated_cursor(limit, match):
+    def handler(request):
+        return httpx.Response(200, json={
+            "data": [_span("ses-target", "trace-target", "root")],
+            "next_cursor": "same",
+        })
+    http = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://phoenix")
+    client = PhoenixClient("http://phoenix", client=http)
+    with pytest.raises(PhoenixUnavailable, match=match):
+        client.spans_for_trace("trace-target", limit=limit)

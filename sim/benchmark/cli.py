@@ -130,11 +130,14 @@ def load_live_config(path: str | Path) -> dict[str, Any]:
     return payload
 
 
-def common_conditions(payload: dict[str, Any]) -> CommonConditions:
-    """Derive shared conditions from pinned skills-on/off configs.
+def common_conditions(
+    payload: dict[str, Any], mode_names: Iterable[str] = DEFAULT_MODES,
+) -> CommonConditions:
+    """Derive shared conditions from the selected pinned configurations.
 
     Args:
         payload: Validated live-stand manifest.
+        mode_names: Configurations to compare; remote can use only existing_skills.
 
     Returns:
         CommonConditions copied into every mode.
@@ -145,17 +148,20 @@ def common_conditions(payload: dict[str, Any]) -> CommonConditions:
     refs = payload["refs"]
     configs = payload["configs"]
     prompts = payload["prompt_versions"]
-    required_modes = set(DEFAULT_MODES)
+    mode_names = tuple(mode_names)
+    if not mode_names:
+        raise ValueError("at least one mode is required for common conditions")
+    required_modes = set(mode_names)
     if not required_modes <= refs.keys():
         raise ValueError("live stand manifest has no pinned skills-on/off refs")
-    selected = [configs[refs[name]] for name in DEFAULT_MODES]
+    selected = [configs[refs[name]] for name in mode_names]
     stable_fields = (
         "model_id", "temperature", "code_execution", "conversation_mode",
     )
     for field in stable_fields:
         if len({json.dumps(config.get(field), sort_keys=True) for config in selected}) != 1:
             raise ValueError(f"pinned benchmark configs differ by {field}")
-    prompt_refs = {prompts[refs[name]] for name in DEFAULT_MODES}
+    prompt_refs = {prompts[refs[name]] for name in mode_names}
     if len(prompt_refs) != 1:
         raise ValueError("pinned benchmark configs resolve to different prompts")
     emulator = payload["emulator"]
@@ -321,16 +327,19 @@ def check(args: argparse.Namespace) -> ResultWriter:
     return writer
 
 
-def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
-    """Execute the prepared matrix against the Compose stand.
+def run(
+    args: argparse.Namespace, *, prepared: PreparedBenchmark | None = None,
+) -> tuple[list[Any], ResultWriter]:
+    """Execute the prepared matrix against a local or remote stand.
 
     Args:
         args: Parsed CLI namespace including timeout and repetitions.
+        prepared: Optional remote preflight; otherwise validate local snapshots.
 
     Returns:
         Pair of run results and the writer that stored them.
     """
-    prepared = prepare(args)
+    prepared = prepared or prepare(args)
     eval_id = _eval_id(args, "benchmark")
     writer = ResultWriter(args.results, eval_id)
     writer.write_manifest(_manifest(args, prepared, eval_id, check_only=False))
@@ -342,6 +351,8 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
             env_file=args.env_file,
             timeout=args.timeout,
             trace_attempts=args.trace_attempts,
+            trace_backend=getattr(args, "trace_backend", "research"),
+            **({"public_url": args.public_url} if getattr(args, "public_url", None) else {}),
         ),
         writer=writer,
     )

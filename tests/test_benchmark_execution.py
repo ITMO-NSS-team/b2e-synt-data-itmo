@@ -7,7 +7,7 @@ import pytest
 
 from sim.benchmark.execution import (
     AgentRequest, AgentTurn, PinnedConfigActivator, StandSessionExecutor,
-    trace_observations,
+    fatal_turn_error, trace_observations,
 )
 from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
 
@@ -103,6 +103,19 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     assert observed["mcp_query_rows"] == [0]
     assert observed["agent_duration_ms"] == 40
     assert observed["tool_time_ms"] == 12
+
+
+def test_fatal_turn_error_ignores_successful_harness_denials() -> None:
+    answer = '{"result": [{"grade": 7, "employee_count": 1}], "message": null}'
+    assert fatal_turn_error("['denied:Bash']", answer=answer) is None
+    assert fatal_turn_error("['denied:Bash', 'denied:Write']", answer=answer) is None
+    assert fatal_turn_error("['denied:Bash']", answer="  ") == "['denied:Bash']"
+    assert fatal_turn_error("['denied:Bash', 'HTTP 502']", answer=answer) == (
+        "['denied:Bash', 'HTTP 502']"
+    )
+    assert fatal_turn_error("trace unavailable for session ses-1", answer=answer) == (
+        "trace unavailable for session ses-1"
+    )
 
 
 def test_stand_executor_marks_missing_session_trace_as_error(monkeypatch) -> None:
