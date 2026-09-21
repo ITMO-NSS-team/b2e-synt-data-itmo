@@ -118,7 +118,7 @@ def test_fatal_turn_error_ignores_successful_harness_denials() -> None:
     )
 
 
-def test_stand_executor_marks_missing_session_trace_as_error(monkeypatch) -> None:
+def test_stand_executor_leaves_missing_trace_to_the_runner(monkeypatch) -> None:
     from sim.skill_eval.types import TurnResult
 
     class TraceMissingStand:
@@ -141,4 +141,6 @@ def test_stand_executor_marks_missing_session_trace_as_error(monkeypatch) -> Non
         metadata={"case_id": "case-1"},
     ))
 
-    assert turn.error == "trace unavailable for session ses-target"
+    assert turn.error is None
+    assert turn.trace is None
+    assert turn.session_id == "ses-target"

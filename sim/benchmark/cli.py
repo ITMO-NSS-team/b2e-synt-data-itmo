@@ -14,7 +14,7 @@ from .execution import PinnedConfigActivator, StandSessionExecutor
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes
 from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
-from .results import ResultWriter
+from .results import ResultWriter, summarize_results
 from .runner import BenchmarkRunner
 
 DEFAULT_MODES = (
@@ -386,7 +386,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--check-only", action="store_true")
     result.add_argument("--env-file", default=ENV_RELATIVE)
     result.add_argument("--timeout", type=float, default=1800.0)
-    result.add_argument("--trace-attempts", type=int, default=30)
+    result.add_argument(
+        "--trace-attempts", type=int, default=30,
+        help="Give up after this many unchanged incomplete Phoenix snapshots; "
+        "a growing trace keeps polling",
+    )
     return result
 
 
@@ -397,8 +401,9 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument vector; ``None`` uses ``sys.argv``.
 
     Returns:
-        ``0`` on a clean check or fully completed runs; ``2`` if preflight
-        failed, a turn did not complete, or a response carried an error.
+        ``0`` after a finished matrix. Unscored or invalid-condition cells are
+        listed in ``summary.json`` and do not fail the process. ``2`` if
+        preflight or setup failed before any LLM call.
     """
     try:
         args = parser().parse_args(argv)
@@ -413,21 +418,34 @@ def main(argv: list[str] | None = None) -> int:
             }, ensure_ascii=False, indent=2))
             return 0
         results, writer = run(args)
-        failures = [
-            item for item in results
-            if item.status != "completed"
-            or (item.response and item.response.get("response", {}).get("error"))
-        ]
-        print(json.dumps({
-            "results_dir": str(writer.root),
-            "runs": len(results),
-            "pipeline_failures": len(failures),
-            "summary": str(writer.root / "summary.json"),
-        }, ensure_ascii=False, indent=2))
-        return 2 if failures else 0
+        print(json.dumps(_finished_report(results, writer), ensure_ascii=False, indent=2))
+        return 0
     except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"benchmark failed before completion: {exc}", file=sys.stderr)
         return 2
+
+
+def _finished_report(results: list[Any], writer: ResultWriter) -> dict[str, Any]:
+    """Counts for a matrix that ran to the end; review cells are not failures.
+
+    Args:
+        results: All matrix cells, including skips and review statuses.
+        writer: Destination that already contains ``summary.json``.
+
+    Returns:
+        JSON-serializable report printed to stdout.
+    """
+    summary = summarize_results(results)
+    return {
+        "results_dir": str(writer.root),
+        "runs": len(results),
+        "n_completed": summary["n_runs"],
+        "n_review": len(summary["review"]),
+        "n_normalization_pending": summary["n_normalization_pending"],
+        "n_condition_invalid": summary["n_condition_invalid"],
+        "n_unscored": summary["n_unscored"],
+        "summary": str(writer.root / "summary.json"),
+    }
 
 
 if __name__ == "__main__":

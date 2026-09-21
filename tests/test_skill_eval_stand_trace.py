@@ -230,6 +230,35 @@ def test_direct_phoenix_waits_for_reported_heimdall_calls(monkeypatch):
     assert root_span_id(trace) == "zzz-root"
 
 
+def test_direct_phoenix_keeps_polling_while_spans_still_arrive(monkeypatch):
+    root = {"name": "b2e.turn", "context": {"trace_id": "ours", "span_id": "root"},
+            "end_time": "2026-01-01", "attributes": {"session.id": "ses-ours"}}
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        spans = [root]
+        # More polls than trace_attempts: the old wall-clock loop would stop here.
+        n_children = min(len(calls), 6)
+        for index in range(n_children):
+            spans.append({
+                "name": "heimdall.mcp_query",
+                "context": {"trace_id": "ours", "span_id": f"child-{index}"},
+                "attributes": {"b2e.heimdall.endpoint": "mcp_query"},
+            })
+        return httpx.Response(200, json={"data": spans})
+
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_attempts = 2
+    stand._phoenix_http = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    trace = stand._wait_trace("ses-ours", trace_id="ours", expected_heimdall_calls=6)
+    assert len(calls) == 7
+    assert len(trace["spans"]) == 7
+
+
 def test_failed_phoenix_never_falls_back_to_unfiltered_research(monkeypatch):
     stand = object.__new__(StandClient)
     stand.trace_backend = "phoenix"

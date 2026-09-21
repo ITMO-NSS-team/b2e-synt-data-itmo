@@ -8,13 +8,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import os
 import re
 import sys
 
 from heimdall.catalog.model import Catalog
 from heimdall.engine.compile import compile_query
 from heimdall.skills.registry import EXTENSIONS, Registry
-from sim.benchmark.env import load_env, require_env
 
 _JSON_FENCE = re.compile(r"[\x60]{3}(json|jsonc)\s*\n(.*?)\n[\x60]{3}", re.IGNORECASE | re.DOTALL)
 

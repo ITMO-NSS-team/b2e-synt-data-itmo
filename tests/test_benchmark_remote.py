@@ -109,6 +109,8 @@ def test_probe_is_self_contained_and_uses_shared_validators(monkeypatch, tmp_pat
     assert "/app/heimdall-skills" not in source
     assert "/app/catalog/snapshot.json" not in source
     assert "require_env" in source
+    assert "from sim.benchmark" not in source
+    assert "sim.benchmark.env" not in source
 
 
 def test_ssh_sends_only_stdin_script_no_install_or_shell_interpolation(monkeypatch):

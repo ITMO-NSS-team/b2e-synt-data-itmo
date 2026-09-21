@@ -17,8 +17,8 @@ class RunResult:
         case_id: Authorial case id.
         mode: Arm name.
         repetition: 1-based repeat index.
-        status: ``completed``, ``normalization_pending``, ``execution_failed``,
-            or a preflight skip status.
+        status: ``completed``, ``normalization_pending``, ``condition_invalid``,
+            ``unscored``, or a preflight skip status.
         response: Raw stand payload plus case snapshot; ``None`` if skipped.
         score: Metrics and normalized answer; ``None`` if skipped.
         trace: Span tree written beside the response, if any.
@@ -112,28 +112,48 @@ class ResultWriter:
         return path
 
 
+_REVIEW_STATUSES = frozenset({
+    "normalization_pending", "condition_invalid", "unscored",
+})
+_SKIP_STATUSES = frozenset({"draft_skipped", "mock_skipped"})
+
+
 def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
-    """Aggregate completed runs by mode and compare overlapping arms.
+    """Aggregate completed runs by mode and list cells that need manual review.
 
     Args:
         results: Cells from one evaluation, including skips.
 
     Returns:
-        Mapping with ``n_runs``, skip counts, ``by_mode`` means and
-        ``comparisons`` (delta / relative change). Only ``completed`` rows
-        with a score enter the means.
+        Mapping with ``n_runs``, skip/review counts, ``review`` rows,
+        ``by_mode`` means and ``comparisons``. Only ``completed`` rows with a
+        score enter the means.
     """
     rows = list(results)
     complete = [row for row in rows if row.status == "completed" and row.score]
+    review = [
+        {
+            "run_id": row.run_id,
+            "case_id": row.case_id,
+            "mode": row.mode,
+            "status": row.status,
+            "reason": _review_reason(row),
+        }
+        for row in rows
+        if row.status in _REVIEW_STATUSES
+    ]
     modes = sorted({row.mode for row in rows})
     by_mode: dict[str, dict[str, Any]] = {}
     for mode in modes:
         group = [row for row in complete if row.mode == mode]
-        skipped = [row for row in rows if row.mode == mode and row.status != "completed"]
+        skipped = [row for row in rows if row.mode == mode and row.status in _SKIP_STATUSES]
         metrics = [row.score["metrics"] for row in group]
         by_mode[mode] = {
             "n_runs": len(group),
             "n_skipped": len(skipped),
+            "n_review": sum(
+                row.mode == mode and row.status in _REVIEW_STATUSES for row in rows
+            ),
             **{
                 name: _mean(metric.get(name) for metric in metrics)
                 for name in (
@@ -157,11 +177,22 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
         comparisons[key] = _compare(by_mode[target], by_mode[baseline])
     return {
         "n_runs": len(complete),
+        "n_skipped": sum(row.status in _SKIP_STATUSES for row in rows),
         "n_normalization_pending": sum(row.status == "normalization_pending" for row in rows),
-        "n_skipped": len(rows) - len(complete),
+        "n_condition_invalid": sum(row.status == "condition_invalid" for row in rows),
+        "n_unscored": sum(row.status == "unscored" for row in rows),
+        "review": review,
         "by_mode": by_mode,
         "comparisons": comparisons,
     }
+
+
+def _review_reason(row: RunResult) -> str | None:
+    if row.score and row.score.get("reasons"):
+        return row.score["reasons"][0]
+    response = (row.response or {}).get("response") or {}
+    error = response.get("error")
+    return str(error) if error else None
 
 
 def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:

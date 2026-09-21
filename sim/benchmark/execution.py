@@ -80,8 +80,8 @@ def fatal_turn_error(error: str | None, *, answer: str) -> str | None:
         answer: Final model text for this turn.
 
     Returns:
-        The original error when the turn should be ``execution_failed``;
-        ``None`` when only harness denials remain and ``answer`` is non-empty.
+        The original error when the cell should be ``unscored``; ``None``
+        when only harness denials remain and ``answer`` is non-empty.
     """
     if not error:
         return None
@@ -271,13 +271,7 @@ class StandSessionExecutor:
                 "latency_ms": turn.latency_ms,
             },
             trace=turn.trace,
-            error=(
-                turn.error
-                or (
-                    f"trace unavailable for session {turn.session_id}"
-                    if turn.session_id and turn.trace is None else None
-                )
-            ),
+            error=turn.error,
             session_id=turn.session_id,
             trace_id=turn.trace_id,
             fingerprint=turn.fingerprint,

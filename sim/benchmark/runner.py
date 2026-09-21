@@ -16,7 +16,7 @@ from .execution import (
 from .modes import ModeConfig, ModeConfigs
 from .preflight import PreflightResult
 from .results import ResultWriter, RunResult
-from .scoring import calculate_metrics, normalize_answer
+from .scoring import NormalizedAnswer, calculate_metrics, normalize_answer
 from sim.fingerprint import RunFingerprint
 
 
@@ -77,7 +77,7 @@ class BenchmarkRunner:
     def run_one(
         self, case: BenchmarkCase, mode: ModeConfig, repetition: int,
     ) -> RunResult:
-        """Run, skip or fail a single matrix cell.
+        """Run one matrix cell, or skip it before any LLM call.
 
         Args:
             case: Authorial case.
@@ -86,7 +86,7 @@ class BenchmarkRunner:
 
         Returns:
             Result with a preflight skip status, ``completed``,
-            ``normalization_pending`` or ``execution_failed``.
+            ``normalization_pending``, ``condition_invalid`` or ``unscored``.
         """
         run_id = f"{self.eval_id}-{case.case_id}-{mode.name}-{repetition:02d}"
         group_id = f"{self.eval_id}-{case.case_id}-{repetition:02d}"
@@ -123,23 +123,15 @@ class BenchmarkRunner:
         finally:
             self.activator.deactivate(mode)
 
-        fatal_error = fatal_turn_error(turn.error, answer=turn.answer)
-        fingerprint_error = None if fatal_error else _fingerprint_error(checked, turn)
-        effective_error = fatal_error or fingerprint_error
         observations = trace_observations(turn)
         normalized = normalize_answer(turn.answer, case.raw["response_contract"])
+        status, review_reason = _classify_turn(checked, turn, normalized)
         metrics = calculate_metrics(case, mode, normalized, observations)
-        if effective_error:
-            metrics["answer_accuracy"] = 0
-            metrics["exact_match"] = 0
-            metrics["outcome_accuracy"] = 0
-            if metrics["correct_refusal"] is not None:
-                metrics["correct_refusal"] = 0
-        status = (
-            "execution_failed" if effective_error else
-            "normalization_pending" if normalized.value is None else
-            "completed"
-        )
+        if status != "completed":
+            for name in (
+                "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
+            ):
+                metrics[name] = None
         response = {
             "condition_id": checked.fingerprint.condition_id if checked.fingerprint else None,
             "catalog_hash": activated.catalog_hash,
@@ -155,17 +147,18 @@ class BenchmarkRunner:
                 "prompt_renderer_version": PROMPT_RENDERER_VERSION,
                 "evaluation_contract": case.raw["evaluation_contract"],
             },
-            "response": {"raw_answer": turn.answer, "error": effective_error},
+            "response": {"raw_answer": turn.answer, "error": review_reason},
             "observations": observations,
             "session_id": turn.session_id,
             "trace_id": turn.trace_id,
             "live_fingerprint": turn.fingerprint,
         }
         reasons = []
-        if effective_error:
-            reasons.append(effective_error)
-        if normalized.error:
-            reasons.append(normalized.error)
+        if review_reason:
+            reasons.append(review_reason)
+        if normalized.error and status == "normalization_pending":
+            if normalized.error not in reasons:
+                reasons.append(normalized.error)
         score = {
             "run_id": run_id,
             "scorer_version": self.scorer_version,
@@ -195,21 +188,46 @@ def _mode_list(
     return sorted(values, key=lambda mode: mode.name)
 
 
+def _classify_turn(
+    checked: PreflightResult, turn: AgentTurn, normalized: NormalizedAnswer,
+) -> tuple[str, str | None]:
+    """Label a finished stand turn without aborting the rest of the matrix.
+
+    Args:
+        checked: Preflight result that issued the expected fingerprint.
+        turn: Live stand turn.
+        normalized: Extracted JSON, or a schema/extraction failure.
+
+    Returns:
+        Status and a review reason. ``completed`` has a ``None`` reason.
+    """
+    fatal_error = fatal_turn_error(turn.error, answer=turn.answer)
+    if fatal_error:
+        return "unscored", fatal_error
+    fingerprint_error = _fingerprint_error(checked, turn)
+    if fingerprint_error:
+        return "condition_invalid", fingerprint_error
+    if turn.trace is None:
+        session = turn.session_id or "unknown"
+        return "unscored", f"trace unavailable for session {session}"
+    if normalized.value is None:
+        return "normalization_pending", normalized.error
+    return "completed", None
+
+
 def _fingerprint_error(
     checked: PreflightResult, turn: AgentTurn,
 ) -> str | None:
-    """Refuse results produced under conditions other than preflight approved.
+    """Detect live conditions that drifted from preflight.
 
     Args:
         checked: Preflight result that issued the expected fingerprint.
         turn: Live stand turn.
 
     Returns:
-        Error string if fingerprints differ or are missing; ``None`` if the
-        turn already failed or fingerprints match.
+        Review reason if fingerprints differ or are missing; ``None`` if they
+        match. Does not abort the evaluation.
     """
-    if fatal_turn_error(turn.error, answer=turn.answer):
-        return None
     if checked.fingerprint is None:
         return "preflight returned no experiment fingerprint"
     if turn.fingerprint is None:

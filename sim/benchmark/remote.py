@@ -21,6 +21,7 @@ from sim.skill_eval.stand import StandClient
 
 from . import cli
 from .catalog_snapshots import verify_snapshot
+from .env import load_env, require_env
 from .execution import PinnedConfigActivator
 from .modes import ModeConfig, SKILL_TOOLS, _loaded_registry, _skill_files, catalog_hash
 from .preflight import PreflightResult, _check_query, validate_skill_catalog
@@ -30,8 +31,11 @@ from .path_lib import SCHEMA_RELATIVE
 def probe_source() -> str:
     """Reuse the exact local validators on an older server via Python stdin."""
     source = Path(__file__).with_name("remote_probe.py").read_text(encoding="utf-8")
-    functions = (_skill_files, catalog_hash, _loaded_registry, verify_snapshot,
-                 _check_query, validate_skill_catalog)
+    functions = (
+        load_env, require_env, _skill_files, catalog_hash, _loaded_registry,
+        verify_snapshot, _check_query, validate_skill_catalog,
+    )
+    source += "\nENV_PATH = Path('deploy/.env')\n"
     source += "\n" + "\n\n".join(inspect.getsource(func) for func in functions)
     return source + '\nprint(json.dumps(probe(sys.argv[1], json.loads(sys.argv[2])), ensure_ascii=False))\n'
 
@@ -107,7 +111,11 @@ def parser():
     result.add_argument("--check-only", action="store_true")
     result.add_argument("--env-file", default="deploy/.env.remote")
     result.add_argument("--timeout", type=float, default=1800.0)
-    result.add_argument("--trace-attempts", type=int, default=30)
+    result.add_argument(
+        "--trace-attempts", type=int, default=30,
+        help="Give up after this many unchanged incomplete Phoenix snapshots; "
+        "a growing trace keeps polling",
+    )
     result.set_defaults(trace_backend="phoenix")
     result.add_argument("--ssh", default="nnikitin@10.32.1.71")
     result.add_argument("--public-url", default="https://10.32.1.71:8443")
@@ -151,11 +159,8 @@ def main(argv=None) -> int:
               f"model={next(iter(prepared.selected_modes.values())).common.model_id}. "
               "This uses the server's paid API account.", flush=True)
         results, writer = cli.run(args, prepared=prepared)
-        failed = sum(result.status != "completed" for result in results)
-        print(json.dumps({"results_dir": str(writer.root), "runs": len(results),
-                          "pipeline_failures": failed, "summary": str(writer.root / "summary.json")},
-                         ensure_ascii=False, indent=2))
-        return 2 if failed else 0
+        print(json.dumps(cli._finished_report(results, writer), ensure_ascii=False, indent=2))
+        return 0
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError, httpx.HTTPError) as exc:
         print(f"remote benchmark failed: {exc}", file=sys.stderr)
         return 2

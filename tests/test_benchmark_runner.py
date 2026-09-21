@@ -197,6 +197,7 @@ def test_unstructured_answer_is_pending_not_counted_as_incorrect() -> None:
             del request
             return AgentTurn(
                 "В команде пять сотрудников.",
+                trace={"tree": [{"name": "agent.turn", "attributes": {}}]},
                 fingerprint=fingerprint().as_dict(),
             )
 
@@ -208,12 +209,15 @@ def test_unstructured_answer_is_pending_not_counted_as_incorrect() -> None:
         activator=FakeActivator(), executor=ProseExecutor(),
     )
     result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+    summary = summarize_results([result])
     assert result.status == "normalization_pending"
     assert result.score["metrics"]["answer_accuracy"] is None
-    assert summarize_results([result])["n_normalization_pending"] == 1
+    assert summary["n_normalization_pending"] == 1
+    assert summary["n_runs"] == 0
+    assert summary["review"][0]["run_id"] == result.run_id
 
 
-def test_runner_rejects_a_live_fingerprint_different_from_preflight() -> None:
+def test_runner_marks_fingerprint_drift_without_failing_the_cell_as_wrong() -> None:
     class DriftedExecutor(FakeExecutor):
         def execute(self, request: AgentRequest) -> AgentTurn:
             turn = super().execute(request)
@@ -233,9 +237,12 @@ def test_runner_rejects_a_live_fingerprint_different_from_preflight() -> None:
         activator=FakeActivator(), executor=DriftedExecutor(),
     )
     result = runner.run([ready_case()], {"existing_skills": mode()})[0]
-    assert result.status == "execution_failed"
+    summary = summarize_results([result])
+    assert result.status == "condition_invalid"
     assert result.response["response"]["error"].endswith("model_id")
-    assert result.score["metrics"]["answer_accuracy"] == 0
+    assert result.score["metrics"]["answer_accuracy"] is None
+    assert summary["n_condition_invalid"] == 1
+    assert summary["n_runs"] == 0
 
 
 def test_runner_keeps_the_full_executor_traceback() -> None:
@@ -253,10 +260,36 @@ def test_runner_keeps_the_full_executor_traceback() -> None:
     )
     result = runner.run([ready_case()], {"existing_skills": mode()})[0]
     error = result.response["response"]["error"]
-    assert result.status == "execution_failed"
+    assert result.status == "unscored"
+    assert result.score["metrics"]["answer_accuracy"] is None
     assert "Traceback (most recent call last)" in error
     assert "stand exploded " + ("z" * 80) in error
     assert "RuntimeError" in error
+    assert summarize_results([result])["n_unscored"] == 1
+
+
+def test_missing_trace_is_unscored_even_when_json_matches() -> None:
+    class NoTraceExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            turn = super().execute(request)
+            return AgentTurn(
+                turn.answer, turn.stats, None,
+                session_id=turn.session_id, trace_id=turn.trace_id,
+                fingerprint=turn.fingerprint,
+            )
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=NoTraceExecutor(),
+    )
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+    assert result.status == "unscored"
+    assert "trace unavailable" in result.response["response"]["error"]
+    assert result.score["metrics"]["answer_accuracy"] is None
+    assert summarize_results([result])["n_runs"] == 0
 
 
 def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -> None:
