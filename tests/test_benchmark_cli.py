@@ -20,21 +20,18 @@ def live_payload() -> dict:
         ],
     }
     off = dict(config)
-    off["tool_subset"] = [
-        name for name in config["tool_subset"]
-        if name not in {"find_skills", "get_skill"}
-    ]
+    off["tool_subset"] = []
     return {
         "refs": {
-            "skills_disabled": "benchmark_off@1",
+            "general_knowledge": "benchmark_general@1",
             "existing_skills": "benchmark_on@1",
         },
         "configs": {
-            "benchmark_off@1": off,
+            "benchmark_general@1": off,
             "benchmark_on@1": config,
         },
         "prompt_versions": {
-            "benchmark_off@1": "system_prompt@2",
+            "benchmark_general@1": "system_prompt@2",
             "benchmark_on@1": "system_prompt@2",
         },
         "emulator": {
@@ -95,7 +92,7 @@ def test_live_manifest_builds_common_conditions_and_rejects_drift(tmp_path) -> N
     assert common.prompt_registry_version == "system_prompt@2"
     assert common.snapshot_id == "snapshot@test"
 
-    payload["configs"]["benchmark_off@1"]["temperature"] = 0.7
+    payload["configs"]["benchmark_general@1"]["temperature"] = 0.7
     with pytest.raises(ValueError, match="differ by temperature"):
         common_conditions(payload)
 
@@ -114,7 +111,7 @@ def test_generated_mock_cannot_be_selected(tmp_path) -> None:
         "instant", (),
     )
     modes = build_modes(common, base, snapshots_root=tmp_path / "snapshots")
-    selected = select_modes(modes, "skills_disabled,existing_skills")
-    assert set(selected) == {"skills_disabled", "existing_skills"}
+    selected = select_modes(modes, "general_knowledge,existing_skills")
+    assert set(selected) == {"general_knowledge", "existing_skills"}
     with pytest.raises(ValueError, match="still a mock"):
         select_modes(modes, "generated_skills")

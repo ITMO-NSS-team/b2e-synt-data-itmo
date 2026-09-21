@@ -13,8 +13,11 @@ from typing import Iterator
 from heimdall.skills.registry import EXTENSIONS, Registry
 from sim.fingerprint import VALID_LATENCY_PROFILES
 
-DATA_TOOLS = ("list_models", "describe_model", "get_docs", "mcp_query")
-SKILL_TOOLS = DATA_TOOLS + ("find_skills", "get_skill")
+GENERAL_KNOWLEDGE_TOOLS: tuple[str, ...] = ()
+SKILL_TOOLS = (
+    "list_models", "describe_model", "get_docs", "mcp_query",
+    "find_skills", "get_skill",
+)
 _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 
 
@@ -22,11 +25,11 @@ class BenchmarkMode(str, Enum):
     """Named experiment arms that share ``CommonConditions``.
 
     Attributes:
-        SKILLS_DISABLED: Base information-service tools only; no skill catalog.
+        GENERAL_KNOWLEDGE: Model knowledge only; no Heimdall tools or catalog.
         EXISTING_SKILLS: Catalog of already-deployed skills plus ``find_skills``/``get_skill``.
         GENERATED_SKILLS: Combined catalog with generated skills; may still be a mock.
     """
-    SKILLS_DISABLED = "skills_disabled"
+    GENERAL_KNOWLEDGE = "general_knowledge"
     EXISTING_SKILLS = "existing_skills"
     GENERATED_SKILLS = "generated_skills"
 
@@ -113,17 +116,17 @@ class ModeConfigs:
     """The three standard arms of one experiment.
 
     Attributes:
-        skills_disabled: Baseline without skills.
+        general_knowledge: Baseline with no Heimdall tools, catalog, docs or data access.
         existing_skills: Catalog of already-deployed skills.
         generated_skills: Combined catalog, possibly still a mock.
     """
-    skills_disabled: ModeConfig
+    general_knowledge: ModeConfig
     existing_skills: ModeConfig
     generated_skills: ModeConfig
 
     def __post_init__(self) -> None:
         for mode, expected in (
-            (self.skills_disabled, BenchmarkMode.SKILLS_DISABLED),
+            (self.general_knowledge, BenchmarkMode.GENERAL_KNOWLEDGE),
             (self.existing_skills, BenchmarkMode.EXISTING_SKILLS),
             (self.generated_skills, BenchmarkMode.GENERATED_SKILLS),
         ):
@@ -131,8 +134,8 @@ class ModeConfigs:
                 raise ValueError("mode key/name mismatch")
 
     def __iter__(self) -> Iterator[ModeConfig]:
-        """Yield the three arms in fixed order: disabled, existing, generated."""
-        yield self.skills_disabled
+        """Yield the three arms in fixed order: general, existing, generated."""
+        yield self.general_knowledge
         yield self.existing_skills
         yield self.generated_skills
 
@@ -232,8 +235,9 @@ def build_modes(
         combined_path = str(combined)
         combined_hash = catalog_hash(combined)
     return ModeConfigs(
-        skills_disabled=ModeConfig(
-            BenchmarkMode.SKILLS_DISABLED.value, DATA_TOOLS, None, None, None, None, (), common,
+        general_knowledge=ModeConfig(
+            BenchmarkMode.GENERAL_KNOWLEDGE.value, GENERAL_KNOWLEDGE_TOOLS,
+            None, None, None, None, (), common,
             skills_enabled=False),
         existing_skills=ModeConfig(
             BenchmarkMode.EXISTING_SKILLS.value, SKILL_TOOLS, str(base), base_hash, None, None, (), common),
@@ -258,13 +262,13 @@ def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
     """
     if len({mode.common for mode in modes}) != 1:
         raise ValueError("all modes must share identical common conditions")
-    if modes.skills_disabled.tool_subset != DATA_TOOLS or any(
+    if modes.general_knowledge.tool_subset != GENERAL_KNOWLEDGE_TOOLS or any(
         mode.tool_subset != SKILL_TOOLS
         for mode in (modes.existing_skills, modes.generated_skills)
     ):
         raise ValueError("mode tool subsets do not match benchmark contract")
     if (
-        modes.skills_disabled.skills_enabled
+        modes.general_knowledge.skills_enabled
         or modes.existing_skills.skills_enabled is not True
         or modes.generated_skills.skills_enabled is not True
     ):

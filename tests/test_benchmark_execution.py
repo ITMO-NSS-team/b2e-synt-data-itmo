@@ -9,20 +9,24 @@ from sim.benchmark.execution import (
     AgentRequest, AgentTurn, PinnedConfigActivator, StandSessionExecutor,
     fatal_turn_error, trace_observations,
 )
-from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
+from sim.benchmark.modes import (
+    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
+    ModeConfig,
+)
 
 
 def mode(name: str = "existing_skills", *, mock: bool = False) -> ModeConfig:
     common = CommonConditions(
         "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
     )
-    enabled = name != BenchmarkMode.SKILLS_DISABLED
+    enabled = name != BenchmarkMode.GENERAL_KNOWLEDGE
     generated_names = (
         ("generated_headcount",)
         if not mock and name == BenchmarkMode.GENERATED_SKILLS else ()
     )
     return ModeConfig(
-        name, SKILL_TOOLS if enabled else DATA_TOOLS, None, None, None, None,
+        name, SKILL_TOOLS if enabled else GENERAL_KNOWLEDGE_TOOLS,
+        None, None, None, None,
         generated_names, common, skills_enabled=enabled, is_mock=mock,
     )
 
@@ -44,9 +48,9 @@ def test_pinned_activator_rejects_floating_refs_and_real_generated_mode() -> Non
         PinnedConfigActivator({"existing_skills": "agent@1"}).activate(mode())
     with pytest.raises(ValueError, match="tool_subset differs"):
         PinnedConfigActivator(
-            {"skills_disabled": "agent@1"},
+            {"general_knowledge": "agent@1"},
             config_reader=lambda _ref: _agent_config(SKILL_TOOLS),
-        ).activate(mode("skills_disabled"))
+        ).activate(mode("general_knowledge"))
     with pytest.raises(ValueError, match="catalog-mounting"):
         PinnedConfigActivator(
             {"generated_skills": "agent@1"},

@@ -13,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 
 import httpx
 
@@ -22,7 +23,7 @@ from sim.skill_eval.stand import StandClient
 from . import cli
 from .catalog_snapshots import verify_snapshot
 from .env import load_env, require_env
-from .execution import PinnedConfigActivator
+from .execution import PinnedConfigActivator, StandSessionExecutor
 from .modes import ModeConfig, SKILL_TOOLS, _loaded_registry, _skill_files, catalog_hash
 from .preflight import PreflightResult, _check_query, validate_skill_catalog
 from .path_lib import SCHEMA_RELATIVE
@@ -40,7 +41,21 @@ def probe_source() -> str:
     return source + '\nprint(json.dumps(probe(sys.argv[1], json.loads(sys.argv[2])), ensure_ascii=False))\n'
 
 
-def read_container(ssh: str, container: str, kind: str, options: dict) -> dict:
+def _ssh_command(ssh: str, control_path: str | None, command: str) -> list[str]:
+    result = ["ssh", "-o", "ConnectTimeout=10"]
+    if control_path:
+        result.extend([
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={control_path}",
+            "-o", "ControlPersist=60",
+        ])
+    return [*result, ssh, command]
+
+
+def read_container(
+    ssh: str, container: str, kind: str, options: dict,
+    *, control_path: str | None = None,
+) -> dict:
     """Execute a read-only probe, without installing files on the server."""
     if not ssh or ssh.startswith("-"):
         raise ValueError("--ssh must be a hostname or user@hostname")
@@ -48,10 +63,93 @@ def read_container(ssh: str, container: str, kind: str, options: dict) -> dict:
         "docker", "exec", "-i", container, "python", "-B", "-", kind, json.dumps(options),
     ])
     result = subprocess.run(
-        ["ssh", "-o", "ConnectTimeout=10", ssh, command],
+        _ssh_command(ssh, control_path, command),
         input=probe_source(), text=True, stdout=subprocess.PIPE, check=True, timeout=120,
     )
     return json.loads(result.stdout)
+
+
+_PHOENIX_TRACE_SOURCE = r'''import json
+import sys
+import urllib.parse
+import urllib.request
+
+project, trace_id = sys.argv[1:3]
+endpoint = "http://127.0.0.1:6006/v1/projects/" + urllib.parse.quote(project, safe="") + "/spans"
+spans = {}
+cursor = None
+seen_cursors = set()
+scanned = 0
+while True:
+    params = {"trace_id": trace_id, "limit": 1000}
+    if cursor:
+        params["cursor"] = cursor
+    with urllib.request.urlopen(endpoint + "?" + urllib.parse.urlencode(params), timeout=30) as response:
+        content_type = response.headers.get_content_type()
+        if response.status != 200 or content_type != "application/json":
+            raise RuntimeError(f"Phoenix returned {response.status} {content_type}")
+        body = json.load(response)
+    batch = body.get("data", []) if isinstance(body, dict) else []
+    scanned += len(batch)
+    if scanned > 20000:
+        raise RuntimeError("Phoenix trace exceeded 20000 scanned spans")
+    for span in batch:
+        context = span.get("context") or {}
+        if str(context.get("trace_id") or span.get("trace_id") or "") != trace_id:
+            continue
+        span_id = context.get("span_id") or span.get("span_id")
+        if not span_id:
+            raise RuntimeError("Phoenix span has no span_id")
+        spans[str(span_id)] = span
+    cursor = body.get("next_cursor") if isinstance(body, dict) else None
+    if not cursor:
+        break
+    if cursor in seen_cursors:
+        raise RuntimeError("Phoenix pagination cursor repeated")
+    seen_cursors.add(cursor)
+print(json.dumps({"spans": list(spans.values())}, ensure_ascii=False))
+'''
+
+
+def read_phoenix_trace(
+    ssh: str,
+    container: str,
+    project: str,
+    trace_id: str,
+    *,
+    control_path: str | None = None,
+) -> list[dict]:
+    """Read one trace from Phoenix's internal REST API over read-only SSH."""
+    if not ssh or ssh.startswith("-"):
+        raise ValueError("--ssh must be a hostname or user@hostname")
+    command = shlex.join([
+        "docker", "exec", "-i", container, "python", "-B", "-",
+        project, trace_id,
+    ])
+    result = subprocess.run(
+        _ssh_command(ssh, control_path, command),
+        input=_PHOENIX_TRACE_SOURCE,
+        text=True,
+        stdout=subprocess.PIPE,
+        check=True,
+        timeout=120,
+    )
+    payload = json.loads(result.stdout)
+    spans = payload.get("spans") if isinstance(payload, dict) else None
+    if not isinstance(spans, list):
+        raise ValueError("remote Phoenix probe returned no spans array")
+    return spans
+
+
+def close_ssh_master(ssh: str, control_path: str) -> None:
+    """Close a multiplexed SSH connection; ignore an already-closed master."""
+    subprocess.run(
+        ["ssh", "-S", control_path, "-O", "exit", ssh],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=15,
+    )
 
 
 def prepare_remote(args, cases, report: dict, catalog: dict) -> cli.PreparedBenchmark:
@@ -112,15 +210,15 @@ def parser():
     result.add_argument("--env-file", default="deploy/.env.remote")
     result.add_argument("--timeout", type=float, default=1800.0)
     result.add_argument(
-        "--trace-attempts", type=int, default=30,
-        help="Give up after this many unchanged incomplete Phoenix snapshots; "
-        "a growing trace keeps polling",
+        "--trace-timeout", type=float, default=300.0,
+        help="Maximum seconds to wait for a complete trace",
     )
     result.set_defaults(trace_backend="phoenix")
     result.add_argument("--ssh", default="nnikitin@10.32.1.71")
     result.add_argument("--public-url", default="https://10.32.1.71:8443")
     result.add_argument("--admin-container", default="b2e-itmo-admin-ui-1")
     result.add_argument("--emulator-container", default="b2e-itmo-heimdall-emulator-1")
+    result.add_argument("--phoenix-container", default="b2e-itmo-phoenix-1")
     result.add_argument("--config-ref", default="agent_config")
     return result
 
@@ -142,25 +240,47 @@ def main(argv=None) -> int:
         finally:
             stand._client.close()
             stand.phoenix_http().close()
-        print("Reading remote conditions and validating catalogs in place (no LLM calls)...", flush=True)
-        report = read_container(args.ssh, args.admin_container, "registry", {
-            "config_ref": args.config_ref,
-            "employee_ids": sorted({str(case.raw["employee_id"]) for case in cases}),
-        })
-        catalog = read_container(args.ssh, args.emulator_container, "catalog", {})
-        prepared = prepare_remote(args, cases, report, catalog)
-        if args.check_only:
-            from .results import ResultWriter
-            writer = ResultWriter(args.results, cli._eval_id(args, "remote-check"))
-            writer.write_manifest(cli._manifest(args, prepared, writer.root.name, check_only=True))
-            print(json.dumps({"preflight": "ok", "agent_calls": 0, "results_dir": str(writer.root)}, indent=2))
-            return 0
-        print(f"Running {len(cases)} case(s) × {args.repetitions} repeat(s), existing_skills, "
-              f"model={next(iter(prepared.selected_modes.values())).common.model_id}. "
-              "This uses the server's paid API account.", flush=True)
-        results, writer = cli.run(args, prepared=prepared)
-        print(json.dumps(cli._finished_report(results, writer), ensure_ascii=False, indent=2))
-        return 0
+        with tempfile.TemporaryDirectory(prefix="b2e-bench-", dir="/tmp") as ssh_dir:
+            control_path = str(Path(ssh_dir) / "ssh")
+            try:
+                print("Reading remote conditions and validating catalogs in place (no LLM calls)...", flush=True)
+                report = read_container(args.ssh, args.admin_container, "registry", {
+                    "config_ref": args.config_ref,
+                    "employee_ids": sorted({str(case.raw["employee_id"]) for case in cases}),
+                }, control_path=control_path)
+                catalog = read_container(
+                    args.ssh, args.emulator_container, "catalog", {},
+                    control_path=control_path,
+                )
+                prepared = prepare_remote(args, cases, report, catalog)
+                if args.check_only:
+                    from .results import ResultWriter
+                    writer = ResultWriter(args.results, cli._eval_id(args, "remote-check"))
+                    writer.write_manifest(cli._manifest(args, prepared, writer.root.name, check_only=True))
+                    print(json.dumps({"preflight": "ok", "agent_calls": 0, "results_dir": str(writer.root)}, indent=2))
+                    return 0
+                print(f"Running {len(cases)} case(s) × {args.repetitions} repeat(s), existing_skills, "
+                      f"model={next(iter(prepared.selected_modes.values())).common.model_id}. "
+                      "This uses the server's paid API account.", flush=True)
+                executor = StandSessionExecutor(
+                    env_file=args.env_file,
+                    public_url=args.public_url,
+                    timeout=args.timeout,
+                    trace_timeout=args.trace_timeout,
+                    trace_backend="phoenix",
+                    phoenix_trace_fetcher=lambda trace_id: read_phoenix_trace(
+                        args.ssh,
+                        args.phoenix_container,
+                        report["live"].get("phoenix_project", "b2e-itmo"),
+                        trace_id,
+                        control_path=control_path,
+                    ),
+                )
+                results, writer = cli.run(args, prepared=prepared, executor=executor)
+                print(json.dumps(cli._finished_report(results, writer), ensure_ascii=False, indent=2))
+                return 0
+            finally:
+                close_ssh_master(args.ssh, control_path)
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError, httpx.HTTPError) as exc:
         print(f"remote benchmark failed: {exc}", file=sys.stderr)
         return 2

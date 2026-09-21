@@ -149,8 +149,9 @@ class ModeActivator(Protocol):
 class PinnedConfigActivator:
     """Use already-created pinned agent configs.
 
-    This is sufficient for skills_disabled and existing_skills, which share
-    the same mounted standard catalog. A future non-mock generated mode needs a
+    This is sufficient for general_knowledge and existing_skills. The former
+    has no catalog access; the latter uses the mounted standard catalog. A future
+    non-mock generated mode needs a
     deployment-specific activator that mounts its combined catalog first.
     """
 

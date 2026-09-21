@@ -44,6 +44,8 @@ def test_defaults_use_one_case_current_config_and_phoenix():
     assert (args.limit, args.repetitions, args.modes) == (1, 1, "existing_skills")
     assert args.config_ref == "agent_config"
     assert args.trace_backend == "phoenix"
+    assert args.trace_timeout == 300.0
+    assert not hasattr(args, "trace_attempts")
 
 
 def test_readonly_report_reuses_pinned_config_without_local_data():
@@ -150,7 +152,14 @@ def test_remote_entrypoint_one_case_and_saved_results(monkeypatch, tmp_path, che
         def phoenix_http(self):
             return self._client
     monkeypatch.setattr(remote, "StandClient", Stand)
-    monkeypatch.setattr(remote, "read_container", lambda ssh, container, kind, options: deepcopy(report if kind == "registry" else catalog))
+    monkeypatch.setattr(
+        remote,
+        "read_container",
+        lambda ssh, container, kind, options, **kwargs: deepcopy(
+            report if kind == "registry" else catalog
+        ),
+    )
+    monkeypatch.setattr(remote, "close_ssh_master", lambda *args: None)
     requests = []
     class Executor:
         def __init__(self, **kwargs):
@@ -163,7 +172,7 @@ def test_remote_entrypoint_one_case_and_saved_results(monkeypatch, tmp_path, che
                 json.dumps({"result": raw["evaluation_contract"]["gold_result"], "message": None}),
                 stats={"total_tokens": 10}, trace={"spans": []}, fingerprint=fingerprint,
             )
-    monkeypatch.setattr(cli, "StandSessionExecutor", Executor)
+    monkeypatch.setattr(remote, "StandSessionExecutor", Executor)
     output = tmp_path / "results"
     args = ["--cases", str(cases_dir), "--results", str(output), "--eval-id", "test"]
     assert remote.main(args + (["--check-only"] if check_only else [])) == 0
@@ -188,3 +197,37 @@ def test_make_remote_does_not_start_compose_and_limits_one_case():
     assert '--limit "1"' in result.stdout
     assert '--repetitions "1"' in result.stdout
     assert "docker compose" not in result.stdout
+
+
+def test_remote_phoenix_trace_uses_internal_container_api(monkeypatch):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(stdout=json.dumps({"spans": [{"name": "b2e.turn"}]}))
+
+    monkeypatch.setattr(remote.subprocess, "run", run)
+    spans = remote.read_phoenix_trace(
+        "user@server",
+        "phoenix-container",
+        "b2e-itmo",
+        "trace-1",
+        control_path="/tmp/control",
+    )
+
+    assert spans == [{"name": "b2e.turn"}]
+    argv, kwargs = calls[0]
+    assert argv[-2] == "user@server"
+    assert "docker exec -i phoenix-container python -B - b2e-itmo trace-1" == argv[-1]
+    assert "http://127.0.0.1:6006/v1/projects/" in kwargs["input"]
+    assert "ControlPath=/tmp/control" in argv
+
+
+def test_remote_phoenix_trace_rejects_malformed_payload(monkeypatch):
+    monkeypatch.setattr(
+        remote.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout='{"unexpected": true}'),
+    )
+    with pytest.raises(ValueError, match="no spans array"):
+        remote.read_phoenix_trace("user@server", "phoenix", "b2e-itmo", "trace-1")

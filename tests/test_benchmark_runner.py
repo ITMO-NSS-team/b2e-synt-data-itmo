@@ -9,7 +9,10 @@ import pytest
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.contracts import PROMPT_RENDERER_VERSION, response_contract_hash
 from sim.benchmark.execution import ActivatedMode, AgentRequest, AgentTurn
-from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
+from sim.benchmark.modes import (
+    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
+    ModeConfig,
+)
 from sim.benchmark.preflight import PreflightResult
 from sim.benchmark.results import ResultWriter, summarize_results
 from sim.benchmark.runner import BenchmarkRunner
@@ -41,13 +44,14 @@ def mode(name: str = "existing_skills", *, mock: bool = False) -> ModeConfig:
     common = CommonConditions(
         "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
     )
-    enabled = name != BenchmarkMode.SKILLS_DISABLED
+    enabled = name != BenchmarkMode.GENERAL_KNOWLEDGE
     generated_names = (
         ("generated_headcount",)
         if not mock and name == BenchmarkMode.GENERATED_SKILLS else ()
     )
     return ModeConfig(
-        name, SKILL_TOOLS if enabled else DATA_TOOLS, None, None, None, None,
+        name, SKILL_TOOLS if enabled else GENERAL_KNOWLEDGE_TOOLS,
+        None, None, None, None,
         generated_names, common, skills_enabled=enabled, is_mock=mock,
     )
 

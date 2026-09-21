@@ -36,6 +36,7 @@ def probe(kind: str, options: dict) -> dict:
                     "skill_registry_ref")
             result = {
                 "schema_version": "1.0",
+                "phoenix_project": os.environ.get("PHOENIX_PROJECT", "b2e-itmo"),
                 "refs": {"existing_skills": version.ref},
                 "configs": {version.ref: {key: config.get(key) for key in keys}},
                 "prompt_versions": {version.ref: prompt_version.ref},

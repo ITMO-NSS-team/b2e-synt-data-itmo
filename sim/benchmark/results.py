@@ -166,8 +166,8 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
         }
     comparisons = {}
     pairs = (
-        ("existing_skills", "skills_disabled"),
-        ("generated_skills", "skills_disabled"),
+        ("existing_skills", "general_knowledge"),
+        ("generated_skills", "general_knowledge"),
         ("generated_skills", "existing_skills"),
     )
     for target, baseline in pairs:

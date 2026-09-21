@@ -256,14 +256,11 @@ class AgentConfig:
                 f"expected the form 'name@N', e.g. 'memory_isolated_i1@3'")
         if self.max_output_tokens >= self.context_window_tokens:
             raise ValueError("max_output_tokens must be smaller than the context window")
-        if not self.tool_subset:
-            raise ValueError("tool_subset must not be empty: an agent with no tools "
-                             "cannot reach Heimdall and every answer would be invented")
-        # Membership, not just non-emptiness. A typo'd tool name used to pass
-        # here and then be silently dropped by both harnesses, producing exactly
-        # the empty surface the check above refuses — while the fingerprint
-        # claimed the full config. This is the same argument `from_dict` already
-        # makes for unknown keys, applied to values.
+        # Empty is a real condition: general_knowledge has no Heimdall tools.
+        # Membership still matters. A typo'd name used to pass here and then be
+        # silently dropped by both harnesses, so the fingerprint claimed a
+        # surface the run did not have. This is the same argument `from_dict`
+        # already makes for unknown keys, applied to values.
         from sim.agent.tools import KNOWN_TOOLS
 
         unknown = sorted(set(self.tool_subset) - set(KNOWN_TOOLS))

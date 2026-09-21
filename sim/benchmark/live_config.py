@@ -27,10 +27,10 @@ def pin_live_configs(
     Args:
         registry: Writable agent/prompt/skill registry.
         model_id: If set, rewrite ``model_id`` on each pinned arm.
-        base_pinner: Creates skills-on/off configs; defaults to ``skill_eval.pin``.
+        base_pinner: Creates general/existing configs; defaults to ``skill_eval.pin``.
 
     Returns:
-        Mapping ``skills_on`` / ``skills_off`` to pinned ``name@N`` refs.
+        Mapping ``general_knowledge`` / ``existing_skills`` to pinned refs.
     """
     refs = base_pinner(registry)
     selected_model = (model_id or "").strip()
@@ -58,12 +58,12 @@ def capture_live_config(
     *,
     pinner: Callable[[Registry], dict[str, str]] = pin,
 ) -> dict[str, Any]:
-    """Pin skills-on/off configs and return a secret-free experiment manifest.
+    """Pin general/existing configs and return a secret-free experiment manifest.
 
     Args:
         registry: Writable registry inside admin-ui.
         emulator_config: ``/control/config`` payload from the emulator.
-        pinner: Returns skills-on/off refs; defaults to ``pin``.
+        pinner: Returns general/existing refs; defaults to ``pin``.
 
     Returns:
         Manifest with refs, config bodies, prompt versions, skill hash and
@@ -74,8 +74,8 @@ def capture_live_config(
     """
     pinned = pinner(registry)
     refs = {
-        BenchmarkMode.SKILLS_DISABLED.value: pinned["skills_off"],
-        BenchmarkMode.EXISTING_SKILLS.value: pinned["skills_on"],
+        BenchmarkMode.GENERAL_KNOWLEDGE.value: pinned["general_knowledge"],
+        BenchmarkMode.EXISTING_SKILLS.value: pinned["existing_skills"],
     }
     configs: dict[str, dict[str, Any]] = {}
     prompt_versions: dict[str, str] = {}

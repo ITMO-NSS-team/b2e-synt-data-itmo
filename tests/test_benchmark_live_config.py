@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import os
+import sys
+from types import SimpleNamespace
 
 import pytest
 
 from sim.benchmark.env import load_env, require_env
 from sim.benchmark.live_config import capture_live_config, pin_live_configs
-from sim.benchmark.modes import DATA_TOOLS, SKILL_TOOLS
+from sim.benchmark.modes import GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS
 from sim.registry import Registry
+from sim.skill_eval.pin import pin
 
 
 def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None:
@@ -24,10 +27,13 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
 
     def pinner(target: Registry) -> dict[str, str]:
         enabled = target.commit("on", "agent", base, actor="test")
-        disabled_body = dict(base)
-        disabled_body["tool_subset"] = list(DATA_TOOLS)
-        disabled = target.commit("off", "agent", disabled_body, actor="test")
-        return {"skills_on": enabled.ref, "skills_off": disabled.ref}
+        general_body = dict(base)
+        general_body["tool_subset"] = list(GENERAL_KNOWLEDGE_TOOLS)
+        general = target.commit("general", "agent", general_body, actor="test")
+        return {
+            "existing_skills": enabled.ref,
+            "general_knowledge": general.ref,
+        }
 
     payload = capture_live_config(registry, {
         "data_snapshot_hash": "snapshot@test",
@@ -36,9 +42,9 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
         "hr_employee_ids": ["9", "7"],
         "ignored_operator_field": "not persisted",
     }, pinner=pinner)
-    disabled = payload["refs"]["skills_disabled"]
+    disabled = payload["refs"]["general_knowledge"]
     enabled = payload["refs"]["existing_skills"]
-    assert tuple(payload["configs"][disabled]["tool_subset"]) == DATA_TOOLS
+    assert tuple(payload["configs"][disabled]["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
     assert tuple(payload["configs"][enabled]["tool_subset"]) == SKILL_TOOLS
     assert payload["prompt_versions"][disabled].startswith("system_prompt@")
     assert payload["skill_registry_hash"].startswith("sha256:")
@@ -62,10 +68,13 @@ def test_model_override_is_pinned_without_changing_source_config(tmp_path) -> No
     def pinner(target: Registry) -> dict[str, str]:
         _version, raw = target.load(source_version.ref)
         on = target.commit("on", "agent", raw, actor="test")
-        off_body = dict(raw)
-        off_body["tool_subset"] = list(DATA_TOOLS)
-        off = target.commit("off", "agent", off_body, actor="test")
-        return {"skills_on": on.ref, "skills_off": off.ref}
+        general_body = dict(raw)
+        general_body["tool_subset"] = list(GENERAL_KNOWLEDGE_TOOLS)
+        general = target.commit("general", "agent", general_body, actor="test")
+        return {
+            "existing_skills": on.ref,
+            "general_knowledge": general.ref,
+        }
 
     refs = pin_live_configs(
         registry, model_id="light-model", base_pinner=pinner,
@@ -74,6 +83,30 @@ def test_model_override_is_pinned_without_changing_source_config(tmp_path) -> No
     assert {registry.load(ref)[1]["model_id"] for ref in refs.values()} == {
         "light-model"
     }
+    registry.close()
+
+
+def test_real_pinner_makes_general_knowledge_tool_subset_empty(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setitem(
+        sys.modules, "sim.agent.tools", SimpleNamespace(KNOWN_TOOLS=SKILL_TOOLS),
+    )
+    registry = Registry(tmp_path / "registry.db")
+    registry.commit(
+        "agent_config", "agent", {
+            "model_id": "model",
+            "system_prompt_ref": "system_prompt",
+            "tool_subset": list(SKILL_TOOLS),
+        }, actor="test",
+    )
+
+    refs = pin(registry)
+
+    general = registry.load(refs["general_knowledge"])[1]
+    existing = registry.load(refs["existing_skills"])[1]
+    assert tuple(general["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
+    assert tuple(existing["tool_subset"]) == SKILL_TOOLS
     registry.close()
 
 
@@ -100,5 +133,3 @@ def test_require_env_refuses_blank_instead_of_docker_defaults(monkeypatch) -> No
     monkeypatch.setenv("HEIMDALL_URL", "  ")
     with pytest.raises(ValueError, match="HEIMDALL_URL is empty"):
         require_env("HEIMDALL_URL")
-
-

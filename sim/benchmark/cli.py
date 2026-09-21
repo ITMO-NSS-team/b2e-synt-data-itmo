@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .cases import BenchmarkCase, load_case, load_suite, validate_case
-from .execution import PinnedConfigActivator, StandSessionExecutor
+from .execution import PinnedConfigActivator, SessionExecutor, StandSessionExecutor
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes
 from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
@@ -18,7 +18,7 @@ from .results import ResultWriter, summarize_results
 from .runner import BenchmarkRunner
 
 DEFAULT_MODES = (
-    BenchmarkMode.SKILLS_DISABLED.value,
+    BenchmarkMode.GENERAL_KNOWLEDGE.value,
     BenchmarkMode.EXISTING_SKILLS.value,
 )
 
@@ -329,12 +329,15 @@ def check(args: argparse.Namespace) -> ResultWriter:
 
 def run(
     args: argparse.Namespace, *, prepared: PreparedBenchmark | None = None,
+    executor: SessionExecutor | None = None,
 ) -> tuple[list[Any], ResultWriter]:
     """Execute the prepared matrix against a local or remote stand.
 
     Args:
         args: Parsed CLI namespace including timeout and repetitions.
         prepared: Optional remote preflight; otherwise validate local snapshots.
+        executor: Optional transport-specific executor. Remote runs use this to
+            read Phoenix through SSH without changing the server proxy.
 
     Returns:
         Pair of run results and the writer that stored them.
@@ -347,11 +350,12 @@ def run(
         eval_id,
         preflight=lambda case, mode: prepared.checked[(case.case_id, mode.name)],
         activator=prepared.activator,
-        executor=StandSessionExecutor(
+        executor=executor or StandSessionExecutor(
             env_file=args.env_file,
             timeout=args.timeout,
             trace_attempts=args.trace_attempts,
             trace_backend=getattr(args, "trace_backend", "research"),
+            trace_timeout=getattr(args, "trace_timeout", 300.0),
             **({"public_url": args.public_url} if getattr(args, "public_url", None) else {}),
         ),
         writer=writer,
@@ -388,8 +392,12 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--timeout", type=float, default=1800.0)
     result.add_argument(
         "--trace-attempts", type=int, default=30,
-        help="Give up after this many unchanged incomplete Phoenix snapshots; "
-        "a growing trace keeps polling",
+        help="research-api polls before giving up; Phoenix waits until "
+        "--trace-timeout instead",
+    )
+    result.add_argument(
+        "--trace-timeout", type=float, default=300.0,
+        help="Maximum seconds to wait for a complete trace",
     )
     return result
 

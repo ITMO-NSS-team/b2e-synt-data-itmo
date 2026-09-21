@@ -4,6 +4,7 @@ from __future__ import annotations
 from sim.skill_eval.stand import StandClient
 from sim.skill_eval.types import EvalCase, SessionSpec
 import httpx
+import pytest
 
 
 class Response:
@@ -153,7 +154,8 @@ def test_mixed_research_response_discards_foreign_spans():
     owned = _owned_trace(mixed, "ses-ours", "ours")
     assert len(owned["spans"]) == 2
     assert {s["context"]["trace_id"] for s in owned["spans"]} == {"ours"}
-    assert _owned_trace(mixed, "ses-ours", "foreign") is None
+    foreign = _owned_trace(mixed, "ses-ours", "foreign")
+    assert {s["context"]["trace_id"] for s in foreign["spans"]} == {"foreign"}
 
 
 def test_direct_phoenix_reads_paginated_trace_waits_and_filters(monkeypatch):
@@ -164,7 +166,7 @@ def test_direct_phoenix_reads_paginated_trace_waits_and_filters(monkeypatch):
     foreign = {"name": "heimdall.get_skill", "context": {"trace_id": "foreign", "span_id": "bad"}}
     def handler(request):
         requests.append(request)
-        assert request.url.path == "/phoenix/v1/projects/b2e-sim/spans"
+        assert request.url.path == "/phoenix/v1/projects/b2e-itmo/spans"
         assert request.url.params["trace_id"] == "ours"
         assert "filter" not in request.url.params
         if request.url.params.get("cursor") == "page2":
@@ -184,19 +186,6 @@ def test_direct_phoenix_reads_paginated_trace_waits_and_filters(monkeypatch):
     assert observed["loaded_skills"] == []
 
 
-def test_direct_phoenix_rejects_wrong_session_even_with_requested_trace_id(monkeypatch):
-    stand = object.__new__(StandClient)
-    stand.trace_backend = "phoenix"
-    stand.trace_attempts = 2
-    stand._phoenix_http = httpx.Client(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": [{
-            "name": "b2e.turn", "context": {"trace_id": "ours", "span_id": "root"},
-            "end_time": "2026-01-01", "attributes": {"session.id": "other"},
-        }]})), base_url="https://stand/phoenix")
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
-    assert stand._wait_trace("ses-ours", trace_id="ours") is None
-
-
 def test_explicit_remote_url_wins_over_env_and_host_defaults_to_remote(tmp_path):
     env = tmp_path / ".env"
     env.write_text("RESEARCHER_PASSWORD=test-only\nPUBLIC_URL=https://localhost:8443\n")
@@ -204,6 +193,7 @@ def test_explicit_remote_url_wins_over_env_and_host_defaults_to_remote(tmp_path)
     try:
         assert stand.public_url == "https://remote:8443"
         assert stand._client.headers["Host"] == "remote"
+        assert stand.phoenix_project == "b2e-itmo"
     finally:
         stand._client.close()
         stand.phoenix_http().close()
@@ -259,11 +249,97 @@ def test_direct_phoenix_keeps_polling_while_spans_still_arrive(monkeypatch):
     assert len(trace["spans"]) == 7
 
 
-def test_failed_phoenix_never_falls_back_to_unfiltered_research(monkeypatch):
+def test_direct_phoenix_keeps_polling_before_any_span_lands(monkeypatch):
+    root = {"name": "b2e.turn", "context": {"trace_id": "ours", "span_id": "root"},
+            "end_time": "2026-01-01", "attributes": {"session.id": "ses-ours"}}
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) <= 5:
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [root]})
+
     stand = object.__new__(StandClient)
     stand.trace_backend = "phoenix"
     stand.trace_attempts = 2
+    stand._phoenix_http = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    trace = stand._wait_trace("ses-ours", trace_id="ours")
+    assert len(calls) == 7
+    assert trace["spans"] == [root]
+
+
+def test_stand_reads_phoenix_project_from_env(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text(
+        "RESEARCHER_PASSWORD=test-only\nPHOENIX_PROJECT=custom-project\n",
+        encoding="utf-8",
+    )
+    stand = StandClient(env_file=str(env), public_url="https://stand")
+    try:
+        assert stand.phoenix_project == "custom-project"
+    finally:
+        stand._client.close()
+        stand.phoenix_http().close()
+
+
+def test_failed_phoenix_never_falls_back_to_unfiltered_research(monkeypatch):
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_timeout = 2
     stand._phoenix_http = httpx.Client(transport=httpx.MockTransport(
         lambda request: httpx.Response(503)), base_url="https://stand/phoenix")
+    clock = iter([0.0, 1.0, 2.0])
+    monkeypatch.setattr("sim.skill_eval.stand.time.monotonic", lambda: next(clock))
     monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    assert stand._wait_trace("ses-ours", trace_id="ours") is None
+
+
+def test_direct_phoenix_can_use_injected_remote_fetcher(monkeypatch):
+    calls = []
+    root = {
+        "name": "b2e.turn",
+        "context": {"trace_id": "ours", "span_id": "root"},
+        "end_time": "2026-01-01",
+        "attributes": {"session.id": "ses-ours"},
+    }
+
+    def fetch(trace_id):
+        calls.append(trace_id)
+        return [root]
+
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_attempts = 2
+    stand.trace_timeout = 30
+    stand._phoenix_trace_fetcher = fetch
+    stand._phoenix_http = httpx.Client(
+        transport=httpx.MockTransport(lambda request: pytest.fail("public Phoenix must not be used")),
+        base_url="https://stand/phoenix",
+    )
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+
+    trace = stand._wait_trace("ses-ours", trace_id="ours")
+
+    assert calls == ["ours", "ours"]
+    assert trace["source"] == "phoenix"
+    assert trace["spans"] == [root]
+
+
+def test_direct_phoenix_empty_trace_has_absolute_timeout(monkeypatch):
+    stand = object.__new__(StandClient)
+    stand.trace_backend = "phoenix"
+    stand.trace_attempts = 2
+    stand.trace_timeout = 2
+    stand._phoenix_trace_fetcher = lambda trace_id: []
+    stand._phoenix_http = httpx.Client(
+        transport=httpx.MockTransport(lambda request: pytest.fail("public Phoenix must not be used")),
+        base_url="https://stand/phoenix",
+    )
+    clock = iter([0.0, 1.0, 2.0])
+    monkeypatch.setattr("sim.skill_eval.stand.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+
     assert stand._wait_trace("ses-ours", trace_id="ours") is None

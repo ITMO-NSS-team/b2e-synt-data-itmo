@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -48,6 +48,8 @@ class StandClient:
         timeout: float = 180.0,
         trace_attempts: int = 12,
         trace_backend: str = "research",
+        trace_timeout: float = 300.0,
+        phoenix_trace_fetcher: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         env_path = Path(env_file)
         password = dotenv_value(env_path, "RESEARCHER_PASSWORD")
@@ -63,6 +65,11 @@ class StandClient:
         self.public_host = public_host or dotenv_value(env_path, "PUBLIC_HOST") or urlparse(self.public_url).hostname or "localhost"
         self.timeout = timeout
         self.trace_attempts = trace_attempts
+        if trace_timeout <= 0:
+            raise ValueError("trace_timeout must be positive")
+        self.trace_timeout = trace_timeout
+        self._phoenix_trace_fetcher = phoenix_trace_fetcher
+        self.phoenix_project = dotenv_value(env_path, "PHOENIX_PROJECT") or "b2e-itmo"
         auth = ("researcher", password)
         self._client = proxy_client(
             self.public_url, public_host=self.public_host,
@@ -145,39 +152,47 @@ class StandClient:
     def _wait_phoenix_trace(
         self, session_id: str, trace_id: str | None, expected_heimdall_calls: int,
     ) -> dict[str, Any] | None:
-        """Poll Phoenix until this session's trace is complete and stable.
+        """Poll Phoenix until this trace is complete and stable.
 
-        Completeness is owned spans, an ended root, and at least
+        Completeness is the requested ``trace_id`` (or a session-owned lookup
+        when that id is absent), an ended root, and at least
         ``expected_heimdall_calls`` bridge spans. Stability is two identical
-        complete reads. ``trace_attempts`` is consecutive unchanged incomplete
-        snapshots, not a wall-clock budget: growing traces keep polling.
+        complete reads. Empty or growing snapshots keep polling until
+        ``trace_timeout``.
 
         Args:
-            session_id: Agent session that must own the trace.
-            trace_id: Optional Phoenix trace id from the agent response.
+            session_id: Agent session label stored on the returned payload.
+            trace_id: Phoenix trace id from the agent response.
             expected_heimdall_calls: Minimum ``b2e.heimdall.endpoint`` spans.
 
         Returns:
-            Owned Phoenix payload, or ``None`` if the snapshot stalls.
+            Phoenix payload, or ``None`` if the deadline elapses first.
         """
         from sim.research.phoenix_client import PhoenixClient, PhoenixUnavailable
-        phoenix = PhoenixClient("", client=self._phoenix_http)
+        phoenix = PhoenixClient(
+            "",
+            client=self._phoenix_http,
+            project=getattr(self, "phoenix_project", "b2e-itmo"),
+        )
+        deadline = time.monotonic() + getattr(self, "trace_timeout", 300.0)
         previous: list[dict[str, Any]] | None = None
-        previous_key: tuple[Any, ...] | None = None
-        stagnant = 0
         while True:
             complete = False
             current: list[dict[str, Any]] | None = None
             try:
-                spans = (
-                    phoenix.spans_for_trace(trace_id)
-                    if trace_id else phoenix.spans_for_session(session_id, limit=20000)
-                )
+                fetcher = getattr(self, "_phoenix_trace_fetcher", None)
+                if fetcher is not None:
+                    if not trace_id:
+                        raise PhoenixUnavailable(
+                            "remote Phoenix lookup requires trace_id from agent response")
+                    spans = fetcher(trace_id)
+                else:
+                    spans = (
+                        phoenix.spans_for_trace(trace_id)
+                        if trace_id else phoenix.spans_for_session(session_id, limit=20000)
+                    )
                 owned = _owned_trace({"spans": spans}, session_id, trace_id)
-                ended = any(
-                    span.get("end_time") and _trace_contains_session({"spans": [span]}, session_id)
-                    for span in spans
-                )
+                ended = bool(owned) and any(span.get("end_time") for span in owned["spans"])
                 bridges = _bridge_count(owned["spans"]) if owned is not None else 0
                 complete = (
                     owned is not None
@@ -185,25 +200,18 @@ class StandClient:
                     and bridges >= expected_heimdall_calls
                 )
                 if complete:
-                    current = _sorted_owned_spans(owned["spans"], session_id)
+                    current = _sorted_owned_spans(owned["spans"])
                     if current == previous:
                         return {
                             "session_id": session_id,
                             "spans": current,
                             "source": "phoenix",
                         }
-                key = _phoenix_progress_key(owned, ended, bridges)
             except (PhoenixUnavailable, ValueError):
                 previous = None
-                key = ("unavailable", False, 0, ())
             else:
                 previous = current if complete else None
-            if key == previous_key:
-                stagnant += 1
-            else:
-                stagnant = 1
-                previous_key = key
-            if not complete and stagnant >= self.trace_attempts:
+            if time.monotonic() >= deadline:
                 return None
             time.sleep(1.0)
 
@@ -262,15 +270,13 @@ def _trace_id(trace: dict[str, Any] | None) -> str | None:
 
 def _trace_contains_session(trace: dict[str, Any], session_id: str) -> bool:
     """Verify trace ownership instead of trusting the echoed request id."""
+    from sim.research.phoenix_client import _attr
     pending: list[Any] = list(trace.get("tree") or trace.get("spans") or [])
     while pending:
         span = pending.pop()
         if not isinstance(span, dict):
             continue
-        attrs = span.get("attributes") or {}
-        actual = attrs.get("session.id")
-        if actual is None and isinstance(attrs.get("session"), dict):
-            actual = attrs["session"].get("id")
+        actual = _attr(span, "session.id")
         if actual == session_id:
             return True
         children = span.get("children") or []
@@ -293,9 +299,12 @@ def _owned_trace(
     def tid(span):
         return (span.get("context") or {}).get("trace_id") or span.get("trace_id")
 
-    ids = {tid(span) for span in spans if _trace_contains_session({"spans": [span]}, session_id)} - {None}
     if expected_trace_id:
-        ids &= {expected_trace_id}
+        matched = [span for span in spans if tid(span) == expected_trace_id]
+        if not matched:
+            return None
+        return {"session_id": session_id, "spans": matched}
+    ids = {tid(span) for span in spans if _trace_contains_session({"spans": [span]}, session_id)} - {None}
     if not ids:
         return None
     return {"session_id": session_id, "spans": [span for span in spans if tid(span) in ids]}
@@ -307,22 +316,9 @@ def _bridge_count(spans: list[dict[str, Any]]) -> int:
     return sum(bool(_attr(span, "b2e.heimdall.endpoint")) for span in spans)
 
 
-def _sorted_owned_spans(spans: list[dict[str, Any]], session_id: str) -> list[dict[str, Any]]:
-    """Order owned spans so consecutive Phoenix reads can be compared."""
+def _sorted_owned_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Order spans so consecutive Phoenix reads can be compared."""
     return sorted(spans, key=lambda span: (
-        not _trace_contains_session({"spans": [span]}, session_id),
+        not bool(span.get("end_time")),
         str((span.get("context") or {}).get("span_id") or ""),
     ))
-
-
-def _phoenix_progress_key(
-    owned: dict[str, Any] | None, ended: bool, bridges: int,
-) -> tuple[Any, ...]:
-    """Identity of a Phoenix snapshot used to detect stalled export."""
-    if owned is None:
-        return ("empty", False, 0, ())
-    ids = tuple(sorted(
-        str((span.get("context") or {}).get("span_id") or span.get("span_id") or "")
-        for span in owned["spans"]
-    ))
-    return ("owned", ended, bridges, ids)

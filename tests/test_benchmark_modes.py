@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from sim.benchmark.modes import (
-    DATA_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, build_modes,
+    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, build_modes,
     catalog_hash, write_mode_config,
 )
 
@@ -56,8 +56,8 @@ def test_three_modes_pin_same_common_conditions(
     modes = build_modes(common, base, generated, snapshots_root=base.parent / "snapshots")
     assert {mode.name for mode in modes} == {item.value for item in BenchmarkMode}
     assert all(mode.common is common for mode in modes)
-    assert modes.skills_disabled.tool_subset == DATA_TOOLS
-    assert modes.skills_disabled.catalog_path is None
+    assert modes.general_knowledge.tool_subset == GENERAL_KNOWLEDGE_TOOLS
+    assert modes.general_knowledge.catalog_path is None
     assert modes.existing_skills.tool_subset == SKILL_TOOLS
     assert modes.generated_skills.tool_subset == SKILL_TOOLS
     assert modes.existing_skills.catalog_hash == catalog_hash(base)
@@ -129,16 +129,20 @@ def test_writer_rejects_mismatched_common_conditions(
         write_mode_config(modes, tmp_path / "invalid.json")
 
 
-def test_disabled_and_mock_generated_modes_are_explicit(
+def test_general_knowledge_and_mock_generated_modes_are_explicit(
     tmp_path: Path, common: CommonConditions,
 ) -> None:
     base = tmp_path / "standard"
     (base / "org").mkdir(parents=True)
     (base / "org" / "standard.yaml").write_text(skill_yaml("standard"), encoding="utf-8")
     modes = build_modes(common, base, snapshots_root=tmp_path / "snapshots")
-    assert modes.skills_disabled.skills_enabled is False
-    assert "find_skills" not in modes.skills_disabled.tool_subset
-    assert "get_skill" not in modes.skills_disabled.tool_subset
+    assert modes.general_knowledge.skills_enabled is False
+    assert modes.general_knowledge.tool_subset == ()
+    for forbidden in (
+        "list_models", "describe_model", "get_docs", "mcp_query",
+        "find_skills", "get_skill",
+    ):
+        assert forbidden not in modes.general_knowledge.tool_subset
     assert modes.generated_skills.is_mock is True
     assert modes.generated_skills.generated_skill_names == ()
 

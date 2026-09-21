@@ -137,12 +137,13 @@ CASES ?= benchmarking/cases
 # corpus and run against another.  An explicit BENCH_DATA still takes priority.
 DEPLOY_DATA_DIR := $(shell awk -F= '/^DATA_DIR=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
 BENCH_DATA ?= $(if $(DEPLOY_DATA_DIR),$(if $(filter /%,$(DEPLOY_DATA_DIR)),$(DEPLOY_DATA_DIR),deploy/$(DEPLOY_DATA_DIR)),data-small)
-BENCH_MODES ?= skills_disabled,existing_skills
+BENCH_MODES ?= general_knowledge,existing_skills
 BENCH_REPETITIONS ?= 1
 BENCH_RESULTS ?= benchmarking/results
 BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
 BENCH_EVAL_ID ?=
 BENCH_TIMEOUT ?= 1800
+BENCH_TRACE_TIMEOUT ?= 300
 BENCH_MODEL ?=
 BENCH_REMOTE_SSH ?= nnikitin@10.32.1.71
 BENCH_REMOTE_URL ?= https://10.32.1.71:8443
@@ -156,7 +157,8 @@ benchmark-data-check:  ## убедиться, что локальный сним
 	}
 BENCH_ARGS = --cases "$(CASES)" --data "$(BENCH_DATA)" \
 	--live-config "$(BENCH_LIVE_CONFIG)" --results "$(BENCH_RESULTS)" \
-	--modes "$(BENCH_MODES)" --timeout "$(BENCH_TIMEOUT)"
+	--modes "$(BENCH_MODES)" --timeout "$(BENCH_TIMEOUT)" \
+	--trace-timeout "$(BENCH_TRACE_TIMEOUT)"
 
 benchmark-live-config: export DATA_DIR := $(abspath $(BENCH_DATA))
 benchmark-live-config: benchmark-data-check up
@@ -181,7 +183,8 @@ benchmark-run: benchmark-live-config  ## все ready-кейсы × режимы
 benchmark-remote:  ## текущая модель сервера, первый ready-кейс; без Compose и изменения конфигов
 	$(PY) -m sim.benchmark.remote --cases "$(CASES)" \
 		--ssh "$(BENCH_REMOTE_SSH)" --public-url "$(BENCH_REMOTE_URL)" \
-		--env-file "$(BENCH_REMOTE_ENV)" --limit "$(BENCH_REMOTE_LIMIT)" \
-		--repetitions "$(BENCH_REPETITIONS)" --timeout "$(BENCH_TIMEOUT)" \
-		--results "$(BENCH_RESULTS)" \
+	--env-file "$(BENCH_REMOTE_ENV)" --limit "$(BENCH_REMOTE_LIMIT)" \
+	--repetitions "$(BENCH_REPETITIONS)" --timeout "$(BENCH_TIMEOUT)" \
+	--trace-timeout "$(BENCH_TRACE_TIMEOUT)" \
+	--results "$(BENCH_RESULTS)" \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)

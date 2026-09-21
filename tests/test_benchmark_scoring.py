@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 
 from sim.benchmark.cases import BenchmarkCase
-from sim.benchmark.modes import SKILL_TOOLS, BenchmarkMode, CommonConditions, ModeConfig
+from sim.benchmark.modes import (
+    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
+    ModeConfig,
+)
 from sim.benchmark.scoring import NormalizedAnswer, calculate_metrics, normalize_answer
 from tests.fixtures.constants import EXAMPLE
 
@@ -34,10 +37,11 @@ def mode(name: str = "existing_skills") -> ModeConfig:
     common = CommonConditions(
         "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
     )
-    enabled = name != BenchmarkMode.SKILLS_DISABLED
+    enabled = name != BenchmarkMode.GENERAL_KNOWLEDGE
     generated_names = ("generated_headcount",) if name == BenchmarkMode.GENERATED_SKILLS else ()
     return ModeConfig(
-        name, SKILL_TOOLS if enabled else DATA_TOOLS, None, None, None, None,
+        name, SKILL_TOOLS if enabled else GENERAL_KNOWLEDGE_TOOLS,
+        None, None, None, None,
         generated_names, common, skills_enabled=enabled,
     )
 
