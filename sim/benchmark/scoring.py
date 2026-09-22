@@ -11,7 +11,7 @@ from jsonschema import Draft202012Validator
 
 from .cases import BenchmarkCase
 from .contracts import response_schema
-from .modes import BenchmarkMode, ModeConfig
+from .modes import ModeConfig
 
 _FENCED_JSON = re.compile(r"[\x60]{3}(?:json)?\s*\n(.*?)\n[\x60]{3}", re.DOTALL | re.IGNORECASE)
 _REFUSAL_OUTCOMES = frozenset({"access_control", "missing_skill", "out_of_scope"})
@@ -108,10 +108,9 @@ def calculate_metrics(
     correct_refusal = (
         outcome_accuracy if expected_outcome in _REFUSAL_OUTCOMES else None
     )
-    generated_loaded: int | None = None
-    if mode.name == BenchmarkMode.GENERATED_SKILLS and not mode.is_mock:
-        targets = set(mode.generated_skill_names)
-        generated_loaded = int(bool(targets & set(observations["loaded_skills"])))
+    generated_loaded = mode.strategy.skill_loaded_metric(
+        mode, observations["loaded_skills"]
+    )
     return {
         "answer_accuracy": answer_accuracy,
         "exact_match": exact_match,

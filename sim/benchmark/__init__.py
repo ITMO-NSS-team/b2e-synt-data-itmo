@@ -14,7 +14,7 @@ from typing import Any
 
 __all__ = [
     "BenchmarkCase", "BenchmarkMode", "CommonConditions", "ModeConfig",
-    "ModeConfigs",
+    "ModeConfigs", "ModeStrategy",
     "ActivatedMode", "AgentRequest", "AgentTurn", "BenchmarkRunner",
     "NormalizedAnswer", "PinnedConfigActivator", "PreflightResult",
     "PROMPT_RENDERER_VERSION", "RESPONSE_PROTOCOL_VERSION",
@@ -37,6 +37,7 @@ _EXPORTS = {
     "CommonConditions": ".modes",
     "ModeConfig": ".modes",
     "ModeConfigs": ".modes",
+    "ModeStrategy": ".modes",
     "NormalizedAnswer": ".scoring",
     "PinnedConfigActivator": ".execution",
     "PreflightResult": ".preflight",

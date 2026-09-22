@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from .modes import comparison_pairs
+
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
@@ -165,12 +167,7 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             },
         }
     comparisons = {}
-    pairs = (
-        ("existing_skills", "general_knowledge"),
-        ("generated_skills", "general_knowledge"),
-        ("generated_skills", "existing_skills"),
-    )
-    for target, baseline in pairs:
+    for target, baseline in comparison_pairs():
         if target not in by_mode or baseline not in by_mode:
             continue
         key = f"{target}_vs_{baseline}"

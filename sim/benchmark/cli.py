@@ -200,10 +200,10 @@ def select_modes(all_modes: Iterable[ModeConfig], names: str) -> dict[str, ModeC
     if unknown:
         raise ValueError(f"unknown benchmark modes: {sorted(unknown)}")
     selected = {name: available[name] for name in requested}
-    generated = selected.get(BenchmarkMode.GENERATED_SKILLS.value)
-    if generated is not None and generated.is_mock:
+    blocked = [mode for mode in selected.values() if mode.strategy.skip_status(mode)]
+    if blocked:
         raise ValueError(
-            "generated_skills is still a mock; provide and mount a generated catalog first"
+            f"{blocked[0].name} is still a mock; provide its required artifacts"
         )
     return selected
 

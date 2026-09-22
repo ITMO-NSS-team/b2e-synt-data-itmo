@@ -15,10 +15,7 @@ from sim.fingerprint import RunFingerprint
 
 from .cases import BenchmarkCase, require_ready, validate_case
 from .catalog_snapshots import verify_snapshot
-from .modes import (
-    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, ModeConfig,
-    ModeConfigs, _loaded_registry,
-)
+from .modes import ModeConfig, ModeConfigs, _loaded_registry
 
 _JSON_FENCE = re.compile(r"[\x60]{3}(json|jsonc)\s*\n(.*?)\n[\x60]{3}", re.IGNORECASE | re.DOTALL)
 _PINNED_VERSION = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
@@ -133,21 +130,10 @@ def preflight_case(
     if case.status == "draft":
         return PreflightResult(case.case_id, mode.name, "draft_skipped")
     require_ready(case.raw)
-    if mode.name not in {item.value for item in BenchmarkMode}:
-        raise ValueError(f"unknown benchmark mode: {mode.name}")
-    if mode.name == BenchmarkMode.GENERAL_KNOWLEDGE:
-        if (
-            mode.skills_enabled
-            or mode.tool_subset != GENERAL_KNOWLEDGE_TOOLS
-            or mode.catalog_path is not None
-        ):
-            raise ValueError(
-                "general_knowledge must expose no tools and have no catalog"
-            )
-    elif not mode.skills_enabled or mode.tool_subset != SKILL_TOOLS:
-        raise ValueError(f"{mode.name}: skill channel and tool subset must be enabled")
-    if mode.name == BenchmarkMode.GENERATED_SKILLS and mode.is_mock:
-        return PreflightResult(case.case_id, mode.name, "mock_skipped")
+    strategy = mode.strategy
+    strategy.validate(mode)
+    if skip_status := strategy.skip_status(mode):
+        return PreflightResult(case.case_id, mode.name, skip_status)
     if not _PINNED_VERSION.fullmatch(agent_config_version):
         raise ValueError("agent_config_version must be pinned, e.g. benchmark_agent@1")
     if case.raw["snapshot_id"] != mode.common.snapshot_id:
@@ -173,14 +159,14 @@ def preflight_case(
     standard = Path(standard_catalog_path)
     verify_snapshot(standard)
     validate_skill_catalog(standard, model_catalog)
-    if mode.name != BenchmarkMode.GENERAL_KNOWLEDGE:
+    if strategy.requires_catalog:
         if mode.catalog_path is None or mode.catalog_hash is None:
             raise ValueError(f"{mode.name}: skill catalog path/hash is missing")
         if verify_snapshot(mode.catalog_path) != mode.catalog_hash:
             raise ValueError(f"{mode.name}: configured catalog hash differs from snapshot")
         if Path(mode.catalog_path).resolve() != standard.resolve():
             registry = validate_skill_catalog(mode.catalog_path, model_catalog)
-            if mode.name == BenchmarkMode.GENERATED_SKILLS:
+            if strategy.generated:
                 missing = set(mode.generated_skill_names) - set(registry.active())
                 if missing:
                     raise ValueError(f"generated target skills missing or inactive: {sorted(missing)}")

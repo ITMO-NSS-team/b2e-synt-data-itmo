@@ -8,7 +8,8 @@ import re
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Iterator
+from types import MappingProxyType
+from typing import Iterable, Iterator, Mapping
 
 from heimdall.skills.registry import EXTENSIONS, Registry
 from sim.fingerprint import VALID_LATENCY_PROFILES
@@ -110,34 +111,176 @@ class ModeConfig:
     skills_enabled: bool = True
     is_mock: bool = False
 
+    @property
+    def strategy(self) -> "ModeStrategy":
+        """Behavior registered for this mode."""
+        return mode_strategy(self.name)
+
+
+@dataclass(frozen=True, slots=True)
+class ModeStrategy:
+    """Composable policy for one benchmark arm.
+
+    Adding an arm means registering one policy instead of adding mode-name
+    branches throughout preflight, scoring, activation and aggregation.
+    """
+
+    mode: BenchmarkMode
+    tool_subset: tuple[str, ...]
+    skills_enabled: bool
+    catalog_source: str  # none | base | combined
+    generated: bool = False
+    remote_supported: bool = True
+    comparison_baselines: tuple[BenchmarkMode, ...] = ()
+
+    @property
+    def name(self) -> str:
+        return self.mode.value
+
+    @property
+    def requires_catalog(self) -> bool:
+        return self.catalog_source != "none"
+
+    @property
+    def requires_catalog_activator(self) -> bool:
+        return self.generated
+
+    def validate(self, config: ModeConfig) -> None:
+        """Validate fields governed by the mode rather than by a caller."""
+        if config.name != self.name:
+            raise ValueError("mode key/name mismatch")
+        if config.tool_subset != self.tool_subset:
+            raise ValueError(f"{self.name}: tool subset does not match mode strategy")
+        if config.skills_enabled is not self.skills_enabled:
+            raise ValueError(f"{self.name}: skill channel does not match mode strategy")
+        if not self.requires_catalog and (
+            config.catalog_path is not None or config.catalog_hash is not None
+        ):
+            raise ValueError(f"{self.name}: catalog must be disabled")
+        if not self.generated and (
+            config.generated_skills_path is not None
+            or config.generated_skills_hash is not None
+            or config.generated_skill_names
+            or config.is_mock
+        ):
+            raise ValueError(f"{self.name}: generated-skill fields are not applicable")
+        if self.generated:
+            if config.is_mock and (
+                config.generated_skills_path is not None
+                or config.generated_skills_hash is not None
+                or config.generated_skill_names
+            ):
+                raise ValueError("mock generated mode must not contain generated skills")
+            if not config.is_mock and not config.generated_skill_names:
+                raise ValueError("generated mode requires target skills")
+
+    def skip_status(self, config: ModeConfig) -> str | None:
+        """Return a non-error preflight status, if this arm cannot run yet."""
+        return "mock_skipped" if self.generated and config.is_mock else None
+
+    def skill_loaded_metric(
+        self, config: ModeConfig, loaded_skills: Iterable[str],
+    ) -> int | None:
+        """Score generated-skill selection only for the generated arm."""
+        if not self.generated or config.is_mock:
+            return None
+        return int(bool(set(config.generated_skill_names) & set(loaded_skills)))
+
+
+_MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
+    strategy.name: strategy
+    for strategy in (
+        ModeStrategy(
+            BenchmarkMode.GENERAL_KNOWLEDGE,
+            GENERAL_KNOWLEDGE_TOOLS,
+            False,
+            "none",
+        ),
+        ModeStrategy(
+            BenchmarkMode.EXISTING_SKILLS,
+            SKILL_TOOLS,
+            True,
+            "base",
+            comparison_baselines=(BenchmarkMode.GENERAL_KNOWLEDGE,),
+        ),
+        ModeStrategy(
+            BenchmarkMode.GENERATED_SKILLS,
+            SKILL_TOOLS,
+            True,
+            "combined",
+            generated=True,
+            remote_supported=False,
+            comparison_baselines=(
+                BenchmarkMode.GENERAL_KNOWLEDGE,
+                BenchmarkMode.EXISTING_SKILLS,
+            ),
+        ),
+    )
+})
+
+
+def mode_strategy(name: str | BenchmarkMode) -> ModeStrategy:
+    """Resolve one registered strategy by enum or serialized name."""
+    key = name.value if isinstance(name, BenchmarkMode) else name
+    try:
+        return _MODE_STRATEGIES[key]
+    except KeyError as exc:
+        raise ValueError(f"unknown benchmark mode: {key}") from exc
+
+
+def mode_strategies() -> tuple[ModeStrategy, ...]:
+    """Registered strategies in experiment order."""
+    return tuple(_MODE_STRATEGIES.values())
+
+
+def comparison_pairs() -> tuple[tuple[str, str], ...]:
+    """Target/baseline pairs declared by registered strategies."""
+    return tuple(
+        (strategy.name, baseline.value)
+        for strategy in mode_strategies()
+        for baseline in strategy.comparison_baselines
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class ModeConfigs:
-    """The three standard arms of one experiment.
+    """Validated collection of registered experiment arms.
 
     Attributes:
         general_knowledge: Baseline with no Heimdall tools, catalog, docs or data access.
         existing_skills: Catalog of already-deployed skills.
         generated_skills: Combined catalog, possibly still a mock.
     """
-    general_knowledge: ModeConfig
-    existing_skills: ModeConfig
-    generated_skills: ModeConfig
+    by_name: Mapping[str, ModeConfig]
 
     def __post_init__(self) -> None:
-        for mode, expected in (
-            (self.general_knowledge, BenchmarkMode.GENERAL_KNOWLEDGE),
-            (self.existing_skills, BenchmarkMode.EXISTING_SKILLS),
-            (self.generated_skills, BenchmarkMode.GENERATED_SKILLS),
-        ):
-            if mode.name != expected.value:
-                raise ValueError("mode key/name mismatch")
+        configs = dict(self.by_name)
+        if set(configs) != set(_MODE_STRATEGIES):
+            raise ValueError("mode collection does not match registered strategies")
+        for name, mode in configs.items():
+            strategy = mode_strategy(name)
+            strategy.validate(mode)
+        object.__setattr__(self, "by_name", MappingProxyType(configs))
+
+    def __getitem__(self, name: str | BenchmarkMode) -> ModeConfig:
+        key = name.value if isinstance(name, BenchmarkMode) else name
+        return self.by_name[key]
+
+    @property
+    def general_knowledge(self) -> ModeConfig:
+        return self[BenchmarkMode.GENERAL_KNOWLEDGE]
+
+    @property
+    def existing_skills(self) -> ModeConfig:
+        return self[BenchmarkMode.EXISTING_SKILLS]
+
+    @property
+    def generated_skills(self) -> ModeConfig:
+        return self[BenchmarkMode.GENERATED_SKILLS]
 
     def __iter__(self) -> Iterator[ModeConfig]:
-        """Yield the three arms in fixed order: general, existing, generated."""
-        yield self.general_knowledge
-        yield self.existing_skills
-        yield self.generated_skills
+        """Yield arms in strategy registration order."""
+        return iter(self.by_name.values())
 
 
 def _skill_files(root: Path) -> list[Path]:
@@ -234,17 +377,27 @@ def build_modes(
         combined = compose_catalog(base, generated, snapshots_root)
         combined_path = str(combined)
         combined_hash = catalog_hash(combined)
-    return ModeConfigs(
-        general_knowledge=ModeConfig(
-            BenchmarkMode.GENERAL_KNOWLEDGE.value, GENERAL_KNOWLEDGE_TOOLS,
-            None, None, None, None, (), common,
-            skills_enabled=False),
-        existing_skills=ModeConfig(
-            BenchmarkMode.EXISTING_SKILLS.value, SKILL_TOOLS, str(base), base_hash, None, None, (), common),
-        generated_skills=ModeConfig(
-            BenchmarkMode.GENERATED_SKILLS.value, SKILL_TOOLS, combined_path, combined_hash,
-            generated_path, generated_hash, names, common, is_mock=is_mock),
-    )
+    catalog_values = {
+        "none": (None, None),
+        "base": (str(base), base_hash),
+        "combined": (combined_path, combined_hash),
+    }
+    configs = {}
+    for strategy in mode_strategies():
+        catalog_path, configured_hash = catalog_values[strategy.catalog_source]
+        configs[strategy.name] = ModeConfig(
+            strategy.name,
+            strategy.tool_subset,
+            catalog_path,
+            configured_hash,
+            generated_path if strategy.generated else None,
+            generated_hash if strategy.generated else None,
+            names if strategy.generated else (),
+            common,
+            skills_enabled=strategy.skills_enabled,
+            is_mock=is_mock if strategy.generated else False,
+        )
+    return ModeConfigs(configs)
 
 
 def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
@@ -262,22 +415,8 @@ def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
     """
     if len({mode.common for mode in modes}) != 1:
         raise ValueError("all modes must share identical common conditions")
-    if modes.general_knowledge.tool_subset != GENERAL_KNOWLEDGE_TOOLS or any(
-        mode.tool_subset != SKILL_TOOLS
-        for mode in (modes.existing_skills, modes.generated_skills)
-    ):
-        raise ValueError("mode tool subsets do not match benchmark contract")
-    if (
-        modes.general_knowledge.skills_enabled
-        or modes.existing_skills.skills_enabled is not True
-        or modes.generated_skills.skills_enabled is not True
-    ):
-        raise ValueError("skill channel flags do not match benchmark modes")
-    generated = modes.generated_skills
-    if generated.is_mock and (generated.generated_skills_path is not None or generated.generated_skill_names):
-        raise ValueError("mock generated mode must not contain generated skills")
-    if not generated.is_mock and not generated.generated_skill_names:
-        raise ValueError("generated mode requires target skills")
+    for mode in modes:
+        mode.strategy.validate(mode)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {

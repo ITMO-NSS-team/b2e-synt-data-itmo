@@ -27,8 +27,8 @@ from .catalog_snapshots import verify_snapshot
 from .env import load_env, require_env
 from .execution import PinnedConfigActivator, StandSessionExecutor
 from .modes import (
-    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, ModeConfig,
-    _loaded_registry, _skill_files, catalog_hash,
+    ModeConfig, _loaded_registry, _skill_files, catalog_hash, mode_strategies,
+    mode_strategy,
 )
 from .preflight import PreflightResult, _check_query, validate_skill_catalog
 from .path_lib import SCHEMA_RELATIVE
@@ -171,10 +171,7 @@ def selected_mode_names(args=None) -> tuple[str, ...]:
         raise ValueError("at least one benchmark mode is required")
     if len(names) != len(set(names)):
         raise ValueError("benchmark modes contain duplicates")
-    allowed = {
-        BenchmarkMode.GENERAL_KNOWLEDGE.value,
-        BenchmarkMode.EXISTING_SKILLS.value,
-    }
+    allowed = {strategy.name for strategy in mode_strategies() if strategy.remote_supported}
     unknown = set(names) - allowed
     if unknown:
         raise ValueError(
@@ -185,13 +182,17 @@ def selected_mode_names(args=None) -> tuple[str, ...]:
 
 
 def _remote_mode(name: str, common, catalog_hash: str) -> ModeConfig:
-    if name == BenchmarkMode.GENERAL_KNOWLEDGE.value:
-        return ModeConfig(
-            name, GENERAL_KNOWLEDGE_TOOLS, None, None, None, None, (), common,
-            skills_enabled=False,
-        )
+    strategy = mode_strategy(name)
     return ModeConfig(
-        name, SKILL_TOOLS, None, catalog_hash, None, None, (), common,
+        name,
+        strategy.tool_subset,
+        None,
+        catalog_hash if strategy.requires_catalog else None,
+        None,
+        None,
+        (),
+        common,
+        skills_enabled=strategy.skills_enabled,
     )
 
 

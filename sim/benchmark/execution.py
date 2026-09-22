@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol
 
-from .modes import BenchmarkMode, ModeConfig, catalog_hash
+from .modes import ModeConfig, catalog_hash
 
 _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 _HARNESS_DENIAL = re.compile(r"^denied:[A-Z][A-Za-z0-9]*$")
@@ -198,8 +198,10 @@ class PinnedConfigActivator:
             or config.get("conversation_mode") != "stateless"
         ):
             raise ValueError(f"{mode.name}: live agent behavior differs from mode")
-        if mode.name == BenchmarkMode.GENERATED_SKILLS and not mode.is_mock:
-            raise ValueError("generated_skills requires a catalog-mounting ModeActivator")
+        if mode.strategy.requires_catalog_activator and not mode.is_mock:
+            raise ValueError(
+                f"{mode.name} requires a catalog-mounting ModeActivator"
+            )
         if mode.catalog_path is not None:
             actual = catalog_hash(mode.catalog_path)
             if actual != mode.catalog_hash:

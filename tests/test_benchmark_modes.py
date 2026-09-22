@@ -9,7 +9,7 @@ import pytest
 
 from sim.benchmark.modes import (
     GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, build_modes,
-    catalog_hash, write_mode_config,
+    catalog_hash, comparison_pairs, mode_strategy, write_mode_config,
 )
 
 
@@ -63,6 +63,17 @@ def test_three_modes_pin_same_common_conditions(
     assert modes.existing_skills.catalog_hash == catalog_hash(base)
     assert modes.generated_skills.catalog_hash != modes.existing_skills.catalog_hash
     assert modes.generated_skills.generated_skill_names == ("generated",)
+
+
+def test_mode_behavior_comes_from_registered_strategies() -> None:
+    general = mode_strategy(BenchmarkMode.GENERAL_KNOWLEDGE)
+    generated = mode_strategy(BenchmarkMode.GENERATED_SKILLS)
+
+    assert general.tool_subset == ()
+    assert general.requires_catalog is False
+    assert generated.requires_catalog is True
+    assert generated.requires_catalog_activator is True
+    assert ("generated_skills", "existing_skills") in comparison_pairs()
 
 
 def test_config_file_explicitly_contains_all_required_variables(
@@ -124,7 +135,11 @@ def test_writer_rejects_mismatched_common_conditions(
     modes = build_modes(common, *catalogs, snapshots_root=tmp_path / "snapshots")
     other = CommonConditions("other-model", 0.0, "system_prompt@1", "heimdall-sandbox@test",
                              True, "instant", ("999999",))
-    modes = replace(modes, generated_skills=replace(modes.generated_skills, common=other))
+    changed = dict(modes.by_name)
+    changed[BenchmarkMode.GENERATED_SKILLS.value] = replace(
+        modes.generated_skills, common=other,
+    )
+    modes = type(modes)(changed)
     with pytest.raises(ValueError, match="identical common conditions"):
         write_mode_config(modes, tmp_path / "invalid.json")
 
