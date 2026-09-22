@@ -83,8 +83,8 @@ import sys
 import urllib.parse
 import urllib.request
 
-project, trace_id = sys.argv[1:3]
-endpoint = "http://127.0.0.1:6006/v1/projects/" + urllib.parse.quote(project, safe="") + "/spans"
+project, trace_id, base = sys.argv[1:4]
+endpoint = base.rstrip("/") + "/v1/projects/" + urllib.parse.quote(project, safe="") + "/spans"
 spans = {}
 cursor = None
 seen_cursors = set()
@@ -126,14 +126,18 @@ def read_phoenix_trace(
     project: str,
     trace_id: str,
     *,
+    control_url: str,
     control_path: str | None = None,
 ) -> list[dict]:
     """Read one trace from Phoenix's internal REST API over read-only SSH."""
     if not ssh or ssh.startswith("-"):
         raise ValueError("--ssh must be a hostname or user@hostname")
+    base = control_url.strip()
+    if not base:
+        raise ValueError("phoenix probe requires control_url")
     command = shlex.join([
         "docker", "exec", "-i", container, "python", "-B", "-",
-        project, trace_id,
+        project, trace_id, base,
     ])
     result = subprocess.run(
         ssh_command(ssh, control_path, command),
@@ -273,7 +277,19 @@ def parser():
     result.add_argument("--public-url", default="https://10.32.1.71:8443")
     result.add_argument("--admin-container", default="b2e-itmo-admin-ui-1")
     result.add_argument("--emulator-container", default="b2e-itmo-heimdall-emulator-1")
+    result.add_argument(
+        "--emulator-control-url", default="http://127.0.0.1:8081",
+        help="Emulator control API as seen from inside --emulator-container",
+    )
     result.add_argument("--phoenix-container", default="b2e-itmo-phoenix-1")
+    result.add_argument(
+        "--phoenix-control-url", default="http://127.0.0.1:6006",
+        help="Phoenix REST API as seen from inside --phoenix-container",
+    )
+    result.add_argument(
+        "--phoenix-project", default="b2e-itmo",
+        help="Phoenix project name inside the stand",
+    )
     result.add_argument("--config-ref", default="agent_config")
     return result
 
@@ -301,9 +317,11 @@ def main(argv=None) -> int:
                 report = read_container(args.ssh, args.admin_container, "registry", {
                     "config_ref": args.config_ref,
                     "employee_ids": sorted({str(case.raw["employee_id"]) for case in cases}),
+                    "phoenix_project": args.phoenix_project,
                 }, control_path=control_path)
                 catalog = read_container(
-                    args.ssh, args.emulator_container, "catalog", {},
+                    args.ssh, args.emulator_container, "catalog",
+                    {"control_url": args.emulator_control_url},
                     control_path=control_path,
                 )
                 prepared = prepare_remote(args, cases, report, catalog)
@@ -329,8 +347,9 @@ def main(argv=None) -> int:
                     phoenix_trace_fetcher=lambda trace_id: read_phoenix_trace(
                         args.ssh,
                         args.phoenix_container,
-                        report["live"].get("phoenix_project", "b2e-itmo"),
+                        report["live"]["phoenix_project"],
                         trace_id,
+                        control_url=args.phoenix_control_url,
                         control_path=control_path,
                     ),
                 )

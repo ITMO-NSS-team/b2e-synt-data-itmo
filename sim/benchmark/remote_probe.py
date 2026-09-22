@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-import os
 import re
 import sys
 
@@ -19,6 +18,13 @@ from heimdall.engine.compile import compile_query
 from heimdall.skills.registry import EXTENSIONS, Registry
 
 _JSON_FENCE = re.compile(r"[\x60]{3}(json|jsonc)\s*\n(.*?)\n[\x60]{3}", re.IGNORECASE | re.DOTALL)
+
+
+def _required_option(options: dict, key: str) -> str:
+    value = str(options.get(key) or "").strip()
+    if not value:
+        raise ValueError(f"{key} is required")
+    return value
 
 
 def probe(kind: str, options: dict) -> dict:
@@ -46,7 +52,7 @@ def probe(kind: str, options: dict) -> dict:
                 prompt_versions[ref] = prompt_version.ref
             result = {
                 "schema_version": "1.0",
-                "phoenix_project": os.environ.get("PHOENIX_PROJECT", "b2e-itmo"),
+                "phoenix_project": _required_option(options, "phoenix_project"),
                 "refs": pinned,
                 "configs": configs,
                 "prompt_versions": prompt_versions,
@@ -70,9 +76,9 @@ def probe(kind: str, options: dict) -> dict:
     if kind == "catalog":
         skills = Path(require_env("HEIMDALL_SKILLS"))
         catalog = Path(require_env("HEIMDALL_CATALOG"))
-        with httpx.Client(timeout=30, trust_env=False) as client:
-            # Loopback of this container's own listener, not a Compose DNS default.
-            response = client.get("http://127.0.0.1:8081/control/config")
+        base = _required_option(options, "control_url")
+        with httpx.Client(base_url=base, timeout=30, trust_env=False) as client:
+            response = client.get("/control/config")
             response.raise_for_status()
             condition = response.json()
         root = Path(condition["snapshot"])

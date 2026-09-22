@@ -151,6 +151,9 @@ BENCH_REMOTE_SSH ?= nnikitin@10.32.1.71
 BENCH_REMOTE_URL ?= https://10.32.1.71:8443
 BENCH_REMOTE_ENV ?= deploy/.env
 BENCH_REMOTE_LIMIT ?= 1
+BENCH_REMOTE_EMULATOR_CONTROL_URL ?= http://127.0.0.1:8081
+BENCH_REMOTE_PHOENIX_CONTROL_URL ?= http://127.0.0.1:6006
+BENCH_REMOTE_PHOENIX_PROJECT ?= b2e-itmo
 BENCH_REMOTE_ROOT ?= /var/essdata/b2e-synt-data-itmo
 BENCH_LIMIT ?=
 # So `make benchmark-remote-smoke RESEARCHER_PASSWORD=...` reaches the local driver.
@@ -226,5 +229,8 @@ benchmark-remote-smoke:  ## временный локальный driver: оди
 	--repetitions "$(BENCH_REPETITIONS)" --timeout "$(BENCH_TIMEOUT)" \
 	--trace-timeout "$(BENCH_TRACE_TIMEOUT)" \
 	--modes "$(BENCH_MODES)" \
+	--emulator-control-url "$(BENCH_REMOTE_EMULATOR_CONTROL_URL)" \
+	--phoenix-control-url "$(BENCH_REMOTE_PHOENIX_CONTROL_URL)" \
+	--phoenix-project "$(BENCH_REMOTE_PHOENIX_PROJECT)" \
 	--results "$(BENCH_RESULTS)" \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)

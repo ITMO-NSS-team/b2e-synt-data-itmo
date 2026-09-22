@@ -60,6 +60,9 @@ def test_defaults_use_one_case_current_config_and_phoenix():
     assert args.trace_backend == "phoenix"
     assert args.trace_timeout == 300.0
     assert args.env_file == "deploy/.env"
+    assert args.emulator_control_url == "http://127.0.0.1:8081"
+    assert args.phoenix_control_url == "http://127.0.0.1:6006"
+    assert args.phoenix_project == "b2e-itmo"
     assert not hasattr(args, "trace_attempts")
 
 
@@ -129,6 +132,10 @@ def test_probe_is_self_contained_and_uses_shared_validators(monkeypatch, tmp_pat
     assert "require_env" in source
     assert "from sim.benchmark" not in source
     assert "sim.benchmark.env" not in source
+    assert "127.0.0.1:8081" not in source
+    assert "127.0.0.1:6006" not in source
+    assert '_required_option(options, "control_url")' in source
+    assert '_required_option(options, "phoenix_project")' in source
 
 
 def test_ssh_sends_only_stdin_script_no_install_or_shell_interpolation(monkeypatch):
@@ -168,13 +175,14 @@ def test_remote_entrypoint_one_case_and_saved_results(monkeypatch, tmp_path, che
         def phoenix_http(self):
             return self._client
     monkeypatch.setattr(remote, "StandClient", Stand)
-    monkeypatch.setattr(
-        remote,
-        "read_container",
-        lambda ssh, container, kind, options, **kwargs: deepcopy(
-            report if kind == "registry" else catalog
-        ),
-    )
+    def read_container(ssh, container, kind, options, **kwargs):
+        if kind == "registry":
+            assert options["phoenix_project"] == "b2e-itmo"
+            return deepcopy(report)
+        assert options["control_url"] == "http://127.0.0.1:8081"
+        return deepcopy(catalog)
+
+    monkeypatch.setattr(remote, "read_container", read_container)
     monkeypatch.setattr(remote, "close_ssh_master", lambda *args: None)
     requests = []
     class Executor:
@@ -241,6 +249,9 @@ def test_make_remote_smoke_keeps_local_driver_and_one_case():
     )
     assert "sim.benchmark.remote --cases" in result.stdout
     assert '--limit "1"' in result.stdout
+    assert '--emulator-control-url "http://127.0.0.1:8081"' in result.stdout
+    assert '--phoenix-control-url "http://127.0.0.1:6006"' in result.stdout
+    assert '--phoenix-project "b2e-itmo"' in result.stdout
     assert "docker compose" not in result.stdout
 
 
@@ -270,14 +281,18 @@ def test_remote_phoenix_trace_uses_internal_container_api(monkeypatch):
         "phoenix-container",
         "b2e-itmo",
         "trace-1",
+        control_url="http://127.0.0.1:6006",
         control_path="/tmp/control",
     )
 
     assert spans == [{"name": "b2e.turn"}]
     argv, kwargs = calls[0]
     assert argv[-2] == "user@server"
-    assert "docker exec -i phoenix-container python -B - b2e-itmo trace-1" == argv[-1]
-    assert "http://127.0.0.1:6006/v1/projects/" in kwargs["input"]
+    assert (
+        "docker exec -i phoenix-container python -B - "
+        "b2e-itmo trace-1 http://127.0.0.1:6006"
+    ) == argv[-1]
+    assert "127.0.0.1:6006" not in kwargs["input"]
     assert "ControlPath=/tmp/control" in argv
 
 
@@ -288,4 +303,10 @@ def test_remote_phoenix_trace_rejects_malformed_payload(monkeypatch):
         lambda *args, **kwargs: SimpleNamespace(stdout='{"unexpected": true}'),
     )
     with pytest.raises(ValueError, match="no spans array"):
-        remote.read_phoenix_trace("user@server", "phoenix", "b2e-itmo", "trace-1")
+        remote.read_phoenix_trace(
+            "user@server",
+            "phoenix",
+            "b2e-itmo",
+            "trace-1",
+            control_url="http://127.0.0.1:6006",
+        )

@@ -361,7 +361,7 @@ RESEARCHER_PASSWORD='…' \
 make benchmark-remote-smoke CASES=benchmarking/cases
 ```
 
-Он создаёт сессии через публичный HTTPS API и получает Phoenix-трассы через SSH. По умолчанию выбирается один ready-кейс. Для регулярных и полных экспериментов следует использовать `benchmark-remote` или `benchmark-server`.
+Он создаёт сессии через публичный HTTPS API и получает Phoenix-трассы через SSH. По умолчанию выбирается один ready-кейс. Адрес control API эмулятора внутри контейнера задаётся `--emulator-control-url` / `BENCH_REMOTE_EMULATOR_CONTROL_URL` (по умолчанию loopback контейнера на порту 8081). Адрес REST API Phoenix внутри контейнера и имя проекта — `--phoenix-control-url` / `BENCH_REMOTE_PHOENIX_CONTROL_URL` (по умолчанию loopback на порту 6006) и `--phoenix-project` / `BENCH_REMOTE_PHOENIX_PROJECT`. Для регулярных и полных экспериментов следует использовать `benchmark-remote` или `benchmark-server`.
 
 ## Текущие ограничения
 
