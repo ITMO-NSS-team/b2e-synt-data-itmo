@@ -25,7 +25,7 @@ def dotenv_value(path: Path, key: str) -> str:
     return ""
 
 
-def proxy_client(base: str, *, public_host: str, auth: tuple[str, str],
+def proxy_client(base: str, *, public_host: str, auth: tuple[str, str] | None,
                  timeout: float) -> httpx.Client:
     parsed = urlparse(base)
     hostname = parsed.hostname or public_host or "localhost"
@@ -51,13 +51,16 @@ class StandClient:
         trace_backend: str = "research",
         trace_timeout: float = 300.0,
         phoenix_trace_fetcher: Callable[[str], list[dict[str, Any]]] | None = None,
+        agent_prefix: str = "/agent",
+        phoenix_url: str | None = None,
+        require_auth: bool = True,
     ) -> None:
         env_path = Path(env_file)
         password = (
             (os.environ.get("RESEARCHER_PASSWORD") or "").strip()
             or dotenv_value(env_path, "RESEARCHER_PASSWORD")
         )
-        if not password:
+        if require_auth and not password:
             raise RuntimeError(
                 "RESEARCHER_PASSWORD is empty. Export it or put it in "
                 f"{env_file}."
@@ -75,18 +78,27 @@ class StandClient:
             raise ValueError("trace_timeout must be positive")
         self.trace_timeout = trace_timeout
         self._phoenix_trace_fetcher = phoenix_trace_fetcher
-        self.phoenix_project = dotenv_value(env_path, "PHOENIX_PROJECT") or "b2e-itmo"
-        auth = ("researcher", password)
+        normalized_prefix = agent_prefix.strip("/")
+        self.agent_prefix = f"/{normalized_prefix}" if normalized_prefix else ""
+        self.phoenix_project = (
+            (os.environ.get("PHOENIX_PROJECT") or "").strip()
+            or dotenv_value(env_path, "PHOENIX_PROJECT")
+            or "b2e-itmo"
+        )
+        auth = ("researcher", password) if require_auth else None
         self._client = proxy_client(
             self.public_url, public_host=self.public_host,
             auth=auth, timeout=timeout)
         self._phoenix_http = proxy_client(
-            f"{self.public_url}/phoenix", public_host=self.public_host,
+            (phoenix_url or f"{self.public_url}/phoenix").rstrip("/"),
+            public_host=(urlparse(phoenix_url).hostname if phoenix_url else self.public_host)
+            or self.public_host,
             auth=auth, timeout=timeout)
 
     def run(self, case: EvalCase, spec: SessionSpec) -> TurnResult:
         started = time.monotonic()
-        session = self._client.post("/agent/sessions", json={
+        agent_prefix = getattr(self, "agent_prefix", "/agent")
+        session = self._client.post(f"{agent_prefix}/sessions", json={
             "employee_id": spec.employee_id,
             "config_ref": spec.config_ref,
             "metadata": spec.metadata,
@@ -102,7 +114,7 @@ class StandClient:
         fingerprint = body.get("fingerprint") or {}
         live_snapshot = fingerprint.get("data_snapshot_hash")
         reply = self._client.post(
-            f"/agent/sessions/{session_id}/messages",
+            f"{agent_prefix}/sessions/{session_id}/messages",
             json={"content": case.question},
         )
         if reply.status_code >= 400:

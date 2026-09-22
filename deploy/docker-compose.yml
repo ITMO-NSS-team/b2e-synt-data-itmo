@@ -346,6 +346,41 @@ services:
       b2e-agent: {condition: service_started}
       registry-init: {condition: service_completed_successfully}
 
+  # -------------------------------------------------------- benchmark runner
+  # One-off job used by `make benchmark-server`. It shares the stand's
+  # internal network but is not part of the long-running deployment. Source
+  # datasets and catalogs are read-only; only var/ and benchmarking/results/
+  # are writable experiment artifacts.
+  benchmark-runner:
+    <<: [*python-image, *hardening]
+    profiles: ["benchmark"]
+    restart: "no"
+    command: ["python", "-m", "sim.benchmark.cli", "--help"]
+    environment:
+      PYTHONPATH: /app
+      HOME: /tmp
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
+    volumes:
+      - *resolv-overlay
+      - ../sim:/app/sim:ro
+      - ../b2e:/app/b2e:ro
+      - ../heimdall:/app/heimdall:ro
+      - ../benchmarking:/app/benchmarking:ro
+      - ../benchmarking/results:/app/benchmarking/results
+      - ../heimdall-skills:/app/heimdall-skills:ro
+      - ../catalog:/app/catalog:ro
+      - ../var:/app/var
+      - ${DATA_DIR:-../data-small}:/data/snapshot:ro
+    networks: [internal]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    mem_limit: 768m
+    depends_on:
+      b2e-agent: {condition: service_started}
+      phoenix: {condition: service_started}
+      heimdall-emulator: {condition: service_healthy}
+
   # ----------------------------------------------------------- skill sandbox
   # spool-init exists because named volumes are created root:root and uid 10001
   # cannot otherwise write them. Ordering here was a real bug found in testing.

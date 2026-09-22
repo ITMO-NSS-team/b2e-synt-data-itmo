@@ -14,8 +14,10 @@ PROFILE ?=
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
         rebuild sim-test demo eval-skills eval-deps pin-eval-configs \
-        benchmark-data-check benchmark-live-config benchmark-check \
-        benchmark-smoke benchmark-run benchmark-remote
+	benchmark-data-check benchmark-live-config benchmark-check \
+	benchmark-smoke benchmark-run benchmark-server-live-config \
+	benchmark-server benchmark-remote \
+	benchmark-remote-smoke
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -149,7 +151,9 @@ BENCH_REMOTE_SSH ?= nnikitin@10.32.1.71
 BENCH_REMOTE_URL ?= https://10.32.1.71:8443
 BENCH_REMOTE_ENV ?= deploy/.env
 BENCH_REMOTE_LIMIT ?= 1
-# So `make benchmark-remote RESEARCHER_PASSWORD=...` reaches the Python process.
+BENCH_REMOTE_ROOT ?= /var/essdata/b2e-synt-data-itmo
+BENCH_LIMIT ?=
+# So `make benchmark-remote-smoke RESEARCHER_PASSWORD=...` reaches the local driver.
 export RESEARCHER_PASSWORD
 
 benchmark-data-check:  ## убедиться, что локальный снимок данных существует
@@ -182,7 +186,40 @@ benchmark-run: benchmark-live-config  ## все ready-кейсы × режимы
 		--repetitions "$(BENCH_REPETITIONS)" --eval-prefix benchmark \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
-benchmark-remote:  ## текущая модель сервера, general_knowledge+existing_skills; без Compose
+benchmark-server-live-config:  ## зафиксировать конфигурацию уже работающего серверного стенда
+	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" var/benchmark-catalog-snapshots
+	$(COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
+		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
+
+benchmark-server: benchmark-server-live-config  ## выполнить benchmark внутри сети серверного стенда
+	$(COMPOSE) --profile benchmark run --rm --no-deps \
+		--user "$$(id -u):$$(id -g)" benchmark-runner \
+		python -m sim.benchmark.cli \
+			--cases "/app/$(CASES)" --data /data/snapshot \
+			--catalog /app/heimdall-skills \
+			--catalog-snapshots /app/var/benchmark-catalog-snapshots \
+			--model-catalog /app/catalog/snapshot.json \
+			--live-config "/app/$(BENCH_LIVE_CONFIG)" \
+			--results "/app/$(BENCH_RESULTS)" \
+			--modes "$(BENCH_MODES)" --repetitions "$(BENCH_REPETITIONS)" \
+			--timeout "$(BENCH_TIMEOUT)" --trace-timeout "$(BENCH_TRACE_TIMEOUT)" \
+			--trace-backend phoenix --agent-url http://b2e-agent:8082 \
+			--agent-prefix "" --phoenix-url http://phoenix:6006 --no-auth \
+			--eval-prefix server \
+			$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",) \
+			$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
+
+benchmark-remote:  ## запустить полный benchmark на сервере и скачать results
+	$(PY) -m sim.benchmark.remote_server --cases "$(CASES)" \
+		--ssh "$(BENCH_REMOTE_SSH)" --remote-root "$(BENCH_REMOTE_ROOT)" \
+		--remote-results "$(BENCH_RESULTS)" --local-results "$(BENCH_RESULTS)" \
+		--modes "$(BENCH_MODES)" --repetitions "$(BENCH_REPETITIONS)" \
+		--timeout "$(BENCH_TIMEOUT)" --trace-timeout "$(BENCH_TRACE_TIMEOUT)" \
+		$(if $(BENCH_MODEL),--model "$(BENCH_MODEL)",) \
+		$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",) \
+		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
+
+benchmark-remote-smoke:  ## временный локальный driver: один кейс против удалённого стенда
 	$(PY) -m sim.benchmark.remote --cases "$(CASES)" \
 		--ssh "$(BENCH_REMOTE_SSH)" --public-url "$(BENCH_REMOTE_URL)" \
 	--env-file "$(BENCH_REMOTE_ENV)" --limit "$(BENCH_REMOTE_LIMIT)" \

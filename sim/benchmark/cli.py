@@ -356,7 +356,10 @@ def run(
             trace_attempts=args.trace_attempts,
             trace_backend=getattr(args, "trace_backend", "research"),
             trace_timeout=getattr(args, "trace_timeout", 300.0),
-            **({"public_url": args.public_url} if getattr(args, "public_url", None) else {}),
+            **({"public_url": args.agent_url} if getattr(args, "agent_url", None) else {}),
+            agent_prefix=getattr(args, "agent_prefix", "/agent"),
+            phoenix_url=getattr(args, "phoenix_url", None),
+            require_auth=not getattr(args, "no_auth", False),
         ),
         writer=writer,
     )
@@ -389,6 +392,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--eval-prefix")
     result.add_argument("--check-only", action="store_true")
     result.add_argument("--env-file", default=ENV_RELATIVE)
+    result.add_argument("--agent-url", help="Agent base URL; defaults to PUBLIC_URL")
+    result.add_argument("--agent-prefix", default="/agent")
+    result.add_argument("--phoenix-url", help="Direct Phoenix base URL")
+    result.add_argument("--no-auth", action="store_true", help="Use only on an internal network")
+    result.add_argument(
+        "--trace-backend", choices=("research", "phoenix"), default="research",
+    )
     result.add_argument("--timeout", type=float, default=1800.0)
     result.add_argument(
         "--trace-attempts", type=int, default=30,

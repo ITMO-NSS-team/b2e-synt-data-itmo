@@ -272,6 +272,23 @@ def test_direct_phoenix_keeps_polling_before_any_span_lands(monkeypatch):
     assert trace["spans"] == [root]
 
 
+def test_stand_supports_internal_agent_and_phoenix_without_basic_auth(tmp_path):
+    stand = StandClient(
+        env_file=str(tmp_path / "missing.env"),
+        public_url="http://b2e-agent:8082",
+        agent_prefix="",
+        phoenix_url="http://phoenix:6006",
+        require_auth=False,
+    )
+    try:
+        assert stand.agent_prefix == ""
+        assert str(stand._client.base_url) == "http://b2e-agent:8082"
+        assert str(stand.phoenix_http().base_url) == "http://phoenix:6006"
+    finally:
+        stand._client.close()
+        stand.phoenix_http().close()
+
+
 def test_stand_reads_phoenix_project_from_env(tmp_path, monkeypatch):
     monkeypatch.delenv("RESEARCHER_PASSWORD", raising=False)
     env = tmp_path / ".env"

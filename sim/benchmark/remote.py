@@ -1,9 +1,10 @@
-"""Local driver against a remote stand: pin two benchmark configs, then run.
+"""Temporary local smoke/debug driver against a remote stand.
 
 SSH pins append-only ``general_knowledge`` / ``existing_skills`` clones of the
 live ``agent_config`` and validates catalogs in place. Sessions and traces use
 HTTPS. The live ``agent_config`` head, Compose and the skill catalog are not
-rewritten. ``generated_skills`` stays a mock.
+rewritten. ``generated_skills`` stays a mock. Full experiments use
+``sim.benchmark.remote_server`` and execute beside the stand instead.
 """
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ def probe_source() -> str:
     return source + '\nprint(json.dumps(probe(sys.argv[1], json.loads(sys.argv[2])), ensure_ascii=False))\n'
 
 
-def _ssh_command(ssh: str, control_path: str | None, command: str) -> list[str]:
+def ssh_command(ssh: str, control_path: str | None, command: str) -> list[str]:
     result = ["ssh", "-o", "ConnectTimeout=10"]
     if control_path:
         result.extend([
@@ -71,7 +72,7 @@ def read_container(
         "docker", "exec", "-i", container, "python", "-B", "-", kind, json.dumps(options),
     ])
     result = subprocess.run(
-        _ssh_command(ssh, control_path, command),
+        ssh_command(ssh, control_path, command),
         input=probe_source(), text=True, stdout=subprocess.PIPE, check=True, timeout=120,
     )
     return json.loads(result.stdout)
@@ -135,7 +136,7 @@ def read_phoenix_trace(
         project, trace_id,
     ])
     result = subprocess.run(
-        _ssh_command(ssh, control_path, command),
+        ssh_command(ssh, control_path, command),
         input=_PHOENIX_TRACE_SOURCE,
         text=True,
         stdout=subprocess.PIPE,

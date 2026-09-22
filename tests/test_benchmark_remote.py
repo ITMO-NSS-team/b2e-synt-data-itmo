@@ -221,15 +221,40 @@ def test_remote_refuses_generated_skills_mock():
         remote.selected_mode_names(args)
 
 
-def test_make_remote_does_not_start_compose_and_limits_one_case():
+def test_make_remote_uses_server_runner_without_local_case_limit():
     import subprocess
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(["make", "-n", "benchmark-remote", "CASES=some/cases"],
                             cwd=root, text=True, capture_output=True, check=True)
-    assert "sim.benchmark.remote" in result.stdout
-    assert '--limit "1"' in result.stdout
+    assert "sim.benchmark.remote_server" in result.stdout
+    assert "--limit" not in result.stdout
     assert '--repetitions "1"' in result.stdout
     assert "docker compose" not in result.stdout
+
+
+def test_make_remote_smoke_keeps_local_driver_and_one_case():
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["make", "-n", "benchmark-remote-smoke", "CASES=some/cases"],
+        cwd=root, text=True, capture_output=True, check=True,
+    )
+    assert "sim.benchmark.remote --cases" in result.stdout
+    assert '--limit "1"' in result.stdout
+    assert "docker compose" not in result.stdout
+
+
+def test_make_server_runner_uses_internal_agent_and_phoenix():
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["make", "-n", "benchmark-server", "CASES=benchmarking/cases"],
+        cwd=root, text=True, capture_output=True, check=True,
+    )
+    assert "benchmark-runner" in result.stdout
+    assert "--agent-url http://b2e-agent:8082" in result.stdout
+    assert "--phoenix-url http://phoenix:6006" in result.stdout
+    assert "--no-auth" in result.stdout
 
 
 def test_remote_phoenix_trace_uses_internal_container_api(monkeypatch):
