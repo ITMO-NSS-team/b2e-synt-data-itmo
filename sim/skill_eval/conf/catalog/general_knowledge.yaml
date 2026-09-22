@@ -1,0 +1,2 @@
+_target_: sim.skill_eval.catalog.GeneralKnowledgeCatalog
+config_ref: agent_config_benchmark_general_knowledge
