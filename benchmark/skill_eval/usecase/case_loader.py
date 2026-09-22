@@ -48,7 +48,7 @@ def load_case(path: str | Path) -> dict:
     if isinstance(comparison, dict) and 'template' in comparison:
         if comparison['template'] != 'simple_comparison':
             raise ValueError(f'Неизвестный шаблон сравнения: {comparison["template"]}')
-        template = Path(__file__).resolve().parents[1] / 'gold_dataset/templates/simple_comparison.json'
+        template = Path(__file__).resolve().parents[2] / 'gold_dataset/templates/simple_comparison.json'
         defaults = json.loads(template.read_text(encoding='utf-8'))
         overrides = {k: v for k, v in comparison.items() if k != 'template'}
         if set(overrides) - set(defaults):

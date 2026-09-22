@@ -1,0 +1,1350 @@
+{
+  "source": "benchmark/info/examples.json",
+  "review_type": "static_skill_catalog_and_generator_review",
+  "reviewed_at": "2026-09-22",
+  "answerable_definition": "true: есть технический путь получить содержательный ответ по данным API после явно описанной привязки сущностей/периода и уточнений. false: не хватает витрины, согласованных данных или определённого алгоритма для полного смысла вопроса. Это оценка возможности сценария, не подтверждение успешного выполнения исходного текста на развёрнутом стенде.",
+  "coverage_definitions": {
+    "full": "Рецепт или документированная цепочка непосредственно покрывает операцию; остаётся подставить параметры.",
+    "partial": "Есть предметная часть рецепта или приёма, но нужны дополнительные фильтры, выборки, расчёт или уточнение смысла.",
+    "none": "Нет предметного рецепта/приёма. Общий путь getting_started → describe_model → mcp_query может позволять решить задачу; none не означает автоматически missing_skill."
+  },
+  "data_support_definitions": {
+    "core": "Нужные основные значения явно связаны со смысловым генератором/популяцией.",
+    "procedural": "Можно читать детерминированные поля API, но они не подтверждены согласованной бизнес-моделью. Допустим эталон чтения/расчёта по API, не реконструкция бизнес-процесса.",
+    "mixed": "Смешаны согласованные данные и процедурные поля; ограничения описаны в reason.",
+    "incomplete": "Поля/часть данных есть, но не хватает согласованности или информации для полного вопроса.",
+    "missing": "Нет необходимой витрины или запрошенной исторической поверхности."
+  },
+  "acting_role_definition": "Рекомендуемая роль для проверки, не роль из examples.json. self — собственные данные; manager — своя команда/поддерево; hr — произвольный сотрудник или вся компания. hr должен быть назначен сервером. Для вопросов с answerable=false роль указана для предполагаемого сценария и не устраняет нехватку данных.",
+  "notes": [
+    "Сохранены все 82 вопроса, включая повторы; текущие id сохранены. В query явно добавлены конкретные person_id из input.person_id или фильтра expected_mcp_query, если их ещё не было в тексте. Шаблон {{person_id}} без конкретного значения не подставляется. Оценён смысл вопроса, а не только корректность expected_mcp_query.",
+    "Прогоны через API и агента не выполнялись; все записи требуют проверки на конкретном snapshot и identity перед включением в verified gold. Непустой ответ не гарантирован.",
+    "Источник помечен stand=ift. Его expected_skills, SQL-подобные тела и expected_result не считаются локальными навыками или проверенными эталонами.",
+    "Названия skills — реальные name из heimdall-skills; указаны и рецепты, и применимые references. Для неразрешимых вопросов это полезные части/приёмы диагностики, а не обещание полного решения.",
+    "Конкретные ФИО, UUID, команды, блоки и периоды источника могут отсутствовать в синтетическом снимке. answerable=true предполагает явную привязку, описанную в reason. Указанный в query person_id взят из исходного примера и не подтверждён на локальном снимке; для acting_role=self он должен совпадать с текущим пользователем.",
+    "skills из basket.py не загружаются: это источник вопросов и требований к oracle. Одноимённый gold_ref не доказывает наличие навыка или доступность данных через API.",
+    "Для процедурных скалярных полей допустима проверка ответа по самим данным Heimdall. Если требуются связанные события, уровни навыков, языковые оценки или разделы профиля, независимых заглушек недостаточно.",
+    "В identity.py HR_ONLY_SCHEMAS — recruitment/anagent, HR_ONLY_MODELS — dm_special.talent_radar_people. dm_core.recruitment_actual не объявлена HR-only по имени: рекомендованный hr здесь нужен для полного охвата, а не утверждает обязательный 403 для manager.",
+    "Рекомендованный hr для общекорпоративного вопроса можно заменить manager только при достаточном scope. self не подходит для подсчёта всей компании; окончательные права проверяются реальным вызовом."
+  ],
+  "summary": {
+    "total": 82,
+    "answerable": 42,
+    "not_answerable": 40,
+    "coverage": {
+      "partial": 36,
+      "none": 43,
+      "full": 3
+    },
+    "data_support": {
+      "incomplete": 27,
+      "core": 31,
+      "missing": 13,
+      "procedural": 8,
+      "mixed": 3
+    },
+    "answerable_by_data_support": {
+      "core": 31,
+      "procedural": 8,
+      "mixed": 3
+    }
+  },
+  "sources": [
+    {
+      "path": "b2e/gen/blocks.py",
+      "sha256": "12e374741e7221dec222c91f6f8dc3de6cd7e3f7b4827889026b21a1411c6950"
+    },
+    {
+      "path": "b2e/gen/dicts.py",
+      "sha256": "09369f6c17a21d861930296ac41f059106751b41fbe4c566c9634e2c20bc34c1"
+    },
+    {
+      "path": "b2e/gen/fillers.py",
+      "sha256": "f763cea6af6bf5199efdbc6b12fdd89c176e7e79fabb0e0babb9691fa80bacd1"
+    },
+    {
+      "path": "b2e/gen/marts.py",
+      "sha256": "914c3fec283e5bf4e45e7fa7a3e8d227cb7ed0fc6f264e672bb1111f2955c9e5"
+    },
+    {
+      "path": "b2e/gen/org.py",
+      "sha256": "32f187723a98d3d2b5017fced5ee08c0c110a801b6ddcc81a35f32bb3bf6a3b3"
+    },
+    {
+      "path": "b2e/gen/resolve.py",
+      "sha256": "dc6d08d774f77801ddb7ee2a002253e5d3628814d125e96e7d863e8bd0ab2425"
+    },
+    {
+      "path": "b2e/store.py",
+      "sha256": "dd18992090063d14f1287d1cadae3a97021ddfd0604686249dbdaf96b1e87fe2"
+    },
+    {
+      "path": "benchmark/info/examples.json",
+      "sha256": "1736d5b3ad85d8ec664aa5361e3865b8963c4d01c7c047823321469fa1693448"
+    },
+    {
+      "path": "catalog/metrics.yaml",
+      "sha256": "450298b347cd84b847bac98ae1903a1f39d77b90968f518056dd3447444dfa21"
+    },
+    {
+      "path": "catalog/snapshot.json",
+      "sha256": "aecc46cda77c2e6b63125f6d07d4941935476463c68e9da76d636efaf5a5f667"
+    },
+    {
+      "path": "heimdall-skills/README.md",
+      "sha256": "a42a5c95be71c30012b90eab8caf672fe7a04ea452e524c4d65c0f713e84e5b0"
+    },
+    {
+      "path": "heimdall-skills/attrition/attrition_features.yaml",
+      "sha256": "67887661d2d76be5ddc4f3aede427ae728ec9bebee39d06199690a92efcfa71f"
+    },
+    {
+      "path": "heimdall-skills/general/aggregate.md",
+      "sha256": "c5b5227e8ba34f65b402bf5873fb9c889d7884d2abbcc7e717da013ada7bfbd7"
+    },
+    {
+      "path": "heimdall-skills/general/compare_people.md",
+      "sha256": "7a24c34d6bd8b08277239db40a2fc36c5e2df16389d4995955edc3332af8692f"
+    },
+    {
+      "path": "heimdall-skills/general/errors.md",
+      "sha256": "a38d60b6f6b9518bd55fdc4621583924da15dbf0931fbf51844334ded4e9f121"
+    },
+    {
+      "path": "heimdall-skills/general/filters.md",
+      "sha256": "6430751fedfcda0892e40c9a7fd02ba002df2d95eedfff6281d3d79190b07683"
+    },
+    {
+      "path": "heimdall-skills/general/getting_started.md",
+      "sha256": "db6c8dce472c1e8bb0cd68b684d85a990dbebe821e5bd76fc2fc0e2cdd9e41fd"
+    },
+    {
+      "path": "heimdall-skills/general/history.md",
+      "sha256": "be52647d80ebecaf47e97ff6894bcae174de290897785f1b25b3119429c165ea"
+    },
+    {
+      "path": "heimdall-skills/general/limits.md",
+      "sha256": "4de0e384b911b550c56724eb3d60b23a24e00f6d4284e829bff665f7bd32e617"
+    },
+    {
+      "path": "heimdall-skills/general/param_metrics.md",
+      "sha256": "10d5894de37df8bca62acf0bcd1b4c6b9db9443d15ecbda52517b6f8d40c5af4"
+    },
+    {
+      "path": "heimdall-skills/general/rows.md",
+      "sha256": "5a58b3a3e3c85c1bc399eeaeeff02d202d8a5ca7482a44537caf1c07ca3eba2d"
+    },
+    {
+      "path": "heimdall-skills/general/rules.md",
+      "sha256": "66041ad6765a7290fc279712334634eb5f64b28ca338776e3485767fa7f38c52"
+    },
+    {
+      "path": "heimdall-skills/general/top_n.md",
+      "sha256": "bea7d4dd922b215406d90ca91fc94b6ce9b4b621f745d95293c581acb7f77acb"
+    },
+    {
+      "path": "heimdall-skills/org/headcount_by_dimension.yaml",
+      "sha256": "608614c30431de4576b242617ae57cfc20bbef960bfc490b7cfe75752ad813ff"
+    },
+    {
+      "path": "heimdall-skills/org/org_units_by_block.yaml",
+      "sha256": "9be301078af097abdbef026479d09b7361a644b899fb177fe3adc78c21dac409"
+    },
+    {
+      "path": "heimdall-skills/succession/succession_gaps.yaml",
+      "sha256": "9d86a1f1be282a67ccbbddaf4684abc47e5c717c0317ca7f646df6e4ff1b0342"
+    },
+    {
+      "path": "heimdall-skills/succession/successors_of_employee.yaml",
+      "sha256": "dbae4e895b55aaf3442646aa71847f86062ed33feab864cc45dcc7f8ad6418f5"
+    },
+    {
+      "path": "heimdall-skills/talent/competence_profile.yaml",
+      "sha256": "6a6d3be23cbd5452b715375521e15121b90d8d5dcbf8f746e850a6ac421ea317"
+    },
+    {
+      "path": "heimdall-skills/talent/performance_history.yaml",
+      "sha256": "fa4e296a4afd2ffaaeaf7d1273c648189a3214987f1aedcb8325d58bb12ae4e3"
+    },
+    {
+      "path": "sim/emulator/identity.py",
+      "sha256": "f1f5ed7439f2f1d3d450e3ec4b67483453c8e35484f6b39b46b2eef0be920014"
+    },
+    {
+      "path": "sim/oracle/basket.py",
+      "sha256": "f801491cf7397c846313ed13bfed2e11e7506fca62959c7e9974ca925ddb06b1"
+    }
+  ],
+  "questions": [
+    {
+      "id": "examples.case_1",
+      "query": "Получить по 9f044aed-7552-3327-0262-7f7312922f83 квартальные оценки за текущий год и годовую оценку за предыдущий год",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "Рецепт возвращает estimation.* с годом и кварталом. Но blocks.estimation генерирует только кварталы 2024 Q3–2026 Q2, без годовой записи. estimation_year в resolve._mark_year — последняя квартальная оценка, а не годовой итог прошлого года. Полный запрошенный ответ получить нельзя; квартальную часть можно. UUID/ФИО из IFT нужно отдельно сопоставить со снимком.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_2",
+      "query": "Покажи оценки результативности и ценностей для сотрудника Волкова Татьяна Игоревна (person_id: 9f044aed-7552-3327-0262-7f7312922f83)",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "Есть история estimation.year/quarter/performance/standards. В синтетическом performance записана пара букв результативности и ценностей; standards — соблюдение стандартов, не вторая буквенная оценка. Нужно выбрать период и найти сотрудника в снимке; отдельного локального lookup_employee_by_name нет.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_3",
+      "query": "Какие оценки у Волкова Татьяна Игоревна за этот год по кварталам (person_id: 9f044aed-7552-3327-0262-7f7312922f83)?",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "История квартальных оценок доступна через performance_history; отобрать элементы estimation.* по году, сохраняя соответствие позиций массивов. Текущий год привязать к дате снимка: генератор содержит периоды только до 2026 Q2. Найти существующего сотрудника; отсутствие Q3/Q4 не заменять нулём или годовой оценкой.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_4",
+      "query": "Нужна годовая оценка за прошлый год по 9f044aed-7552-3327-0262-7f7312922f83",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "Рецепт возвращает estimation.* с годом и кварталом. Но blocks.estimation генерирует только кварталы 2024 Q3–2026 Q2, без годовой записи. estimation_year в resolve._mark_year — последняя квартальная оценка, а не годовой итог прошлого года. Полный запрошенный ответ получить нельзя; квартальную часть можно. UUID/ФИО из IFT нужно отдельно сопоставить со снимком.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_5",
+      "query": "Квартальные и годовая оценки сотрудника 9f044aed-7552-3327-0262-7f7312922f83",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "Рецепт возвращает estimation.* с годом и кварталом. Но blocks.estimation генерирует только кварталы 2024 Q3–2026 Q2, без годовой записи. estimation_year в resolve._mark_year — последняя квартальная оценка, а не годовой итог прошлого года. Полный запрошенный ответ получить нельзя; квартальную часть можно. UUID/ФИО из IFT нужно отдельно сопоставить со снимком.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_6",
+      "query": "Оценка результативности Волкова Татьяна Игоревна за текущий год",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "История квартальных оценок доступна через performance_history; отобрать элементы estimation.* по году, сохраняя соответствие позиций массивов. Текущий год привязать к дате снимка: генератор содержит периоды только до 2026 Q2. Найти существующего сотрудника; отсутствие Q3/Q4 не заменять нулём или годовой оценкой.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_7",
+      "query": "Получи по 9f044aed-7552-3327-0262-7f7312922f83 квартальные оценки за текущий год",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "История квартальных оценок доступна через performance_history; отобрать элементы estimation.* по году, сохраняя соответствие позиций массивов. Текущий год привязать к дате снимка: генератор содержит периоды только до 2026 Q2. Найти существующего сотрудника; отсутствие Q3/Q4 не заменять нулём или годовой оценкой.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_8",
+      "query": "Покажи годовую оценку за прошлый год для Волкова Татьяна Игоревна",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "Рецепт возвращает estimation.* с годом и кварталом. Но blocks.estimation генерирует только кварталы 2024 Q3–2026 Q2, без годовой записи. estimation_year в resolve._mark_year — последняя квартальная оценка, а не годовой итог прошлого года. Полный запрошенный ответ получить нельзя; квартальную часть можно. UUID/ФИО из IFT нужно отдельно сопоставить со снимком.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_9",
+      "query": "Как оценили Волкова Татьяна Игоревна в этом году по кварталам и за прошлый год итог?",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "Рецепт возвращает estimation.* с годом и кварталом. Но blocks.estimation генерирует только кварталы 2024 Q3–2026 Q2, без годовой записи. estimation_year в resolve._mark_year — последняя квартальная оценка, а не годовой итог прошлого года. Полный запрошенный ответ получить нельзя; квартальную часть можно. UUID/ФИО из IFT нужно отдельно сопоставить со снимком.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_10",
+      "query": "Оценки сотрудника 9f044aed-7552-3327-0262-7f7312922f83 — кварталы этого года и годовая за прошлый",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "rows",
+        "filters"
+      ],
+      "reason": "Рецепт возвращает estimation.* с годом и кварталом. Но blocks.estimation генерирует только кварталы 2024 Q3–2026 Q2, без годовой записи. estimation_year в resolve._mark_year — последняя квартальная оценка, а не годовой итог прошлого года. Полный запрошенный ответ получить нельзя; квартальную часть можно. UUID/ФИО из IFT нужно отдельно сопоставить со снимком.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_11",
+      "query": "Сколько у меня лимитов на отпуск?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "Отдельного отпускного рецепта нет, но employee_actual.vacation_days_balance есть в каталоге и явно вычисляется Resolver. Запросить для person_id действующего пользователя. Это ответ об остатке дней, а не о дополнительных видах лимитов.",
+      "acting_role": "self",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_12",
+      "query": "Сколько у сотрудника с person_id 91ed8888-bff4-4d61-a72d-310db2eeaa37 лимитов на отпуск?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "Отдельного отпускного рецепта нет, но employee_actual.vacation_days_balance есть в каталоге и явно вычисляется Resolver. Запросить для person_id действующего пользователя. Это ответ об остатке дней, а не о дополнительных видах лимитов.",
+      "acting_role": "self",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_13",
+      "query": "результаты теста sberq (person_id: 9f044aed-7552-3327-0262-7f7312922f83)",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "competence_profile",
+        "rows"
+      ],
+      "reason": "competence_profile даёт профиль компетенций, но не протокол теста SberQ. total_strong_point_summary и total_growth_point_summary существуют, однако не заполняются смысловым генератором competence/Resolver и достаются процедурному хвосту. Называть эти заглушки результатами SberQ нельзя.",
+      "acting_role": "self",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_14",
+      "query": "какие результаты теста sberq (person_id: e08596db-1d87-0966-0710-d430f071d879)?",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "competence_profile",
+        "rows"
+      ],
+      "reason": "competence_profile даёт профиль компетенций, но не протокол теста SberQ. total_strong_point_summary и total_growth_point_summary существуют, однако не заполняются смысловым генератором competence/Resolver и достаются процедурному хвосту. Называть эти заглушки результатами SberQ нельзя.",
+      "acting_role": "self",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_15",
+      "query": "результаты теста sberq (person_id: 4c36eb04-0920-4449-9e07-ca4a68f80eef)",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "competence_profile",
+        "rows"
+      ],
+      "reason": "competence_profile даёт профиль компетенций, но не протокол теста SberQ. total_strong_point_summary и total_growth_point_summary существуют, однако не заполняются смысловым генератором competence/Resolver и достаются процедурному хвосту. Называть эти заглушки результатами SberQ нельзя.",
+      "acting_role": "self",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_16",
+      "query": "результаты теста 360 (person_id: 2f9f1e66-86da-44be-a21e-62ce4bdf6b9f)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_17",
+      "query": "результаты теста 360 (person_id: 02cd8e15-7071-4d4a-a22d-e072fce0d1eb)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_18",
+      "query": "результаты теста 360 (person_id: 6f6b45f6-ac20-446f-a295-5d3dc6351b8e)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_19",
+      "query": "какие у сотрудника с person_id 2f9f1e66-86da-44be-a21e-62ce4bdf6b9f результаты 360?",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_20",
+      "query": "какие у сотрудника с person_id 02cd8e15-7071-4d4a-a22d-e072fce0d1eb результаты 360?",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_21",
+      "query": "какие у сотрудника с person_id 6f6b45f6-ac20-446f-a295-5d3dc6351b8e результаты 360?",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_22",
+      "query": "результаты паутинки (person_id: 2f9f1e66-86da-44be-a21e-62ce4bdf6b9f)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_23",
+      "query": "результаты паутинки (person_id: 02cd8e15-7071-4d4a-a22d-e072fce0d1eb)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_24",
+      "query": "результаты паутинки (person_id: 6f6b45f6-ac20-446f-a295-5d3dc6351b8e)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_25",
+      "query": "результаты паутинки (person_id: 9f044aed-7552-3327-0262-7f7312922f83)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_26",
+      "query": "результаты теста 360 (person_id: 9f044aed-7552-3327-0262-7f7312922f83)",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "errors"
+      ],
+      "reason": "В локальном каталоге нет dm_special.assessment_360_feedback и нет рецепта результатов 360/паутинки. Профиль компетенций не эквивалентен обратной связи 360. Нужна новая витрина с данными и инструкция; пустой ответ вымышленной витрины не является gold.",
+      "acting_role": "self",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_27",
+      "query": "В каком подразделении было больше всего создано заявок за 2025 год?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters",
+        "top_n"
+      ],
+      "reason": "recruitment_actual содержит requisition_open_date, requisition_count и оргполя: технически возможны фильтр 2025 года, группировка и сортировка. Однако эта витрина создаётся функцией candidates; реквизиты заявок и часть оргполей — процедурный хвост. Можно проверить ответ по данным API, но не согласованную аналитику реальной воронки. Уточнить уровень подразделения.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_28",
+      "query": "В каком регионе было больше всего приостановленных заявок на подбор за 2025 год?",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters",
+        "rows"
+      ],
+      "reason": "Нужны события приостановки в 2025 году и регион. requisition_history.* заполняется процедурно, без согласованной истории бизнес-статусов. Фильтр даты открытия из примера не проверяет год приостановки. Существование массива в каталоге не обеспечивает нужные события.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_29",
+      "query": "Выведи количество приостановленных заявок в блоке Люди и культура за 2025 год по причине «Поиск неактуален»",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "filters",
+        "rows",
+        "aggregate"
+      ],
+      "reason": "Нужна одна запись истории с датой 2025 года, статусом приостановки и причиной «Поиск неактуален». Раздельные has по массивам этого не доказывают; согласованная история заявок не генерируется. Блок «Люди и культура» также требует привязки к синтетической организации.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_30",
+      "query": "Какой средний срок приостановки заявок по всем причинам",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "Нет рецепта расчёта длительности приостановок и согласованной последовательности переходов заявки. В исходном запросе отсутствуют в каталоге status_change_date и suspend_reason_name; реальные timestamp/reason_on_hold_name не исправляют процедурную природу истории. Нужны интервалы и правило учёта незавершённых приостановок.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_31",
+      "query": "Покажи количество заявок со сроком более 15 дней с момент их открытия",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "Можно посчитать открытые записи recruitment_actual с requisition_open_date раньше даты отсечения и пустой requisition_close_date. Дату отсечения вычислить от зафиксированного as_of, а не брать 2026-07-26 из примера. Даты заявок процедурные: допустим gold по API, но не по согласованной истории найма.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_32",
+      "query": "На какой грейд было больше всего заявок в блоке Люди и культура в 2025 году?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters",
+        "top_n"
+      ],
+      "reason": "Доступны реквизиты заявок и requisition_count; нужное имя поля грейда выбрать через describe_model. Группировка с фильтрами периода/блока возможна без отдельного рецепта. Поля recruitment_actual не образуют смысловую популяцию заявок; бизнес-название блока требуется сопоставить со снимком.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_33",
+      "query": "На какой заявке больше всего кандидатов?",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "limits"
+      ],
+      "reason": "application.application_id не даёт автоматически число уникальных кандидатов. Нет согласованной связи заявка → отклики → кандидаты в генераторе recruitment_actual и нет рецепта её обработки. Подсчёт длины процедурного массива был бы ответом о заглушках, а не о количестве кандидатов.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_34",
+      "query": "Расчитай средний срок заявки на статусе В работе",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "history",
+        "limits"
+      ],
+      "reason": "Нужна согласованная история статусов заявок: для examples.case_34 — интервалы «В работе», для examples.case_35 — состояние на 01.05.2026. requisition_history.* процедурный; общий history не восстанавливает события и не превращает recruitment_actual в историческую витрину. Готового предметного рецепта нет.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_35",
+      "query": "Сколько заявок нахолится в статусе В работе в блоке Люди и культура на 01.05.2026",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "history",
+        "limits"
+      ],
+      "reason": "Нужна согласованная история статусов заявок: для examples.case_34 — интервалы «В работе», для examples.case_35 — состояние на 01.05.2026. requisition_history.* процедурный; общий history не восстанавливает события и не превращает recruitment_actual в историческую витрину. Готового предметного рецепта нет.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_36",
+      "query": "Сколько заявок на подбор на 10 грейд было в 2026?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "Технически доступен requisition_count с фильтрами грейда и requisition_open_date за 2026 год; уточнить, что «было» означает создано в периоде. Реквизиты recruitment_actual процедурные, поэтому годится только проверка ответа на зафиксированных данных API.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_37",
+      "query": "Сколько заявок на позицию Главный инженер по разработке было закрыто за 2026 год",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "requisition_count с фильтром position_name и requisition_close_date за 2026 год можно собрать через каталог. Даты/часть реквизитов процедурные, наличие конкретной должности не гарантировано; проверить значения и пустые результаты. Это не проверка согласованной воронки найма.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_38",
+      "query": "Сколько сотрудников с грейдом выше 13 имеют оценку за результативность ниже C",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "headcount_by_dimension",
+        "filters",
+        "rows",
+        "limits"
+      ],
+      "reason": "Грейд и история оценок есть. Уточнить период и считать уникальных сотрудников, а не элементы истории. В генераторе performance — пары вроде «D C», поэтому hasAny [D,E] из примера не годится: проверить первую букву каждой нужной оценки после выгрузки. Зафиксировать состав сотрудников и знаменатель.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_39",
+      "query": "Проверь были ли у сотрудников блока Технологии оценки D/E?",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "performance_history",
+        "filters",
+        "rows",
+        "limits"
+      ],
+      "reason": "Выбрать сотрудников Технологий и прочитать согласованные estimation.*. Проверять D или E в нужной компоненте оценки, а не AND между performance=D и standards=E: standards содержит текст о соблюдении стандартов. Уточнить период; историческое «были» допускает просмотр всей имеющейся истории.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_40",
+      "query": "Сколько людей имеют семейный статус - холостой, сравни с разведенными",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "family_status материализован из популяции; сгруппировать fact_count по статусу. Значения взять из снимка, а не копировать длинные формулировки IFT. Уточнить, означает ли «холостой» никогда не состоявшего в браке или всех не состоящих сейчас; fact_count считает фактическую штатную численность.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_41",
+      "query": "Какая численность в блоке Люди и культутра?",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "Рецепт считает fact_count по fblock_name. Исправить опечатку и сопоставить «Люди и культура» с существующим блоком; нельзя молча заменить HR-блоком без согласования. После привязки фильтра есть все средства расчёта.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_42",
+      "query": "Сколько сотрудников в банке?",
+      "answerable": true,
+      "coverage": "full",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "В рецепте явно описано удаление группировки для общей fact_count. Для «в банке» задать company из снимка: весь корпус включает несколько компаний. fact_count — штатные действующие сотрудники, не количество всех строк; другой состав требует уточнения.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_43",
+      "query": "Сравни все блоки компании по численности",
+      "answerable": true,
+      "coverage": "full",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "Прямое назначение рецепта: fact_count по fblock_name. Зафиксировать company, обработать все группы и при необходимости сортировать по метрике. Для всей компании нужен доступ ко всей компании, а не обычный менеджерский scope.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_44",
+      "query": "Выведи сотрудников у которых есть навык 'Ad hoc анализ' с уровнем 4",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "skills_name и skills_rating есть в каталоге, но не связаны смысловым Resolver; правило ^skill заполняет оба поля названиями навыков, а не парой навык/уровень 4. Независимые has по двум массивам также не доказывают нужную пару. Нужны согласованные уровни навыков, одного competence_profile недостаточно.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_45",
+      "query": "Выведи количество сотрудников у которых есть навык 'Data science'",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "filters",
+        "aggregate"
+      ],
+      "reason": "Можно отфильтровать skills_name и посчитать fact_count. skills_name процедурный, а литерал Data science нужно проверить по словарю значений: отсутствие совпадений означает ноль, не подтверждение отсутствия предметного умения у популяции. Для содержательного skill matching данные нужно доработать.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_46",
+      "query": "Кто знает китайский язык",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "aggregate"
+      ],
+      "reason": "languages_name/languages_level есть в каталоге, но не привязаны к профилю человека в Resolver: имя языка попадает в genericname, уровень — в числовой score. Нет осмысленных «Китайский», «Английский», B2/C1/C2 и связанных пар язык/уровень. Общие приёмы не исправляют генератор языков; исходные запросы не являются готовым gold.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_47",
+      "query": "Выведи распределение по уровню владения английским языком",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "aggregate"
+      ],
+      "reason": "languages_name/languages_level есть в каталоге, но не привязаны к профилю человека в Resolver: имя языка попадает в genericname, уровень — в числовой score. Нет осмысленных «Китайский», «Английский», B2/C1/C2 и связанных пар язык/уровень. Общие приёмы не исправляют генератор языков; исходные запросы не являются готовым gold.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_48",
+      "query": "Сколько сотрудников старше 40 знают английский на высоком уровне?",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "aggregate"
+      ],
+      "reason": "languages_name/languages_level есть в каталоге, но не привязаны к профилю человека в Resolver: имя языка попадает в genericname, уровень — в числовой score. Нет осмысленных «Китайский», «Английский», B2/C1/C2 и связанных пар язык/уровень. Общие приёмы не исправляют генератор языков; исходные запросы не являются готовым gold.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_49",
+      "query": "Штатная численность сотрудников в блоке Технологии?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "dm_core.headcount_staffing из примера отсутствует, но штатные позиции есть в position_actual и считаются cnt_pos. Нельзя заменить штатную численность на fact_count сотрудников. Блок позиции выбирать по каталогу и проверить на снимке: часть оргполей процедурная, особенно для вакантных позиций.",
+      "acting_role": "hr",
+      "data_support": "mixed"
+    },
+    {
+      "id": "examples.case_50",
+      "query": "Кому давно не повышали зарплату в блоке Люди и культура",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "Вместо отсутствующего salary_last_increase_date использовать date_since_salary_change_last. Уточнить порог «давно» и дату отсечения, найти блок снимка. Дата процедурная и не связана с историей выплат; можно проверять отбор по полю API, но не реальные изменения зарплаты.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_51",
+      "query": "Приведи названия всех команд трайба исследования и аналитика",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "org_units_by_block",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "Рецепт помогает искать оргединицы, но генератор дерева не моделирует трайбы как отдельный согласованный тип Agile. unit_type/structure_type и unit_id_tree в запрошенном каталоге не гарантируют связь с этим деревом; tribe_name из examples.case_52 отсутствует. Для списка именно трайбов и их команд нужны маппинг и согласованные оргданные, а не просто список узлов ОШС.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_52",
+      "query": "Выведи список всех существующих трайбов",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "org_units_by_block",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "Рецепт помогает искать оргединицы, но генератор дерева не моделирует трайбы как отдельный согласованный тип Agile. unit_type/structure_type и unit_id_tree в запрошенном каталоге не гарантируют связь с этим деревом; tribe_name из examples.case_52 отсутствует. Для списка именно трайбов и их команд нужны маппинг и согласованные оргданные, а не просто список узлов ОШС.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_53",
+      "query": "Покажи женатых женщин с детьми в блоке люди и культура",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "gender, family_status, children_qty и fblock_name связаны с популяцией. Запросить строки сотрудников, а не агрегат children_qty/fact_count как в примере; проверить фактический код брака и заменить название блока на согласованный объект снимка.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_54",
+      "query": "Покажи сотрудников, которые имеют детей в возрасте до 18 лет",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "Количество детей есть в популяции, но children_age не связано с ним: процедурное правило *_age генерирует возраст 20–63. Фильтр 0–17 даст искусственно пустую выборку, не полноценный тест поиска родителей несовершеннолетних. Требуется согласованный блок детей.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_55",
+      "query": "Сколько сотрудников закончили МГУ",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "educational_institution_name берётся из согласованного блока образования. Найти точное название МГУ в данных, фильтровать массив и считать fact_count без группировки по всему массиву вузов. Для строгого «закончили» проверить год окончания и согласовать критерий завершённого образования.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_56",
+      "query": "Покажи сотрудников с экономическим образованием со специальностью экономист",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "educational_speciality и educational_institution_name связаны с блоком образования. Общего пути через каталог достаточно для списка сотрудников; проверить значения специальностей и трактовку «экономическое образование», не подменять отсутствующую специальность похожей.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_57",
+      "query": "Сформируй список сотрудников блока Технологии с разрядом 12+, у которых нет преемников",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "succession_gaps",
+        "filters",
+        "rows",
+        "limits"
+      ],
+      "reason": "succession_gaps уже отбирает successors_qty=0 и блок; добавить grade_level>=12 после согласования, что «разряд» означает грейд. Вернуть сотрудников. Исходный пример считает по grade_number без фильтра отсутствия преемников и не решает вопрос.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_58",
+      "query": "Покажи основные достижения сотрудников блока Люди и культура",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "В employee_actual есть согласованные achievements.name/description/period. Можно выдать достижения сотрудников нужного блока; «основные» потребует критерия отбора, если нужны не все. Не ограничивать выборку top_600 из примера: он покрывает только часть сотрудников. Название блока привязать к снимку.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_59",
+      "query": "Какие награды были ранее у сотрудников трайба исследования и аналитика?",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "dm_core.employee_awards отсутствует. achievements — синтетические достижения, не отдельный реестр наград с историей; трайб также не связан с согласованным Agile-деревом. Нельзя молча подменять награды достижениями или ограниченной витриной top_600.",
+      "acting_role": "hr",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_60",
+      "query": "Сформируй выгрузку сотрудников подразделения с карьерным статусом открыт для предложений",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "career_status материализован из популяции. Нужно уточнить подразделение, разрешить его через оргиерархию и взять код «открыт» из данных. Запросить идентификаторы и ФИО с пагинацией; значения подразделения, статуса и полей в исходном примере не переносить автоматически.",
+      "acting_role": "manager",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_61",
+      "query": "Доля сотрудников с карьерным статусом открыт в блоке Люди и культутра",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "Посчитать fact_count по career_status внутри согласованного блока, затем долю открытых в общем количестве. Явно определить знаменатель, обработать нулевой и неизвестные статусы. Название блока и значение «Открыт» сверить со снимком.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_62",
+      "query": "Какие программы по обучению проходят сотрудники команды Аналитика руководителя?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "Согласованные educ.* или employee_education дают назначенные программы и статусы прохождения. Сначала разрешить существующую команду/состав сотрудников, затем выбрать незавершённое обучение по согласованному критерию. Исходный запрос не выбирает обучение вообще; наличие команды «Аналитика руководителя» нужно подтвердить.",
+      "acting_role": "manager",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_63",
+      "query": "В каком блоке больше всего просроченных обучений обучение",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "aggregate",
+        "limits"
+      ],
+      "reason": "Есть согласованные назначения, сроки и даты завершения обучения. Прочитать employee_education либо educ.* вместе с fblock_name, посчитать просроченные назначения по блокам и выбрать максимум. Зафиксировать as_of и критерий просрочки; limit=10000 из примера заменить полной пагинацией до 1000 строк за запрос.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_64",
+      "query": "Покажи долю сотрудников с процентом выполнения целей 75% в 4 квартале 2025 цели",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "compare_people",
+        "history",
+        "aggregate",
+        "filters",
+        "rows"
+      ],
+      "reason": "Есть goals.quarter/progress и mean_value_completion, но у смыслового блока целей нет года; свёртка усредняет все цели, а progress имеет шкалу долей, не процентов. Исторический report_date не доказывает, что цели относятся к 2025 Q4. Также нужно уточнить ровно 75% или не менее 75% и знаменатель. Точный эталон этого периода не подтверждён.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_65",
+      "query": "Сформируй список сотрудников блока Технологии, у которых профиль в Пульсе заполнен не на 100%, с указанием не заполненных разделов",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "profile_completion_* есть в каталоге, но заполняется независимым процедурным правилом completion→ratio, включая массивы флагов. Нет согласованного перечня разделов и соответствия проценту заполненности. Можно прочитать поля, но нельзя достоверно назвать незаполненные разделы Пульса; сравнение с 100 ещё и требует проверки шкалы.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_66",
+      "query": "Проверь сотрудников на наличие дисциплинарных взысканий за 2026 год",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "penalty.* существует, но это процедурные массивы без смыслового блока взысканий и согласованных периодов. IS NOT NULL для penalty.start_date из примера не выделяет 2026 год. Для содержательного кейса нужны согласованные записи взысканий; само чтение заглушек возможно.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_67",
+      "query": "Когда было последние изменение оклада в блоке Технологии",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "date_since_salary_change_last можно прочитать с фильтром блока и сортировкой по убыванию, исключая NULL. Уточнить, нужна одна последняя дата по блоку или дата каждого сотрудника. Поле процедурное: эталон может проверять чтение API, но не историю зарплат популяции.",
+      "acting_role": "hr",
+      "data_support": "procedural"
+    },
+    {
+      "id": "examples.case_68",
+      "query": "Сколько всего ключевых сотрудников в банке",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "fact_count с is_key_employee=1 и company решает вопрос по опубликованному признаку. Флаг намеренно отражает старую методику, но вопрос не требует пересчёта по новой. Gold здесь должен соответствовать значению флага API; задачу пересчёта нужно формулировать отдельно.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_69",
+      "query": "Какой грейд самый распространенный среди сотрудников?",
+      "answerable": true,
+      "coverage": "full",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "top_n"
+      ],
+      "reason": "Сгруппировать fact_count по grade_level и выбрать максимум. Рецепт допускает замену измерения; определить состав сотрудников и вернуть все разделившие первое место грейды либо согласовать правило равенств.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_70",
+      "query": "Покажи распределние по грейдам в команде Инсайты",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "filters",
+        "aggregate"
+      ],
+      "reason": "После разрешения команды в существующий unit/scope сгруппировать fact_count по grade_level. team_name из примера отсутствует, группировка по команде вместо грейда неправильна. «Инсайты» нужно найти в снимке или согласовать другую команду.",
+      "acting_role": "manager",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_71",
+      "query": "Самое распространенное женское имя в банке",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "filters",
+        "aggregate",
+        "top_n"
+      ],
+      "reason": "Группировка fact_count по employee_first_name с gender=Ж и фильтром компании. В генераторе пол кодируется Ж/М, не F/M из примера. Для равных частот определить правило выдачи; имена и пол связаны с популяцией.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_72",
+      "query": "Сформируй список сотрудников блока Технологии, у которых профиль в Пульсе заполнен не на 100%, с указанием не заполненных разделов.",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "rows",
+        "filters"
+      ],
+      "reason": "profile_completion_* есть в каталоге, но заполняется независимым процедурным правилом completion→ratio, включая массивы флагов. Нет согласованного перечня разделов и соответствия проценту заполненности. Можно прочитать поля, но нельзя достоверно назвать незаполненные разделы Пульса; сравнение с 100 ещё и требует проверки шкалы.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_73",
+      "query": "Сформируй список сотрудников у кого не проставлены цели на текущий год блока технологии",
+      "answerable": false,
+      "coverage": "partial",
+      "skills": [
+        "compare_people",
+        "rows",
+        "filters"
+      ],
+      "reason": "num_goals позволяет найти сотрудников вообще без целей, но не отличает отсутствие целей текущего года от наличия только прошлогодних: год в согласованном блоке целей отсутствует. IS NULL из примера не равно num_goals=0. Можно сделать другой вопрос «у кого нет целей в снимке», но это изменение смысла.",
+      "acting_role": "hr",
+      "data_support": "incomplete"
+    },
+    {
+      "id": "examples.case_74",
+      "query": "Выведи команды, где больше 30% сотрудников на испытательном сроке?",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters",
+        "rows",
+        "limits"
+      ],
+      "reason": "is_probation и fact_flag согласованы с популяцией; по каждой команде нужны общий count и count испытательного срока, затем фильтр доли>0.3. Требуется подтвердить отображение реальных команд в доступное оргполе: agile_unit_name_main не является автоматически надёжным ID команды. Без такого отображения можно проверить только группировку API, не структуру команд.",
+      "acting_role": "hr",
+      "data_support": "mixed"
+    },
+    {
+      "id": "examples.case_75",
+      "query": "Какое распределение семейного статуса среди сотрудников с 12-13?",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "filters",
+        "aggregate"
+      ],
+      "reason": "При трактовке 12–13 как грейдов: grade_level IN [12,13], fact_count по family_status. Все нужные поля связаны с популяцией; исправить отсутствие operator=IN в исходном фильтре.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_76",
+      "query": "Выведи распределение грейдов по интервалам возраста для сотрудников кампании",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "rows",
+        "limits"
+      ],
+      "reason": "age и grade_level доступны: получить распределение по точному возрасту/грейду и свернуть по согласованным возрастным интервалам. Поколение generation из примера не равно интервалам возраста. Зафиксировать границы и состав компании; нужен дополнительный расчёт после запросов.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_77",
+      "query": "Какой средний грейд у сотрудников в блоке Т?",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "Получить fact_count по grade_level в выбранном блоке и вычислить взвешенное среднее sum(grade*count)/sum(count). Уточнить, что «Т» означает Технологии. В каталоге employee_actual нет block_name из примера: использовать fblock_name; обработать NULL и нулевой знаменатель.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_78",
+      "query": "Сколько клиентских менеджеров на испытательном сроке",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "position_name и is_probation согласованы с популяцией. Найти реальные названия клиентских менеджеров, отфильтровать испытательный срок и посчитать fact_count без ненужной группировки. Исправить condition_like на operator/pattern и проверить регистр кириллицы.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_79",
+      "query": "По каким должностям самая низкая укомплектованность по заявкам?",
+      "answerable": true,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "aggregate",
+        "filters",
+        "top_n"
+      ],
+      "reason": "position_actual содержит type_position_name и staffing_with_recruitment_application. Можно сгруппировать и отсортировать по опубликованной метрике; критерий ненулевых заявок применять к агрегату корректным способом. Определение брать из metrics.yaml, не придумывать формулу. Флаг связи с заявкой и названия типов процедурные: это gold по API, не проверка согласованной связи с рекрутментом.",
+      "acting_role": "hr",
+      "data_support": "mixed"
+    },
+    {
+      "id": "examples.case_80",
+      "query": "Покажи динамику изменения укомплектованности в блоке Лик в 2025 году",
+      "answerable": false,
+      "coverage": "none",
+      "skills": [
+        "getting_started",
+        "history",
+        "aggregate"
+      ],
+      "reason": "employee_history отсутствует; employee/employee_hist отражают сотрудников, но fact_count не равен укомплектованности. position_hist не поддерживает режим истории, а цепочка исторической численности штатных позиций и вакансий за 2025 год не реализована. Нужны данные исторической укомплектованности и её методика.",
+      "acting_role": "hr",
+      "data_support": "missing"
+    },
+    {
+      "id": "examples.case_81",
+      "query": "Кол-во уволенных в блоке Технологии",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "headcount_by_dimension",
+        "aggregate",
+        "filters"
+      ],
+      "reason": "В employee_actual есть fired_count, согласованные статус увольнения и fblock_name. Выбрать компанию/блок и метрику fired_count вместо fact_count. Уточнить период: без него это число уволенных, представленных в снимке, а не увольнения за произвольный год.",
+      "acting_role": "hr",
+      "data_support": "core"
+    },
+    {
+      "id": "examples.case_82",
+      "query": "Самый распространенный месяц для увольнения",
+      "answerable": true,
+      "coverage": "partial",
+      "skills": [
+        "aggregate",
+        "param_metrics",
+        "rows",
+        "filters",
+        "limits"
+      ],
+      "reason": "Использовать last_fired_date: сгруппировать увольнения по датам и свернуть по месяцам либо вызвать fired_count_on_period для месячных интервалов. Уточнить месяц года против конкретного месяца/года и период наблюдения. time_dimensions для employee_actual из примера недоступен; report_date снимка не является датой увольнения.",
+      "acting_role": "hr",
+      "data_support": "core"
+    }
+  ]
+}
