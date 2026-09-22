@@ -130,7 +130,6 @@ class ModeStrategy:
     skills_enabled: bool
     catalog_source: str  # none | base | combined
     generated: bool = False
-    remote_supported: bool = True
     comparison_baselines: tuple[BenchmarkMode, ...] = ()
 
     @property
@@ -209,7 +208,6 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
             True,
             "combined",
             generated=True,
-            remote_supported=False,
             comparison_baselines=(
                 BenchmarkMode.GENERAL_KNOWLEDGE,
                 BenchmarkMode.EXISTING_SKILLS,

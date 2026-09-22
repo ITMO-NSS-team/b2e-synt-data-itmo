@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .cases import BenchmarkCase, load_case, load_suite, validate_case
-from .execution import PinnedConfigActivator, SessionExecutor, StandSessionExecutor
+from .execution import PinnedConfigActivator, StandSessionExecutor
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes
 from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
@@ -327,22 +327,15 @@ def check(args: argparse.Namespace) -> ResultWriter:
     return writer
 
 
-def run(
-    args: argparse.Namespace, *, prepared: PreparedBenchmark | None = None,
-    executor: SessionExecutor | None = None,
-) -> tuple[list[Any], ResultWriter]:
-    """Execute the prepared matrix against a local or remote stand.
+def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
+    """Execute the prepared matrix beside a local or server stand.
 
     Args:
         args: Parsed CLI namespace including timeout and repetitions.
-        prepared: Optional remote preflight; otherwise validate local snapshots.
-        executor: Optional transport-specific executor. Remote runs use this to
-            read Phoenix through SSH without changing the server proxy.
-
     Returns:
         Pair of run results and the writer that stored them.
     """
-    prepared = prepared or prepare(args)
+    prepared = prepare(args)
     eval_id = _eval_id(args, "benchmark")
     writer = ResultWriter(args.results, eval_id)
     writer.write_manifest(_manifest(args, prepared, eval_id, check_only=False))
@@ -350,7 +343,7 @@ def run(
         eval_id,
         preflight=lambda case, mode: prepared.checked[(case.case_id, mode.name)],
         activator=prepared.activator,
-        executor=executor or StandSessionExecutor(
+        executor=StandSessionExecutor(
             env_file=args.env_file,
             timeout=args.timeout,
             trace_attempts=args.trace_attempts,

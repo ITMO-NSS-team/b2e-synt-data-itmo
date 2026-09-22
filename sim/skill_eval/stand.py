@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -50,7 +50,6 @@ class StandClient:
         trace_attempts: int = 12,
         trace_backend: str = "research",
         trace_timeout: float = 300.0,
-        phoenix_trace_fetcher: Callable[[str], list[dict[str, Any]]] | None = None,
         agent_prefix: str = "/agent",
         phoenix_url: str | None = None,
         require_auth: bool = True,
@@ -77,7 +76,6 @@ class StandClient:
         if trace_timeout <= 0:
             raise ValueError("trace_timeout must be positive")
         self.trace_timeout = trace_timeout
-        self._phoenix_trace_fetcher = phoenix_trace_fetcher
         normalized_prefix = agent_prefix.strip("/")
         self.agent_prefix = f"/{normalized_prefix}" if normalized_prefix else ""
         self.phoenix_project = (
@@ -198,17 +196,10 @@ class StandClient:
             complete = False
             current: list[dict[str, Any]] | None = None
             try:
-                fetcher = getattr(self, "_phoenix_trace_fetcher", None)
-                if fetcher is not None:
-                    if not trace_id:
-                        raise PhoenixUnavailable(
-                            "remote Phoenix lookup requires trace_id from agent response")
-                    spans = fetcher(trace_id)
-                else:
-                    spans = (
-                        phoenix.spans_for_trace(trace_id)
-                        if trace_id else phoenix.spans_for_session(session_id, limit=20000)
-                    )
+                spans = (
+                    phoenix.spans_for_trace(trace_id)
+                    if trace_id else phoenix.spans_for_session(session_id, limit=20000)
+                )
                 owned = _owned_trace({"spans": spans}, session_id, trace_id)
                 ended = bool(owned) and any(span.get("end_time") for span in owned["spans"])
                 bridges = _bridge_count(owned["spans"]) if owned is not None else 0

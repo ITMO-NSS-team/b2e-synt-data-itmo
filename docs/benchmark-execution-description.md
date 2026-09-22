@@ -1,6 +1,6 @@
 # Запуск и оценка benchmark-кейсов
 
-Модуль `sim.benchmark` запускает эталонные бизнес-задачи на B2E-стенде и сравнивает ответы агента в режимах с уже существующими навыками информационного сервиса и без них. Основной удалённый запуск выполняет runner на сервере в одноразовом контейнере рядом с Agent API, Phoenix, каталогами и снимком данных. Локальная машина только запускает job по SSH и скачивает результаты.
+Модуль `sim.benchmark` запускает эталонные бизнес-задачи на B2E-стенде и сравнивает ответы агента в режимах с уже существующими навыками информационного сервиса и без них. Runner выполняется рядом со стендом: либо в локальном Compose, либо в одноразовом контейнере внутри сети уже развёрнутого серверного стенда.
 
 В текущей реализации доступны:
 
@@ -198,7 +198,7 @@
 - подготовлен снимок данных с `manifest.json` и `truth/people.json`;
 - кейсы имеют статус `ready`.
 
-Эти требования относятся к `benchmark-check`, `benchmark-smoke`, `benchmark-run`: им нужен локальный Docker Compose. Для основного удалённого запуска используется `benchmark-remote`; локальные Docker, snapshot, каталог и пароль HTTP Basic ему не нужны.
+Команды `benchmark-check`, `benchmark-smoke` и `benchmark-run` самостоятельно поднимают локальный Docker Compose. Для уже работающего серверного стенда используются `benchmark-server` и `benchmark-server-smoke` непосредственно в checkout на сервере.
 
 `CASES` может указывать на каталог JSON-файлов, один JSON-файл или JSONL-suite.
 
@@ -309,59 +309,47 @@ benchmarking/results/<eval_id>/
 - `unscored` — ход был, но нет трассы, пустой ответ после сбоя клиента и т.п.; ручной разбор, не в средних;
 - `draft_skipped` / `mock_skipped` — кейс или режим не допускается к выполнению.
 
-## Локальный и удалённый запуск
+## Запуск на локальном или серверном стенде
 
-Локальный Compose: `make benchmark-check`, `make benchmark-smoke`, `make benchmark-run`.
+### Локальный стенд
 
-Основной удалённый режим выполняет и runner, и обращения к агенту, и чтение Phoenix на сервере. На ноутбук после завершения скачивается готовый каталог результатов. **Вызовы модели платные по тарифу серверного аккаунта.**
-
-1. Актуальная ветка должна быть развёрнута в `/var/essdata/b2e-synt-data-itmo` на сервере. Команда не выполняет `git pull` и не меняет Git-состояние автоматически.
-2. Включить VPN и проверить SSH: `ssh nnikitin@10.32.1.71`. Пользователь должен иметь право выполнять `docker compose` в каталоге стенда.
-3. Запустить весь набор ready-кейсов:
-
-   ```bash
-   make benchmark-remote CASES=benchmarking/cases
-   ```
-
-   `CASES` — путь внутри серверного checkout. Можно указать каталог, один JSON или JSONL.
-
-Локальная команда одной SSH-командой вызывает `make benchmark-server`. Сервер фиксирует live-конфигурацию и **append-only** пинит два benchmark-конфига от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Долгоживущие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются.
-
-Runner обращается напрямую к `http://b2e-agent:8082` и `http://phoenix:6006` внутри закрытой сети Compose. Публичный proxy, HTTP Basic и передача трасс через SSH не используются. Для каждого режима создаётся новая stateless-сессия, агент получает только `query` и публичный контракт ответа. Несовпадение snapshot, реестра или роли останавливает запуск до LLM.
-
-Результаты сначала сохраняются на сервере в `benchmarking/results/<eval_id>/`, после успешного завершения целиком копируются в локальный `benchmarking/results/<eval_id>/`. Существующий локальный каталог с тем же `eval_id` не перезаписывается.
-
-Дополнительные параметры:
+Полный локальный путь сам поднимает Compose и затем запускает benchmark-клиент:
 
 ```bash
-make benchmark-remote CASES=benchmarking/cases \
-  BENCH_REPETITIONS=3
+make benchmark-smoke CASES=benchmarking/cases
+make benchmark-run CASES=benchmarking/cases BENCH_REPETITIONS=3
 ```
 
-- `BENCH_LIMIT=5` — при необходимости выполнить только первые пять ready-кейсов.
-- `BENCH_REMOTE_SSH=nnikitin@10.32.1.71` — SSH-адрес или alias из SSH config.
-- `BENCH_REMOTE_ROOT=/var/essdata/b2e-synt-data-itmo` — checkout стенда на сервере.
-- `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — как у остальных запусков.
-- `BENCH_MODES` — по умолчанию `general_knowledge,existing_skills`.
-- `BENCH_MODEL` при необходимости создаёт pinned benchmark-конфиги с другой моделью, не изменяя provider или harness.
+`benchmark-smoke` выполняет первый ready-кейс в каждом выбранном режиме один раз. `benchmark-run` выполняет весь выбранный набор.
 
-Ту же работу можно запустить непосредственно после входа на сервер:
+### Уже развёрнутый серверный стенд
+
+Команды выполняются непосредственно в актуальном checkout на сервере:
 
 ```bash
 cd /var/essdata/b2e-synt-data-itmo
-make benchmark-server CASES=benchmarking/cases BENCH_REPETITIONS=3
+
+# Первый ready-кейс, один повтор
+make benchmark-server-smoke CASES=benchmarking/cases
+
+# Полный прогон
+make benchmark-server \
+  CASES=benchmarking/cases \
+  BENCH_REPETITIONS=3
 ```
 
-### Временный локальный remote-smoke
+`benchmark-server` фиксирует live-конфигурацию и **append-only** пинит benchmark-конфиги от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Долгоживущие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются.
 
-Старый локальный driver оставлен только для диагностики одного кейса без обновления серверного runner:
+Runner обращается напрямую к `http://b2e-agent:8082` и `http://phoenix:6006`. Публичный proxy, HTTP Basic и SSH-транспорт не используются. Результаты сохраняются на той же машине в `benchmarking/results/<eval_id>/`.
 
-```bash
-RESEARCHER_PASSWORD='…' \
-make benchmark-remote-smoke CASES=benchmarking/cases
-```
+Дополнительные параметры:
 
-Он создаёт сессии через публичный HTTPS API и получает Phoenix-трассы через SSH. По умолчанию выбирается один ready-кейс. Адрес control API эмулятора внутри контейнера задаётся `--emulator-control-url` / `BENCH_REMOTE_EMULATOR_CONTROL_URL` (по умолчанию loopback контейнера на порту 8081). Адрес REST API Phoenix внутри контейнера и имя проекта — `--phoenix-control-url` / `BENCH_REMOTE_PHOENIX_CONTROL_URL` (по умолчанию loopback на порту 6006) и `--phoenix-project` / `BENCH_REMOTE_PHOENIX_PROJECT`. Для регулярных и полных экспериментов следует использовать `benchmark-remote` или `benchmark-server`.
+- `BENCH_LIMIT=5` — выполнить только первые пять ready-кейсов;
+- `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — параметры запуска и результатов;
+- `BENCH_MODES` — по умолчанию `general_knowledge,existing_skills`;
+- `BENCH_MODEL` — модель для pinned benchmark-конфигураций без изменения provider или harness.
+
+Отдельного remote-driver нет. Если стенд находится на другой машине, сначала нужно войти на неё обычным способом, а затем вызвать `benchmark-server` или `benchmark-server-smoke` в серверном checkout.
 
 ## Текущие ограничения
 
@@ -370,5 +358,5 @@ make benchmark-remote-smoke CASES=benchmarking/cases
 - LLM-as-judge не реализован; поле `llm_judge` в score остаётся незаполненным.
 - Порядок режимов детерминированный и пока не перемешивается.
 - Создание кейсов, получение gold и перевод `draft → ready` выполняются вне runner.
-- `benchmark-remote` требует, чтобы актуальная версия benchmark-кода уже находилась в серверном checkout.
+- Серверный прогон требует, чтобы актуальная версия benchmark-кода находилась в checkout стенда.
 - `generated_skills` остаётся mock до подключения combined-каталога к server runner.
