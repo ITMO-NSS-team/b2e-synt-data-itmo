@@ -68,3 +68,6 @@ heimdall-skills/
 var/mlruns/
 var/eval-site/
 results/hydra/
+
+#gold dataset or "basket" with queries, skills and gold answers
+b2e-skill-benchmark/
