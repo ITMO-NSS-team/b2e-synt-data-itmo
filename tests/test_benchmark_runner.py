@@ -136,6 +136,7 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
         assert request.metadata["response_contract_hash"] == response_contract_hash(
             case.raw["response_contract"]
         )
+        assert request.metadata["heimdall_access"] == "enabled"
         assert request.metadata["prompt_renderer_version"] == PROMPT_RENDERER_VERSION
         assert request.employee_id == "123"
         assert "gold_result" not in repr(request)
@@ -144,6 +145,24 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
     assert activator.activated == ["existing_skills", "existing_skills"]
     assert activator.deactivated == activator.activated
     assert all(result.score["metrics"]["answer_accuracy"] == 1 for result in results)
+
+
+def test_runner_marks_tool_free_arm_for_trace_collection() -> None:
+    executor, activator = FakeExecutor(), FakeActivator()
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=activator, executor=executor,
+    )
+
+    runner.run(
+        [ready_case()],
+        {"general_knowledge": mode("general_knowledge")},
+    )
+
+    assert executor.requests[0].metadata["heimdall_access"] == "disabled"
 
 
 def test_runner_treats_blocked_bash_as_completed_when_answer_exists() -> None:

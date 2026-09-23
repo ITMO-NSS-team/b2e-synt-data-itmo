@@ -110,6 +110,12 @@ class BenchmarkRunner:
                     "eval_id": self.eval_id,
                     "case_id": case.case_id,
                     "mode": mode.name,
+                    # Denied MCP attempts are reported by the harness, but they
+                    # never reach Heimdall and therefore produce no bridge span.
+                    # Trace completeness follows the selected arm's tool surface.
+                    "heimdall_access": (
+                        "enabled" if mode.tool_subset else "disabled"
+                    ),
                     "run_id": run_id,
                     "comparison_group_id": group_id,
                     "response_contract_hash": contract_hash,

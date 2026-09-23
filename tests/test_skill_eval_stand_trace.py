@@ -139,6 +139,40 @@ def test_message_http_error_still_stores_the_session_trace(monkeypatch) -> None:
     assert turn.live_snapshot_id == "snap@1"
 
 
+def test_tool_free_arm_does_not_wait_for_denied_heimdall_attempts(monkeypatch) -> None:
+    stand = object.__new__(StandClient)
+    stand._client = ScriptedClient(posts=[
+        HttpResponse(200, text="{}", json_body={
+            "session_id": "ses-target",
+            "fingerprint": {"data_snapshot_hash": "snap@1"},
+        }),
+        HttpResponse(200, text="{}", json_body={
+            "answer": '{"result": null, "message": "no data access"}',
+            "trace_id": "trace-target",
+            "stats": {"heimdall_calls": 4},
+            "errors": ["denied:mcp__heimdall__find_skills"],
+        }),
+    ])
+    observed = []
+
+    def wait_trace(session_id, *, trace_id=None, expected_heimdall_calls=0):
+        observed.append((session_id, trace_id, expected_heimdall_calls))
+        return {"spans": []}
+
+    monkeypatch.setattr(stand, "_wait_trace", wait_trace)
+
+    turn = stand.run(
+        _case(),
+        SessionSpec(
+            employee_id="1", config_ref="agent@1",
+            metadata={"heimdall_access": "disabled"},
+        ),
+    )
+
+    assert observed == [("ses-target", "trace-target", 0)]
+    assert turn.heimdall_calls == 4
+
+
 def test_mixed_research_response_discards_foreign_spans():
     from sim.skill_eval.stand import _owned_trace
     mixed = {"tree": [

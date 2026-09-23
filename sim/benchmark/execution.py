@@ -13,7 +13,12 @@ from typing import Any, Callable, Mapping, Protocol
 from .modes import ModeConfig, catalog_hash
 
 _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
-_HARNESS_DENIAL = re.compile(r"^denied:[A-Z][A-Za-z0-9]*$")
+# Claude Code reports every tool rejected by the active allow-list as
+# ``denied:<tool name>``.  Built-ins are named ``Bash``/``Write`` while MCP
+# tools use qualified lowercase names such as
+# ``mcp__heimdall__find_skills``.  Both are successful enforcement of the
+# benchmark arm, not transport failures.
+_HARNESS_DENIAL = re.compile(r"^denied:[A-Za-z0-9_.:/-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,11 +269,16 @@ class StandSessionExecutor:
                 metadata=dict(request.metadata),
             ),
         )
+        heimdall_calls = (
+            0
+            if request.metadata.get("heimdall_access") == "disabled"
+            else turn.heimdall_calls
+        )
         return AgentTurn(
             answer=turn.answer,
             stats={
                 **turn.stats,
-                "heimdall_calls": turn.heimdall_calls,
+                "heimdall_calls": heimdall_calls,
                 "tool_calls": turn.tool_calls,
                 "total_tokens": turn.total_tokens,
                 "latency_ms": turn.latency_ms,

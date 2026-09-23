@@ -113,6 +113,11 @@ def test_fatal_turn_error_ignores_successful_harness_denials() -> None:
     answer = '{"result": [{"grade": 7, "employee_count": 1}], "message": null}'
     assert fatal_turn_error("['denied:Bash']", answer=answer) is None
     assert fatal_turn_error("['denied:Bash', 'denied:Write']", answer=answer) is None
+    assert fatal_turn_error(
+        "['denied:mcp__heimdall__find_skills', "
+        "'denied:mcp__heimdall__mcp_query']",
+        answer=answer,
+    ) is None
     assert fatal_turn_error("['denied:Bash']", answer="  ") == "['denied:Bash']"
     assert fatal_turn_error("['denied:Bash', 'HTTP 502']", answer=answer) == (
         "['denied:Bash', 'HTTP 502']"
@@ -132,8 +137,8 @@ def test_stand_executor_leaves_missing_trace_to_the_runner(monkeypatch) -> None:
         def run(self, _case, _spec) -> TurnResult:
             return TurnResult(
                 session_id="ses-target", answer="{}", stats={}, trace=None,
-                error=None, retrieved_skills=[], heimdall_calls=0,
-                tool_calls=0, total_tokens=0, latency_ms=1.0,
+                error=None, retrieved_skills=[], heimdall_calls=4,
+                tool_calls=4, total_tokens=0, latency_ms=1.0,
                 trace_id=None, root_span_id=None,
             )
 
@@ -142,9 +147,10 @@ def test_stand_executor_leaves_missing_trace_to_the_runner(monkeypatch) -> None:
 
     turn = executor.execute(AgentRequest(
         query="question", employee_id="1", config_ref="agent@1",
-        metadata={"case_id": "case-1"},
+        metadata={"case_id": "case-1", "heimdall_access": "disabled"},
     ))
 
     assert turn.error is None
     assert turn.trace is None
     assert turn.session_id == "ses-target"
+    assert turn.stats["heimdall_calls"] == 0

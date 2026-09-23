@@ -126,9 +126,15 @@ class StandClient:
             )
         payload = reply.json()
         stats = payload.get("stats") or {}
+        heimdall_access = spec.metadata.get("heimdall_access", "enabled")
+        expected_heimdall_calls = (
+            int(stats.get("heimdall_calls") or 0)
+            if heimdall_access != "disabled"
+            else 0
+        )
         trace = self._wait_trace(
             session_id, trace_id=payload.get("trace_id"),
-            expected_heimdall_calls=int(stats.get("heimdall_calls") or 0),
+            expected_heimdall_calls=expected_heimdall_calls,
         )
         skills = retrieved_skills(trace)
         return TurnResult(
