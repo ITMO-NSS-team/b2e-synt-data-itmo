@@ -178,12 +178,18 @@ class ModeStrategy:
         return "mock_skipped" if self.generated and config.is_mock else None
 
     def skill_loaded_metric(
-        self, config: ModeConfig, loaded_skills: Iterable[str],
+        self,
+        config: ModeConfig,
+        expected_skills: Iterable[str],
+        loaded_skills: Iterable[str],
     ) -> int | None:
-        """Score generated-skill selection only for the generated arm."""
+        """Score loading of a generated skill expected by this case."""
         if not self.generated or config.is_mock:
             return None
-        return int(bool(set(config.generated_skill_names) & set(loaded_skills)))
+        targets = set(expected_skills) & set(config.generated_skill_names)
+        if not targets:
+            return None
+        return int(bool(targets & set(loaded_skills)))
 
 
 _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({

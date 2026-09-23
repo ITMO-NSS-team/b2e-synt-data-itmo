@@ -109,7 +109,9 @@ def calculate_metrics(
         outcome_accuracy if expected_outcome in _REFUSAL_OUTCOMES else None
     )
     generated_loaded = mode.strategy.skill_loaded_metric(
-        mode, observations["loaded_skills"]
+        mode,
+        case.raw["expected_skills"],
+        observations["loaded_skills"],
     )
     return {
         "answer_accuracy": answer_accuracy,

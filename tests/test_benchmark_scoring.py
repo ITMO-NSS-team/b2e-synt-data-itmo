@@ -68,6 +68,7 @@ def test_normalizer_extracts_fenced_json_and_rejects_prose() -> None:
 
 def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     case = ready_case()
+    case.raw["expected_skills"] = ["generated_headcount"]
     case.raw["evaluation_contract"]["comparison"]["numeric_absolute_tolerance"] = 1
     actual = NormalizedAnswer({
         "result": [
@@ -85,6 +86,55 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     assert metrics["exact_match"] == 1
     assert metrics["answer_accuracy"] == 1
     assert metrics["generated_skill_loaded"] == 1
+
+
+def test_generated_routing_requires_skill_expected_by_case() -> None:
+    case = ready_case()
+    case.raw["expected_skills"] = ["generated_headcount"]
+    actual = NormalizedAnswer({
+        "result": case.raw["evaluation_contract"]["gold_result"],
+        "message": None,
+    }, None)
+    observations = {
+        "loaded_skills": ["another_generated_skill"],
+        "heimdall_calls": 1,
+        "mcp_query_calls": 0,
+        "failed_tool_calls": 0,
+        "total_tokens": 1,
+        "latency_ms": 1,
+        "agent_duration_ms": 1,
+        "tool_time_ms": 1,
+    }
+
+    metrics = calculate_metrics(
+        case, mode("generated_skills"), actual, observations,
+    )
+
+    assert metrics["generated_skill_loaded"] == 0
+
+
+def test_generated_routing_is_not_applicable_without_expected_generated_skill() -> None:
+    case = ready_case()
+    actual = NormalizedAnswer({
+        "result": case.raw["evaluation_contract"]["gold_result"],
+        "message": None,
+    }, None)
+    observations = {
+        "loaded_skills": ["generated_headcount"],
+        "heimdall_calls": 1,
+        "mcp_query_calls": 0,
+        "failed_tool_calls": 0,
+        "total_tokens": 1,
+        "latency_ms": 1,
+        "agent_duration_ms": 1,
+        "tool_time_ms": 1,
+    }
+
+    metrics = calculate_metrics(
+        case, mode("generated_skills"), actual, observations,
+    )
+
+    assert metrics["generated_skill_loaded"] is None
 
 
 def test_refusal_accuracy_is_outcome_based() -> None:

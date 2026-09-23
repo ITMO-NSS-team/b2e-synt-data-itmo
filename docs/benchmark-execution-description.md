@@ -251,7 +251,7 @@ make benchmark-run \
 | `exact_match` | совпадение нормализованного `result` с `gold_result` по правилам `comparison` |
 | `outcome_accuracy` | совпадение фактического и ожидаемого outcome |
 | `correct_refusal` | правильность отказа для `access_control`, `missing_skill` и `out_of_scope` |
-| `generated_skill_loaded` | загружен ли целевой generated skill; пока неприменима для стандартных режимов |
+| `generated_skill_loaded` | загружен ли через `get_skill` generated skill, одновременно указанный в `case.expected_skills` и входящий в generated-каталог режима; иначе метрика неприменима |
 | `heimdall_calls` | число обращений к инструментам информационного сервиса (в текущем стенде — Heimdall) |
 | `mcp_query_calls` | число вызовов `mcp_query` |
 | `failed_tool_calls` | число завершившихся ошибкой инструментальных вызовов |
