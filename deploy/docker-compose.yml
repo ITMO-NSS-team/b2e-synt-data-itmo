@@ -219,6 +219,8 @@ services:
       B2E_AGENT_DB: /app/var/agent.db
       PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
+      # Optional second OTLP/HTTP destination (for example OpenLIT on :4318).
+      OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-}
       # Read from the environment only. Never written to a file or a commit.
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       B2E_HARNESS: ${B2E_HARNESS:-claude_code}
