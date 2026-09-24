@@ -35,18 +35,20 @@ class CatalogStrategy(ABC):
         return None
 
 
-class NoSkillsCatalog(CatalogStrategy):
-    name = "none"
+class GeneralKnowledgeCatalog(CatalogStrategy):
+    name = "general_knowledge"
 
-    def __init__(self, config_ref: str = "agent_config_benchmark_skills_off") -> None:
+    def __init__(
+        self, config_ref: str = "agent_config_benchmark_general_knowledge",
+    ) -> None:
         self.config_ref = config_ref
 
     def prepare(self, case: EvalCase) -> None:
         del case
 
 
-class HeimdallCatalog(CatalogStrategy):
-    name = "heimdall"
+class ExistingSkillsCatalog(CatalogStrategy):
+    name = "existing_skills"
 
     def __init__(self, config_ref: str = "agent_config_benchmark_skills_on") -> None:
         self.config_ref = config_ref

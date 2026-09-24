@@ -99,8 +99,13 @@ from opentelemetry.trace import Span, Status, StatusCode
 
 from sim import telemetry
 from sim.agent.config import AgentConfig
+from sim.agent.provider import is_zai, llm_provider
 
 logger = logging.getLogger("b2e.claude_code")
+
+
+def _provider_name() -> str:
+    return "zai" if is_zai() else (llm_provider() or "anthropic")
 
 #: Never available to the agent, regardless of anything else.
 #:
@@ -1148,7 +1153,20 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
             span.set_attribute(telemetry.SPAN_KIND,
                                OpenInferenceSpanKindValues.LLM.value)
             span.set_attribute(SpanAttributes.LLM_MODEL_NAME, call.model)
-            span.set_attribute(SpanAttributes.LLM_PROVIDER, "anthropic")
+            provider = _provider_name()
+            span.set_attribute(SpanAttributes.LLM_PROVIDER, provider)
+            span.set_attribute("gen_ai.operation.name", "chat")
+            span.set_attribute("gen_ai.provider.name", provider)
+            span.set_attribute("gen_ai.system", provider)
+            span.set_attribute("gen_ai.request.model", call.model)
+            span.set_attribute("gen_ai.response.model", call.model)
+            span.set_attribute("gen_ai.usage.input_tokens", call.prompt_tokens)
+            span.set_attribute("gen_ai.usage.output_tokens", call.output_tokens)
+            span.set_attribute("gen_ai.usage.cache_read.input_tokens",
+                               call.cache_read_tokens)
+            span.set_attribute("gen_ai.usage.cache_creation.input_tokens",
+                               call.cache_creation_tokens)
+            span.set_attribute("b2e.llm.protocol", "anthropic")
             span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT,
                                call.prompt_tokens)
             span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION,
@@ -1779,6 +1797,12 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute("b2e.turn.skill_runs", result.skill_runs)
     root.set_attribute("b2e.turn.cost_usd", round(result.cost_usd, 6))
     root.set_attribute("b2e.harness", "claude_code")
+    provider = _provider_name()
+    root.set_attribute("gen_ai.operation.name", "chat")
+    root.set_attribute("gen_ai.provider.name", provider)
+    root.set_attribute("gen_ai.system", provider)
+    if config is not None:
+        root.set_attribute("gen_ai.request.model", config.model_id)
 
     # Token counts under the standard OpenInference keys — the names every other
     # tool already understands — rather than bespoke b2e.* ones. Note that these
@@ -1799,6 +1823,15 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_WRITE,
                        result.cache_creation_tokens)
     root.set_attribute("b2e.turn.uncached_prompt_tokens", result.input_tokens)
+    root.set_attribute("gen_ai.usage.input_tokens", result.prompt_tokens)
+    root.set_attribute("gen_ai.usage.output_tokens", result.output_tokens)
+    root.set_attribute("gen_ai.usage.cache_read.input_tokens",
+                       result.cache_read_tokens)
+    root.set_attribute("gen_ai.usage.cache_creation.input_tokens",
+                       result.cache_creation_tokens)
+    models = {call.model for call in result.llm_calls if call.model}
+    if len(models) == 1:
+        root.set_attribute("gen_ai.response.model", next(iter(models)))
     if result.duration_ms:
         root.set_attribute("b2e.turn.duration_ms", int(result.duration_ms))
     # The CLI's own measurements, recorded rather than interpreted. Note that

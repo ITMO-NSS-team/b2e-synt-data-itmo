@@ -61,8 +61,10 @@ def configure(
     project_name: str,
     protocol: str = "http/protobuf",
     batch: bool = True,
+    secondary_endpoint: str | None = None,
+    service_name: str = "b2e-agent",
 ) -> Any:
-    """Register a tracer provider pointed at Phoenix.
+    """Register a tracer provider for Phoenix and optionally another OTLP sink.
 
     ``batch=True`` deliberately overrides the library default of ``False``. The
     default installs a SimpleSpanProcessor, which performs one HTTP round trip
@@ -74,8 +76,9 @@ def configure(
     not — and this environment exists to compare traces.
     """
     from phoenix.otel import register
+    from opentelemetry.sdk.resources import Resource, SERVICE_NAME
 
-    return register(
+    provider = register(
         endpoint=endpoint,
         project_name=project_name,
         protocol=protocol,
@@ -83,7 +86,30 @@ def configure(
         auto_instrument=False,
         set_global_tracer_provider=True,
         verbose=False,
+        resource=Resource.create({SERVICE_NAME: service_name}),
     )
+    if secondary_endpoint:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,
+            SimpleSpanProcessor,
+        )
+
+        target = _trace_endpoint(secondary_endpoint)
+        if target != endpoint.rstrip("/"):
+            processor = BatchSpanProcessor if batch else SimpleSpanProcessor
+            provider.add_span_processor(
+                processor(OTLPSpanExporter(endpoint=target)),
+                replace_default_processor=False,
+            )
+    return provider
+
+
+def _trace_endpoint(endpoint: str) -> str:
+    endpoint = endpoint.rstrip("/")
+    return endpoint if endpoint.endswith("/v1/traces") else f"{endpoint}/v1/traces"
 
 
 # ------------------------------------------------------------------ helpers
@@ -242,11 +268,24 @@ def start_run(
         span.set_attribute(SPAN_KIND, OpenInferenceSpanKindValues.AGENT.value)
         span.set_attribute(SpanAttributes.SESSION_ID, session_id)
         span.set_attribute(SpanAttributes.USER_ID, str(employee_id))
+        benchmark_run_id = (metadata or {}).get("run_id")
+        span.set_attribute(
+            "b2e.run.id",
+            str(benchmark_run_id or f"{span.get_span_context().trace_id:032x}"),
+        )
+        span.set_attribute(
+            "b2e.run.kind",
+            "benchmark_case" if benchmark_run_id else "business_task",
+        )
         for key, value in fingerprint.as_span_attributes().items():
             span.set_attribute(key, value)
         span.set_attribute("b2e.run.condition_id", fingerprint.condition_id)
         if metadata:
             set_attr(span, SpanAttributes.METADATA, metadata)
+            for key in (
+                "eval_id", "case_id", "mode", "run_id", "comparison_group_id",
+            ):
+                set_attr(span, f"b2e.benchmark.{key}", metadata.get(key))
         if question is not None:
             set_io(span, input_value=question)
         if memory_ref is not None:

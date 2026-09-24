@@ -81,12 +81,11 @@
 	}
 
 	# ---- Phoenix UI (C3)
-	# Keep the /phoenix prefix on the upstream request. Phoenix is told
-	# PHOENIX_HOST_ROOT_PATH=/phoenix so the SPA emits /phoenix/assets/…;
-	# handle_path would strip the prefix and Caddy then served a 0-byte body.
-	# Internal OTLP from the agent still hits http://phoenix:6006/v1/traces
-	# (no prefix) — Phoenix accepts both.
-	handle /phoenix* {
+	# Phoenix is told PHOENIX_HOST_ROOT_PATH=/phoenix so the SPA emits
+	# /phoenix/assets/…. Strip that external prefix before proxying: internally
+	# Phoenix serves the UI at / and static assets at /assets/….
+	# Internal OTLP still reaches http://phoenix:6006/v1/traces directly.
+	handle_path /phoenix* {
 		reverse_proxy phoenix:6006
 	}
 

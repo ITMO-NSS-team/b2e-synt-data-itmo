@@ -1,2 +1,0 @@
-_target_: sim.skill_eval.catalog.NoSkillsCatalog
-config_ref: agent_config_benchmark_skills_off

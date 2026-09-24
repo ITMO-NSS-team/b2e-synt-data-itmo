@@ -6,20 +6,25 @@ allows exactly one global provider per process: a second
 registered second would silently collect nothing and every one of its span
 assertions would fail for a reason that has nothing to do with the code under
 test. One provider, one exporter, cleared per test.
+
+OpenTelemetry is imported inside the span fixtures. Collecting tests that do
+not use them must not require the package.
 """
 from __future__ import annotations
 
 import pytest
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from sim.fingerprint import RunFingerprint
 
 
 @pytest.fixture(scope="session")
-def _exporter() -> InMemorySpanExporter:
+def _exporter():
+    pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     # Simple, not batched: a test that has to wait for a flush interval to see
@@ -30,7 +35,7 @@ def _exporter() -> InMemorySpanExporter:
 
 
 @pytest.fixture()
-def spans(_exporter: InMemorySpanExporter) -> InMemorySpanExporter:
+def spans(_exporter):
     _exporter.clear()
     return _exporter
 

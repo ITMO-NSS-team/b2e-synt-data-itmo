@@ -406,6 +406,5 @@ def test_the_shipped_interactive_config_differs_in_exactly_one_field():
     assert INTERACTIVE_CONFIG_REF == "agent_config_interactive"
 
 
-def test_empty_tool_subset_is_refused():
-    with pytest.raises(ValueError):
-        AgentConfig(tool_subset=())
+def test_empty_tool_subset_is_allowed():
+    assert AgentConfig(tool_subset=()).tool_subset == ()

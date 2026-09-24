@@ -4,36 +4,38 @@ from sim.agent.config import AgentConfig
 from sim.registry import Registry
 
 ON_REF = "agent_config_benchmark_skills_on"
-OFF_REF = "agent_config_benchmark_skills_off"
+GENERAL_REF = "agent_config_benchmark_general_knowledge"
 SOURCE_REF = "agent_config"
 
 
 def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
     _, raw = registry.load(source_ref)
     on = AgentConfig.from_dict(raw).as_dict()
-    off = dict(on)
-    off["tool_subset"] = [
-        name for name in on["tool_subset"]
-        if name not in {"find_skills", "get_skill"}
-    ]
+    general = dict(on)
+    general["tool_subset"] = []
     on_version = registry.commit(
         ON_REF, "agent", on, actor="skill_eval",
         note="benchmark: skills enabled",
     )
-    off_version = registry.commit(
-        OFF_REF, "agent", off, actor="skill_eval",
-        note="benchmark: find_skills/get_skill disabled",
+    general_version = registry.commit(
+        GENERAL_REF, "agent", general, actor="skill_eval",
+        note="benchmark: general knowledge; no Heimdall tools",
     )
-    return {"skills_on": on_version.ref, "skills_off": off_version.ref}
+    return {
+        "existing_skills": on_version.ref,
+        "general_knowledge": general_version.ref,
+    }
 
 
 def main() -> None:
-    import os
-    path = os.environ.get("B2E_REGISTRY_DB", "/app/registry/registry.db")
+    from sim.benchmark.env import load_env, require_env
+
+    load_env()
+    path = require_env("B2E_REGISTRY_DB")
     registry = Registry(path)
     refs = pin(registry)
-    print(f"skills_on={refs['skills_on']}")
-    print(f"skills_off={refs['skills_off']}")
+    print(f"existing_skills={refs['existing_skills']}")
+    print(f"general_knowledge={refs['general_knowledge']}")
 
 
 if __name__ == "__main__":

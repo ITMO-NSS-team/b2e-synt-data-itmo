@@ -147,14 +147,19 @@ class AgentState:
         endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "")
         if not endpoint:
             return "disabled: PHOENIX_COLLECTOR_ENDPOINT unset"
+        openlit_endpoint = os.environ.get("OPENLIT_OTLP_ENDPOINT", "").strip()
         try:
             telemetry.configure(
                 endpoint=f"{endpoint.rstrip('/')}/v1/traces",
                 project_name=os.environ.get("PHOENIX_PROJECT", "b2e-sim"),
                 protocol="http/protobuf",
                 batch=True,
+                secondary_endpoint=openlit_endpoint or None,
             )
-            return f"exporting to {endpoint}"
+            destinations = endpoint + (
+                f", {openlit_endpoint}" if openlit_endpoint else ""
+            )
+            return f"exporting to {destinations}"
         except Exception as exc:
             return f"failed: {type(exc).__name__}: {exc}"
 
@@ -357,8 +362,11 @@ def create_app(state: AgentState | None = None) -> FastAPI:
 
         state.store.append_message(session_id=session_id, role="user",
                                    content=payload.content)
-        metadata = {"question_id": payload.question_id,
-                    "employee_role": session["metadata"].get("role")}
+        metadata = {
+            **session["metadata"],
+            "question_id": payload.question_id,
+            "employee_role": session["metadata"].get("role"),
+        }
 
         if config.harness == "claude_code":
             result = _run_claude_code(state, session, config, system_prompt,

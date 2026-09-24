@@ -44,33 +44,113 @@ class PhoenixClient:
 
     # ---------------------------------------------------------------- spans
 
-    def spans_for_session(self, session_id: str, *, limit: int = 1000) -> list[dict[str, Any]]:
-        """All spans whose root carries this session id.
-
-        Phoenix's span query surface has moved between versions, so this tries
-        the documented v1 route and falls back rather than hard-failing: a
-        researcher pulling a trace should get a clear "unavailable" instead of a
-        stack trace about a route name.
-        """
+    def spans_for_trace(self, trace_id: str, *, limit: int = 20000) -> list[dict[str, Any]]:
+        """Fetch one complete trace; reject truncated or looping pagination."""
+        spans: dict[str, dict[str, Any]] = {}
+        scanned = 0
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
         try:
-            response = self._client.get(
-                f"/v1/projects/{self.project}/spans",
-                params={"limit": limit, "filter": f"session.id == '{session_id}'"},
-            )
-            if response.status_code == 200:
-                return _as_span_list(response.json())
-            response = self._client.get("/v1/spans",
-                                        params={"project_name": self.project,
-                                                "limit": limit})
-            if response.status_code == 200:
-                spans = _as_span_list(response.json())
-                return [s for s in spans
-                        if _attr(s, "session.id") == session_id]
+            while True:
+                params = {"trace_id": trace_id, "limit": 1000}
+                if cursor:
+                    params["cursor"] = cursor
+                response = self._client.get(
+                    f"/v1/projects/{self.project}/spans", params=params)
+                if response.status_code != 200:
+                    raise PhoenixUnavailable(f"Phoenix returned {response.status_code} fetching trace")
+                body = response.json()
+                batch = _as_span_list(body)
+                scanned += len(batch)
+                for span in batch:
+                    context = span.get("context") or {}
+                    if (context.get("trace_id") or span.get("trace_id")) == trace_id:
+                        span_id = context.get("span_id") or span.get("span_id")
+                        if not span_id:
+                            raise PhoenixUnavailable("Phoenix span has no span_id")
+                        spans[str(span_id)] = span
+                cursor = body.get("next_cursor") if isinstance(body, dict) else None
+                if scanned > limit:
+                    raise PhoenixUnavailable("Phoenix exceeded scan limit; trace filter may be ignored")
+                if len(spans) > limit or (len(spans) == limit and cursor):
+                    raise PhoenixUnavailable("Phoenix trace exceeds span limit; refusing partial metrics")
+                if not cursor:
+                    return list(spans.values())
+                if cursor in seen_cursors:
+                    raise PhoenixUnavailable("Phoenix pagination cursor repeated")
+                seen_cursors.add(cursor)
         except httpx.HTTPError as exc:
             raise PhoenixUnavailable(str(exc)) from exc
-        raise PhoenixUnavailable(
-            f"Phoenix returned {response.status_code} for a span query; "
-            f"the REST contract may have moved (see docs/observability.md §6)")
+
+    def spans_for_session(self, session_id: str, *, limit: int = 1000) -> list[dict[str, Any]]:
+        """Return only the traces whose root carries ``session.id``.
+
+        Child spans do not inherit ``session.id``, so this is deliberately a
+        two-step lookup: find matching roots through Phoenix's ``attribute``
+        parameter, then fetch every span belonging to their trace ids.  The old
+        implementation sent an unsupported ``filter`` parameter.  Phoenix
+        ignored it and returned unrelated project spans with HTTP 200, which is
+        more dangerous than a hard failure because it silently corrupts metrics.
+        """
+        if limit < 1:
+            return []
+        endpoint = f"/v1/projects/{self.project}/spans"
+        try:
+            response = self._client.get(
+                endpoint,
+                params={
+                    "limit": min(limit, 1000),
+                    "attribute": f"session.id:{session_id}",
+                },
+            )
+            if response.status_code != 200:
+                raise PhoenixUnavailable(
+                    f"Phoenix returned {response.status_code} looking up session roots")
+            roots = [
+                span for span in _as_span_list(response.json())
+                if _attr(span, "session.id") == session_id
+            ]
+            trace_ids = list(dict.fromkeys(
+                str(trace_id)
+                for span in roots
+                if (trace_id := (span.get("context") or {}).get("trace_id"))
+            ))
+            if not trace_ids:
+                return []
+
+            spans: list[dict[str, Any]] = []
+            cursor: str | None = None
+            seen_cursors: set[str] = set()
+            trace_id_set = set(trace_ids)
+            while len(spans) < limit:
+                params: list[tuple[str, Any]] = [
+                    ("limit", min(1000, limit - len(spans))),
+                ]
+                params.extend(("trace_id", trace_id) for trace_id in trace_ids)
+                if cursor:
+                    params.append(("cursor", cursor))
+                page = self._client.get(endpoint, params=params)
+                if page.status_code != 200:
+                    raise PhoenixUnavailable(
+                        f"Phoenix returned {page.status_code} fetching session traces")
+                body = page.json()
+                batch = _as_span_list(body)
+                # Do not trust a silently ignored query parameter a second time.
+                spans.extend(
+                    span for span in batch
+                    if str((span.get("context") or {}).get("trace_id")) in trace_id_set
+                )
+                cursor = body.get("next_cursor") if isinstance(body, dict) else None
+                if not cursor or not batch:
+                    break
+                if cursor in seen_cursors:
+                    raise PhoenixUnavailable("Phoenix pagination cursor repeated")
+                seen_cursors.add(cursor)
+            if cursor or len(spans) > limit:
+                raise PhoenixUnavailable("Phoenix session trace is truncated; refusing partial metrics")
+            return spans[:limit]
+        except httpx.HTTPError as exc:
+            raise PhoenixUnavailable(str(exc)) from exc
 
     def latest_traces(self, *, limit: int = 100,
                       span_cap: int = 20000) -> list[dict[str, Any]]:

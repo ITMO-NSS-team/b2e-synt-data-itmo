@@ -147,7 +147,9 @@ def main() -> int:
     password = env.get("RESEARCHER_PASSWORD", "")
     config_ref = env.get("DEMO_CONFIG_REF", DEFAULT_DEMO_CONFIG_REF)
     timeout = float(env.get("DEMO_TIMEOUT", "600"))
+    trace_timeout = float(env.get("DEMO_TRACE_TIMEOUT", "60"))
     data_dir = Path(env.get("DEMO_DATA", "data-small"))
+    openlit_endpoint = env.get("OPENLIT_OTLP_ENDPOINT", "").strip()
 
     if not password:
         print("RESEARCHER_PASSWORD is empty. Put the researcher plaintext in "
@@ -183,6 +185,9 @@ def main() -> int:
     if health.status_code == 401:
         print("Basic auth rejected. RESEARCHER_PASSWORD must match BASIC_AUTH_HASH.")
         return 1
+    if openlit_endpoint and health.status_code == 200:
+        tracing = str(health.json().get("tracing") or "")
+        check("OpenLIT export configured", openlit_endpoint in tracing, tracing)
 
     step("3 · POST one question, get an answer")
     session = client.post("/agent/sessions", json={
@@ -225,7 +230,8 @@ def main() -> int:
 
     step("4 · pull the trace")
     trace = None
-    for attempt in range(12):
+    deadline = time.monotonic() + trace_timeout
+    while time.monotonic() < deadline:
         response = client.get(f"/research/traces/{session_id}")
         if response.status_code == 200:
             trace = response.json()
@@ -251,6 +257,8 @@ def main() -> int:
         return 1
     print("DEMO PASSED — request → agent → Heimdall → answer → trace → feedback.")
     print(f"Phoenix: {base}/phoenix/")
+    if openlit_endpoint:
+        print(f"OpenLIT OTLP: {openlit_endpoint}")
     return 0
 
 

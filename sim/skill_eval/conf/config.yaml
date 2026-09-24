@@ -1,5 +1,5 @@
 defaults:
-  - catalog: heimdall
+  - catalog: existing_skills
   - logging: both
   - factory: echo_gold
   - installer: bind_mount
