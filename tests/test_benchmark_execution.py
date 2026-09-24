@@ -64,6 +64,19 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
         "attributes": {
             "b2e.turn.duration_ms": 40,
             "b2e.turn.tool_time_ms": 12,
+            "b2e.turn.api_duration_ms": 30,
+            "b2e.turn.ttft_ms": 5,
+            "b2e.turn.ttft_stream_ms": 4,
+            "b2e.turn.time_to_request_ms": 2,
+            "b2e.turn.iterations": 2,
+            "b2e.turn.uncached_prompt_tokens": 10,
+            "b2e.turn.cost_usd": 0.02,
+            "b2e.permission_denials": 1,
+            "llm.token_count.prompt": 100,
+            "llm.token_count.completion": 20,
+            "llm.token_count.total": 120,
+            "llm.token_count.prompt_details.cache_read": 80,
+            "llm.token_count.prompt_details.cache_write": 10,
         },
         "children": [
             {
@@ -90,13 +103,15 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
                     "b2e.http.status": 400,
                     "b2e.heimdall.error_code": "bad_request",
                     "b2e.heimdall.rows": 0,
+                    "b2e.heimdall.response_bytes": 256,
                 },
             },
         ],
     }]}
     observed = trace_observations(AgentTurn(
-        "", {"tool_calls": 3, "heimdall_calls": 3, "total_tokens": 99,
-             "latency_ms": 55}, trace,
+        "", {"tool_calls": 3, "heimdall_calls": 3, "iterations": 2,
+             "prompt_tokens": 100, "completion_tokens": 20,
+             "total_tokens": 120, "cost_usd": 0.02, "latency_ms": 55}, trace,
     ))
     assert observed["found_skills"] == ["generated_headcount"]
     assert observed["loaded_skills"] == ["generated_headcount"]
@@ -107,6 +122,19 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     assert observed["mcp_query_rows"] == [0]
     assert observed["agent_duration_ms"] == 40
     assert observed["tool_time_ms"] == 12
+    assert observed["api_duration_ms"] == 30
+    assert observed["ttft_ms"] == 5
+    assert observed["prompt_tokens"] == 100
+    assert observed["uncached_prompt_tokens"] == 10
+    assert observed["cache_read_tokens"] == 80
+    assert observed["cache_creation_tokens"] == 10
+    assert observed["completion_tokens"] == 20
+    assert observed["cache_hit_ratio"] == 0.8
+    assert observed["cost_usd"] == 0.02
+    assert observed["permission_denials"] == 1
+    assert observed["http_error_count"] == 1
+    assert observed["heimdall_response_bytes"] == 256
+    assert observed["tool_time_ratio"] == 0.3
 
 
 def test_fatal_turn_error_ignores_successful_harness_denials() -> None:

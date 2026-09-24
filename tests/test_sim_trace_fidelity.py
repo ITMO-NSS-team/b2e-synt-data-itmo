@@ -81,9 +81,11 @@ def test_total_tokens_counts_what_the_model_actually_read():
     assert out.total_tokens == 30 + 24807 + 12 + 1068
 
 
-def test_root_span_carries_the_token_counts_the_session_reported(spans, fingerprint):
+def test_root_span_carries_the_token_counts_the_session_reported(
+        spans, fingerprint, monkeypatch):
     """Phoenix reads `llm.token_count.*`. Without them its token and cost columns
     are NULL for every turn the default harness ever ran."""
+    monkeypatch.setenv("LLM_PROVIDER", "zai")
     out = parse_stream("\n".join(json.dumps(e) for e in [RESULT_EVENT]))
     with _root(fingerprint) as root:
         emit_spans(out, root=root)
@@ -92,6 +94,9 @@ def test_root_span_carries_the_token_counts_the_session_reported(spans, fingerpr
     assert attrs["llm.token_count.prompt"] == 30 + 24807 + 12
     assert attrs["llm.token_count.completion"] == 1068
     assert attrs["llm.token_count.total"] == 30 + 24807 + 12 + 1068
+    assert attrs["gen_ai.provider.name"] == "zai"
+    assert attrs["gen_ai.usage.input_tokens"] == 30 + 24807 + 12
+    assert attrs["gen_ai.usage.output_tokens"] == 1068
 
 
 def test_root_span_separates_cache_reads_from_fresh_prompt(spans, fingerprint):
@@ -104,6 +109,36 @@ def test_root_span_separates_cache_reads_from_fresh_prompt(spans, fingerprint):
     attrs = _by_name(spans, "b2e.turn")[0].attributes
     assert attrs["llm.token_count.prompt_details.cache_read"] == 24807
     assert attrs["llm.token_count.prompt_details.cache_write"] == 12
+
+
+def test_root_span_flattens_benchmark_labels(spans, fingerprint):
+    metadata = {
+        "eval_id": "eval-1", "case_id": "case-1", "mode": "existing_skills",
+        "run_id": "run-1", "comparison_group_id": "group-1",
+    }
+    with telemetry.start_run(
+        "b2e.turn", fingerprint=fingerprint, session_id="ses_test",
+        employee_id="1599763", metadata=metadata,
+    ):
+        pass
+
+    attrs = _by_name(spans, "b2e.turn")[0].attributes
+    assert attrs["b2e.run.id"] == "run-1"
+    assert attrs["b2e.run.kind"] == "benchmark_case"
+    assert attrs["b2e.benchmark.eval_id"] == "eval-1"
+    assert attrs["b2e.benchmark.case_id"] == "case-1"
+    assert attrs["b2e.benchmark.mode"] == "existing_skills"
+    assert attrs["b2e.benchmark.run_id"] == "run-1"
+    assert attrs["b2e.benchmark.comparison_group_id"] == "group-1"
+
+
+def test_business_task_uses_its_trace_as_the_run_id(spans, fingerprint):
+    with _root(fingerprint) as span:
+        trace_id = f"{span.get_span_context().trace_id:032x}"
+
+    attrs = _by_name(spans, "b2e.turn")[0].attributes
+    assert attrs["b2e.run.id"] == trace_id
+    assert attrs["b2e.run.kind"] == "business_task"
 
 
 # ------------------------------------------------------------ live timing

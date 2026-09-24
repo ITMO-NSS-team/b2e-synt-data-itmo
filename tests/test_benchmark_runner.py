@@ -96,6 +96,13 @@ class FakeExecutor:
             "attributes": {
                 "b2e.turn.duration_ms": 1200,
                 "b2e.turn.tool_time_ms": 300,
+                "b2e.turn.api_duration_ms": 900,
+                "b2e.turn.ttft_ms": 100,
+                "b2e.turn.uncached_prompt_tokens": 20,
+                "llm.token_count.prompt": 300,
+                "llm.token_count.completion": 21,
+                "llm.token_count.total": 321,
+                "llm.token_count.prompt_details.cache_read": 280,
             },
             "children": [{
                 "name": "heimdall.mcp_query",
@@ -107,8 +114,9 @@ class FakeExecutor:
         }]}
         return AgentTurn(
             answer,
-            {"tool_calls": 2, "heimdall_calls": 1, "total_tokens": 321,
-             "latency_ms": 1500},
+            {"iterations": 2, "tool_calls": 2, "heimdall_calls": 1,
+             "prompt_tokens": 300, "completion_tokens": 21,
+             "total_tokens": 321, "cost_usd": 0.03, "latency_ms": 1500},
             trace, session_id=f"session-{len(self.requests)}", trace_id="trace-1",
             fingerprint=fingerprint().as_dict(),
         )
@@ -337,6 +345,9 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     assert (writer.root / response["trace_path"]).is_file()
     assert score["metrics"]["answer_accuracy"] == 1
     assert summary["by_mode"]["existing_skills"]["answer_accuracy"] == 1
+    assert summary["by_mode"]["existing_skills"]["cache_read_tokens"] == 280
+    assert summary["by_mode"]["existing_skills"]["ttft_ms"] == 100
+    assert summary["by_mode"]["existing_skills"]["cost_usd"] == 0.03
     assert (writer.root / "run-manifest.json").is_file()
     with pytest.raises(ValueError, match="already exists"):
         ResultWriter(tmp_path, "eval-1")

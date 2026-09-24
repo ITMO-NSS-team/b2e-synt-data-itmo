@@ -170,12 +170,13 @@ def test_each_api_call_becomes_one_llm_span_under_the_turn(spans, fingerprint,
     assert {s.parent.span_id for s in llm} == {root_span.context.span_id}
 
 
-def test_the_llm_span_reports_tokens_where_phoenix_reads_them(spans, fingerprint,
-                                                              tmp_path):
+def test_the_llm_span_reports_tokens_where_backends_read_them(
+        spans, fingerprint, tmp_path, monkeypatch):
     """Unlike the AGENT root, an LLM span does populate Phoenix's own token
     columns — that is the point of putting them on this kind of span."""
     from sim.agent.claude_code import emit_llm_spans
 
+    monkeypatch.setenv("LLM_PROVIDER", "zai")
     path = _write(tmp_path, [_assistant("msg_1", "2026-08-05T15:35:29.244Z")])
     with _root(fingerprint) as root:
         emit_llm_spans(parse_transcript(path, since=0.0), root=root)
@@ -186,6 +187,14 @@ def test_the_llm_span_reports_tokens_where_phoenix_reads_them(spans, fingerprint
     assert attrs["llm.token_count.prompt_details.cache_read"] == 12211
     assert attrs["llm.model_name"] == "claude-haiku-4-5-20251001"
     assert attrs["llm.finish_reason"] == "tool_use"
+    assert attrs["llm.provider"] == "zai"
+    assert attrs["b2e.llm.protocol"] == "anthropic"
+    assert attrs["gen_ai.provider.name"] == "zai"
+    assert attrs["gen_ai.request.model"] == "claude-haiku-4-5-20251001"
+    assert attrs["gen_ai.usage.input_tokens"] == 10 + 12211 + 2566
+    assert attrs["gen_ai.usage.output_tokens"] == 252
+    assert attrs["gen_ai.usage.cache_read.input_tokens"] == 12211
+    assert attrs["gen_ai.usage.cache_creation.input_tokens"] == 2566
 
 
 def test_the_span_duration_is_labelled_as_derived_not_measured(spans, fingerprint,
