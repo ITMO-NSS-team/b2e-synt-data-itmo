@@ -27,6 +27,7 @@ class _CaseSchema:
     categories: frozenset[str]
     case_id: re.Pattern[str]
     sha256: re.Pattern[str]
+    version: str
 
 
 @lru_cache(maxsize=8)
@@ -37,6 +38,7 @@ def _case_schema(schema_path: str) -> _CaseSchema:
         categories=frozenset(contract["properties"]["category"]["enum"]),
         case_id=re.compile(contract["properties"]["case_id"]["pattern"]),
         sha256=re.compile(contract["properties"]["skill_registry_hash"]["pattern"]),
+        version=str(contract["properties"]["schema_version"]["const"]),
     )
 
 
@@ -122,8 +124,8 @@ def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
     extra = raw.keys() - schema.fields
     if missing or extra:
         raise ValueError(f"case fields: missing={sorted(missing)}, unknown={sorted(extra)}")
-    if raw["schema_version"] != "3.0":
-        raise ValueError("schema_version must be '3.0'")
+    if raw["schema_version"] != schema.version:
+        raise ValueError(f"schema_version must be {schema.version!r}")
     if not schema.case_id.fullmatch(_nonempty(raw["case_id"], "case_id")):
         raise ValueError("case_id contains unsafe characters")
     if not isinstance(raw["status"], str) or raw["status"] not in {"draft", "ready"}:
@@ -250,10 +252,11 @@ def load_suite(
     on_draft: str = "skip",
     schema_path: str | Path | None = None,
 ) -> list[BenchmarkCase]:
-    """Load ready cases from a directory in deterministic order.
+    """Load runnable cases recursively from a benchmark repository.
 
     Args:
-        cases_dir: Directory of authorial ``*.json`` files.
+        cases_dir: Root containing authorial JSON cases. JSON records outside
+            the runner's ``draft``/``ready`` lifecycle are ignored.
         case_ids: If set, only these ids are returned; unknown ids fail.
         on_draft: ``skip`` drops drafts, ``error`` refuses them.
         schema_path: Optional override for the published v3 schema.
@@ -271,7 +274,14 @@ def load_suite(
         raise ValueError(f"cases directory does not exist: {root}")
     requested = set(case_ids) if case_ids is not None else None
     found: dict[str, BenchmarkCase] = {}
-    for path in sorted(root.glob("*.json")):
+    for path in sorted(root.rglob("*.json")):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(raw, dict)
+            or "case_id" not in raw
+            or raw.get("status") not in {"draft", "ready"}
+        ):
+            continue
         case = load_case(path, schema_path=schema_path)
         if case.case_id in found:
             raise ValueError(f"duplicate case_id: {case.case_id}")

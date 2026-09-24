@@ -132,7 +132,8 @@ eval-skills: pin-eval-configs eval-deps  ## Hydra skill-eval; CATALOG=none|heimd
 
 # ============================================================ benchmark
 
-CASES ?= benchmarking/cases
+DEPLOY_CASES := $(shell awk -F= '/^CASES=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
+CASES ?= $(DEPLOY_CASES)
 # Compose resolves a relative DATA_DIR against deploy/.  Use the same snapshot
 # by default so the short benchmark commands cannot silently validate one
 # corpus and run against another.  An explicit BENCH_DATA still takes priority.

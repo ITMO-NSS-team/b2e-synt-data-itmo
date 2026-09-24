@@ -230,7 +230,7 @@ make benchmark-run \
 
 | Параметр | По умолчанию | Назначение |
 | --- | --- | --- |
-| `CASES` | `benchmarking/cases` | источник кейсов |
+| `CASES` | значение `CASES` из `deploy/.env` | источник кейсов |
 | `BENCH_DATA` | `DATA_DIR` из `deploy/.env` или `data-small` | снимок данных, доступный процессу benchmark |
 | `BENCH_MODES` | `general_knowledge,existing_skills` | режимы запуска |
 | `BENCH_REPETITIONS` | `1` | число повторов полного прогона |
