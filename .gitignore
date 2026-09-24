@@ -29,7 +29,6 @@ data-small/
 # --- simulation environment -------------------------------------------------
 # Secrets. Never commit. If one is ever pasted into a chat, rotate it.
 deploy/.env
-deploy/.env.remote
 deploy/.env.bak-*
 .env
 *.env.bak
@@ -58,8 +57,6 @@ data-small-notraps/
 .ua/
 *.md
 *.txt
-!docs/benchmark-execution-description.md
-!sim/benchmark/prompts/benchmark-response-prompt.txt
 
 # Backups
 *backup*
@@ -69,16 +66,10 @@ data-small-notraps/
 
 # Heimdall skills
 heimdall-skills/
-# Content-addressed runtime copies of the same catalog. Rebuilt from the source
-# catalog and recorded by hash in each benchmark mode configuration.
-benchmarking/catalog-snapshots/
-benchmarking/cases/
-# Local benchmark runs may include full prompts, answers, traces and HR rows.
-# They are experiment artefacts, not source code; publish them deliberately.
-benchmarking/results/
-var/benchmark-catalog-snapshots/
-var/benchmark-live-config.json
 
 var/mlruns/
 var/eval-site/
 results/hydra/
+
+#gold dataset or "basket" with queries, skills and gold answers
+b2e-skill-benchmark/
