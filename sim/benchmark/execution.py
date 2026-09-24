@@ -20,6 +20,16 @@ _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 # benchmark arm, not transport failures.
 _HARNESS_DENIAL = re.compile(r"^denied:[A-Za-z0-9_.:/-]+$")
 
+OPERATIONAL_METRICS = (
+    "iterations", "tool_calls", "heimdall_calls", "mcp_query_calls",
+    "failed_tool_calls", "permission_denials", "http_error_count",
+    "mcp_query_rows_total", "heimdall_response_bytes", "prompt_tokens",
+    "uncached_prompt_tokens", "cache_read_tokens", "cache_creation_tokens",
+    "completion_tokens", "total_tokens", "cache_hit_ratio", "cost_usd",
+    "latency_ms", "agent_duration_ms", "api_duration_ms", "ttft_ms",
+    "ttft_stream_ms", "time_to_request_ms", "tool_time_ms", "tool_time_ratio",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class AgentRequest:
@@ -311,6 +321,7 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
     http_statuses: list[int] = []
     error_codes: list[str] = []
     mcp_query_rows: list[int] = []
+    heimdall_response_bytes: list[int] = []
     root_attrs: dict[str, Any] = {}
     for span in spans:
         attrs = span.get("attributes") or {}
@@ -339,6 +350,9 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             rows = _attr(attrs, "b2e.heimdall.rows")
             if status is not None and isinstance(rows, (int, float)):
                 mcp_query_rows.append(int(rows))
+        response_bytes = _attr(attrs, "b2e.heimdall.response_bytes")
+        if isinstance(response_bytes, (int, float)):
+            heimdall_response_bytes.append(int(response_bytes))
         if _failed_span(span, attrs) and _is_tool_span(span, attrs):
             if _attr(attrs, "b2e.heimdall.endpoint"):
                 failed_bridge.append(span)
@@ -346,10 +360,20 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
                 failed_tool.append((span, attrs))
 
     stats = turn.stats
+    prompt_tokens = _int(
+        stats.get("prompt_tokens"), _attr(root_attrs, "llm.token_count.prompt")
+    )
+    cache_read_tokens = _int(
+        _attr(root_attrs, "llm.token_count.prompt_details.cache_read")
+    )
+    agent_duration_ms = _number(_attr(root_attrs, "b2e.turn.duration_ms"))
+    tool_time_ms = _number(_attr(root_attrs, "b2e.turn.tool_time_ms"))
     return {
         "found_skills": sorted(found),
         "loaded_skills": sorted(loaded),
-        "tool_calls": _int(stats.get("tool_calls"), _attr(root_attrs, "b2e.turn.tool_calls")),
+        "tool_calls": _int(
+            stats.get("tool_calls"), _attr(root_attrs, "b2e.turn.tool_calls")
+        ),
         "heimdall_calls": _int(
             stats.get("heimdall_calls"), _attr(root_attrs, "b2e.turn.heimdall_calls")
         ),
@@ -362,12 +386,49 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
         "http_statuses": http_statuses,
         "error_codes": error_codes,
         "mcp_query_rows": mcp_query_rows,
+        "mcp_query_rows_total": sum(mcp_query_rows),
+        "heimdall_response_bytes": sum(heimdall_response_bytes),
+        "iterations": _int(
+            stats.get("iterations"), _attr(root_attrs, "b2e.turn.iterations")
+        ),
+        "permission_denials": _int(_attr(root_attrs, "b2e.permission_denials")),
+        "http_error_count": sum(status >= 400 for status in http_statuses),
+        "prompt_tokens": prompt_tokens,
+        "uncached_prompt_tokens": _int(
+            _attr(root_attrs, "b2e.turn.uncached_prompt_tokens")
+        ),
+        "cache_read_tokens": cache_read_tokens,
+        "cache_creation_tokens": _int(
+            _attr(root_attrs, "llm.token_count.prompt_details.cache_write")
+        ),
+        "completion_tokens": _int(
+            stats.get("completion_tokens"),
+            _attr(root_attrs, "llm.token_count.completion"),
+        ),
         "total_tokens": _int(
             stats.get("total_tokens"), _attr(root_attrs, "llm.token_count.total")
         ),
+        "cache_hit_ratio": (
+            cache_read_tokens / prompt_tokens if prompt_tokens else None
+        ),
+        "cost_usd": _number(
+            stats.get("cost_usd")
+            if stats.get("cost_usd") is not None
+            else _attr(root_attrs, "b2e.turn.cost_usd")
+        ),
         "latency_ms": _number(stats.get("latency_ms")),
-        "agent_duration_ms": _number(_attr(root_attrs, "b2e.turn.duration_ms")),
-        "tool_time_ms": _number(_attr(root_attrs, "b2e.turn.tool_time_ms")),
+        "agent_duration_ms": agent_duration_ms,
+        "api_duration_ms": _number(_attr(root_attrs, "b2e.turn.api_duration_ms")),
+        "ttft_ms": _number(_attr(root_attrs, "b2e.turn.ttft_ms")),
+        "ttft_stream_ms": _number(_attr(root_attrs, "b2e.turn.ttft_stream_ms")),
+        "time_to_request_ms": _number(
+            _attr(root_attrs, "b2e.turn.time_to_request_ms")
+        ),
+        "tool_time_ms": tool_time_ms,
+        "tool_time_ratio": (
+            tool_time_ms / agent_duration_ms
+            if tool_time_ms is not None and agent_duration_ms else None
+        ),
     }
 
 

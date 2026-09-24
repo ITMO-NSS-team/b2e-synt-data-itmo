@@ -184,7 +184,9 @@ stored: two runs are comparable exactly when their `condition_id` matches.
 `input.mime_type` / `output.mime_type`.
 
 ### `AGENT` (root)
-- all eight `b2e.run.*` fields
+- all eight `b2e.run.*` fingerprint fields
+- `b2e.run.id` — benchmark `run_id`, or the trace id for an ordinary business task
+- `b2e.run.kind` — `benchmark_case` or `business_task`
 - `session.id` — the B2E session id
 - `user.id` — the employee id
 - `metadata` — JSON: `{employee_role, question_id, experiment_id, basket_id}`
@@ -220,6 +222,12 @@ model calls, whatever that includes; nothing here reinterprets it.
 
 The standard `llm.token_count.*` keys are used rather than bespoke `b2e.*` ones
 because they are the names every other tool already understands.
+
+OpenLIT stores this root as one `openlit.otel_traces` row per run. Query
+`SpanName = 'b2e.turn'` and group or filter by
+`SpanAttributes['b2e.run.id']`; benchmark labels are available under
+`b2e.benchmark.*`, while `session.id` may intentionally cover several business
+tasks in a resumed conversation.
 
 **They do not populate Phoenix's `llm_token_count_prompt` / `_completion`
 columns, and there is no `span_costs` row.** Verified on a live turn

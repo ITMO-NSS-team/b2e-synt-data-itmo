@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from .execution import OPERATIONAL_METRICS
 from .modes import comparison_pairs
 
 
@@ -161,8 +162,7 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
                 for name in (
                     "answer_accuracy", "exact_match", "outcome_accuracy",
                     "correct_refusal", "generated_skill_loaded",
-                    "heimdall_calls", "mcp_query_calls", "failed_tool_calls",
-                    "total_tokens", "latency_ms", "agent_duration_ms", "tool_time_ms",
+                    *OPERATIONAL_METRICS,
                 )
             },
         }
@@ -196,8 +196,7 @@ def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
     output: dict[str, Any] = {}
     for name in (
         "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
-        "generated_skill_loaded", "heimdall_calls", "mcp_query_calls",
-        "failed_tool_calls", "total_tokens", "latency_ms",
+        "generated_skill_loaded", *OPERATIONAL_METRICS,
     ):
         a, b = target.get(name), baseline.get(name)
         if a is None or b is None:

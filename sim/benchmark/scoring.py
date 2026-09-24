@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator
 
 from .cases import BenchmarkCase
 from .contracts import response_schema
+from .execution import OPERATIONAL_METRICS
 from .modes import ModeConfig
 
 _FENCED_JSON = re.compile(r"[\x60]{3}(?:json)?\s*\n(.*?)\n[\x60]{3}", re.DOTALL | re.IGNORECASE)
@@ -119,13 +120,7 @@ def calculate_metrics(
         "outcome_accuracy": outcome_accuracy,
         "correct_refusal": correct_refusal,
         "generated_skill_loaded": generated_loaded,
-        "heimdall_calls": observations["heimdall_calls"],
-        "mcp_query_calls": observations["mcp_query_calls"],
-        "failed_tool_calls": observations["failed_tool_calls"],
-        "total_tokens": observations["total_tokens"],
-        "latency_ms": observations["latency_ms"],
-        "agent_duration_ms": observations["agent_duration_ms"],
-        "tool_time_ms": observations["tool_time_ms"],
+        **{name: observations.get(name) for name in OPERATIONAL_METRICS},
     }
 
 
