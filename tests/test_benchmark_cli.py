@@ -47,28 +47,28 @@ def test_cases_path_accepts_directory_json_and_jsonl_and_skips_draft(tmp_path) -
     ready = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     draft = dict(ready)
     draft.update({
-        "case_id": "case-draft", "status": "draft", "employee_id": None,
-        "evaluation_contract": None,
+        "case_id": "case-9998", "status": "draft", "employee_id": None,
+        "gold_answer": None,
     })
     cases = tmp_path / "cases"
     cases.mkdir()
     (cases / "ready.json").write_text(json.dumps(ready), encoding="utf-8")
     (cases / "draft.json").write_text(json.dumps(draft), encoding="utf-8")
-    assert [item.case_id for item in load_cases_path(cases)] == ["case-fixture"]
-    assert [item.case_id for item in load_cases_path(cases / "ready.json")] == ["case-fixture"]
+    assert [item.case_id for item in load_cases_path(cases)] == ["case-0000"]
+    assert [item.case_id for item in load_cases_path(cases / "ready.json")] == ["case-0000"]
     suite = tmp_path / "suite.jsonl"
     suite.write_text(
         json.dumps(draft) + "\n" + json.dumps(ready) + "\n",
         encoding="utf-8",
     )
-    assert [item.case_id for item in load_cases_path(suite)] == ["case-fixture"]
+    assert [item.case_id for item in load_cases_path(suite)] == ["case-0000"]
 
 
 def test_case_limit_selects_first_ready_cases_after_stable_sort(tmp_path) -> None:
     template = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     cases = tmp_path / "cases"
     cases.mkdir()
-    for case_id in ("case-003", "case-001", "case-002"):
+    for case_id in ("case-0003", "case-0001", "case-0002"):
         raw = dict(template)
         raw["case_id"] = case_id
         (cases / f"{case_id}.json").write_text(
@@ -77,7 +77,7 @@ def test_case_limit_selects_first_ready_cases_after_stable_sort(tmp_path) -> Non
 
     selected = load_cases_path(cases, limit=2)
 
-    assert [item.case_id for item in selected] == ["case-001", "case-002"]
+    assert [item.case_id for item in selected] == ["case-0001", "case-0002"]
 
 
 def test_case_limit_must_be_positive(tmp_path) -> None:

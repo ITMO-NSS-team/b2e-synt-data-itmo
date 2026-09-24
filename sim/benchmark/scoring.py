@@ -30,7 +30,7 @@ class NormalizedAnswer:
     error: str | None
 
 
-def normalize_answer(answer: str, response_contract: dict[str, Any]) -> NormalizedAnswer:
+def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAnswer:
     """Extract a JSON object and validate it against the case contract.
 
     This deterministic normalizer does not call an LLM. It accepts a direct
@@ -40,13 +40,13 @@ def normalize_answer(answer: str, response_contract: dict[str, Any]) -> Normaliz
 
     Args:
         answer: Raw final text from the agent turn.
-        response_contract: Public contract used to expand the response schema.
+        gold_contract: Resolved public JSON Schema.
 
     Returns:
         Parsed object when a candidate matches the schema; otherwise
         ``value=None`` and a human-readable ``error``.
     """
-    validator = Draft202012Validator(response_schema(response_contract))
+    validator = Draft202012Validator(response_schema(gold_contract))
     parsed: list[dict[str, Any]] = []
     seen: set[str] = set()
     for candidate in _json_candidates(answer):
@@ -62,7 +62,7 @@ def normalize_answer(answer: str, response_contract: dict[str, Any]) -> Normaliz
         return NormalizedAnswer(None, "final answer contains no JSON object")
     first_error = next(validator.iter_errors(parsed[0]), None)
     detail = first_error.message if first_error is not None else "no candidate matched"
-    return NormalizedAnswer(None, f"normalized answer violates response_contract: {detail}")
+    return NormalizedAnswer(None, f"normalized answer violates gold_contract: {detail}")
 
 
 def calculate_metrics(
@@ -84,12 +84,9 @@ def calculate_metrics(
         answer could not be normalized or the metric does not apply.
     """
     actual = normalized.value
-    evaluation = case.raw["evaluation_contract"]
-    expected_outcome = evaluation["expected_outcome"]
-    observed_outcome = (
-        _observed_outcome(case.raw["category"], actual, observations)
-        if actual is not None else None
-    )
+    gold = case.raw["gold_answer"]
+    expected_outcome = gold["outcome"]
+    observed_outcome = actual.get("outcome") if actual is not None else None
     outcome_accuracy = (
         int(observed_outcome == expected_outcome) if actual is not None else None
     )
@@ -97,9 +94,9 @@ def calculate_metrics(
     if actual is not None and expected_outcome == "answer":
         exact_match = int(
             observed_outcome == "answer" and _results_equal(
-                actual.get("result"),
-                evaluation["gold_result"],
-                evaluation["comparison"],
+                actual.get("rows"),
+                gold["rows"],
+                case.raw["gold_comparison"],
             )
         )
     if expected_outcome == "answer":
@@ -122,40 +119,6 @@ def calculate_metrics(
         "generated_skill_loaded": generated_loaded,
         **{name: observations.get(name) for name in OPERATIONAL_METRICS},
     }
-
-
-def _observed_outcome(
-    category: str,
-    actual: dict[str, Any],
-    observations: dict[str, Any],
-) -> str | None:
-    """Infer the outcome from result and trace without asking the agent to label it.
-
-    Args:
-        category: Authorial case category.
-        actual: Normalized ``{result, message}`` object.
-        observations: Trace facts used for refusal categories.
-
-    Returns:
-        Outcome label, or ``None`` when the traces do not support a label.
-    """
-    if actual.get("result") is not None:
-        return "answer"
-    message = actual.get("message")
-    if not isinstance(message, str) or not message.strip():
-        return None
-    statuses = set(observations.get("http_statuses") or ())
-    errors = {str(item).lower() for item in observations.get("error_codes") or ()}
-    rows = observations.get("mcp_query_rows") or []
-    if category == "access_control" and (403 in statuses or "forbidden" in errors):
-        return "access_control"
-    if category == "no_data" and rows and all(value == 0 for value in rows):
-        return "no_data"
-    if category == "out_of_scope" and observations.get("heimdall_calls", 0) == 0:
-        return "out_of_scope"
-    if category == "missing_skill" and observations.get("heimdall_calls", 0) > 0:
-        return "missing_skill"
-    return None
 
 
 def _json_candidates(text: str):

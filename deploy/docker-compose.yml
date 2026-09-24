@@ -369,7 +369,7 @@ services:
       - ../heimdall:/app/heimdall:ro
       - ../benchmarking:/app/benchmarking:ro
       - ../benchmarking/results:/app/benchmarking/results
-      - ../b2e-skill-benchmark:/app/b2e-skill-benchmark:ro
+      - ${BENCHMARK_REPO_DIR:-../../b2e-skill-benchmark}:/app/b2e-skill-benchmark:ro
       - ../heimdall-skills:/app/heimdall-skills:ro
       - ../catalog:/app/catalog:ro
       - ../var:/app/var

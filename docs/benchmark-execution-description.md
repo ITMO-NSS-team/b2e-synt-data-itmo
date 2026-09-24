@@ -19,7 +19,7 @@
 
 | Компонент | Назначение |
 | --- | --- |
-| `benchmarking/schemas/benchmark-case-v3.schema.json` | JSON Schema авторского кейса |
+| `benchmarking/schemas/benchmark-case-v2.schema.json` | JSON Schema авторского кейса |
 | `sim/benchmark/cases.py` | загрузка и проверка кейсов |
 | `sim/benchmark/contracts.py` | публичный контракт ответа и формирование запроса агенту |
 | `sim/benchmark/modes.py` | конфигурации режимов и хеширование каталогов навыков |
@@ -31,18 +31,19 @@
 
 ## Формат кейса
 
-Каждый кейс хранится отдельным JSON-файлом и соответствует схеме версии `3.0`.
+Каждый кейс хранится отдельным JSON-файлом и соответствует схеме версии `2.0`.
 
 Основные поля:
 
 | Поле | Назначение |
 | --- | --- |
 | `case_id` | уникальный идентификатор |
-| `status` | `draft` или `ready` |
+| `status` | `draft` или `verified` |
 | `category` | категория задачи |
 | `query` | исходный пользовательский запрос |
-| `response_contract` | публичная JSON Schema результата |
-| `evaluation_contract` | скрытый эталон и правила сравнения |
+| `gold_contract` | публичная JSON Schema ответа с обязательными `outcome` и `rows` |
+| `gold_answer` | скрытый эталонный ответ |
+| `gold_comparison` | правила сравнения поля `rows` |
 | `employee_id` | пользователь, от имени которого выполняется запрос |
 | `employee_role` | ожидаемая роль: `self`, `manager` или `hr` |
 | `snapshot_id` | версия набора данных |
@@ -61,43 +62,33 @@
 
 ### Статусы
 
-`draft` используется для незавершённых кейсов. В нём могут отсутствовать `employee_id`, `response_contract` и `evaluation_contract`. При загрузке каталога кейсов такие файлы пропускаются.
+`draft` используется для незавершённых кейсов. В нём могут быть не заполнены `employee_id` и `gold_answer`. При загрузке каталога кейсов такие файлы пропускаются.
 
-`ready` означает, что кейс допускается к preflight и запуску. Для него обязательны:
+`verified` означает, что кейс допускается к preflight и запуску. Для него обязательны:
 
 - существующий `employee_id` с правильной ролью;
-- заполненный `response_contract`;
-- заполненный `evaluation_contract`;
+- заполненный `gold_contract`;
+- заполненные `gold_answer` и `gold_comparison`;
 - совместимые `snapshot_id` и `skill_registry_hash`.
 
-Если выбранный путь не содержит ни одного `ready`-кейса, запуск завершается ошибкой.
+Если выбранный путь не содержит ни одного `verified`-кейса, запуск завершается ошибкой.
 
 ### Публичный контракт ответа
 
-`response_contract` содержит только форму успешного результата:
+`gold_contract` содержит форму полного ответа, но не эталонные значения:
 
 ```json
 {
-  "protocol_version": "1.0",
-  "result_schema": {
-    "type": "array",
-    "items": {
-      "type": "object"
-    }
+  "type": "object",
+  "required": ["outcome", "rows"],
+  "properties": {
+    "outcome": {"enum": ["answer", "no_data", "missing_skill", "access_control", "out_of_scope"]},
+    "rows": {"type": "array"}
   }
 }
 ```
 
-Перед запуском benchmark формирует общий конверт:
-
-```json
-{
-  "result": "значение по result_schema или null",
-  "message": "пояснение или null"
-}
-```
-
-Агент получает только исходный `query` и этот публичный контракт. Категория кейса, ожидаемый навык, правильный outcome и эталонные значения в запрос не включаются.
+Тип `rows` доопределяется конкретным кейсом и может быть массивом, объектом, числом или другим JSON-типом. Агент получает только исходный `query` и разрешённый `gold_contract`. Категория кейса, ожидаемый навык, правильный outcome и `gold_answer` в запрос не включаются.
 
 Нормализатор принимает:
 
@@ -109,22 +100,16 @@
 
 ### Эталон и правила сравнения
 
-`evaluation_contract` не передаётся агенту:
+`gold_answer` и `gold_comparison` не передаются агенту:
 
 ```json
 {
-  "expected_outcome": "answer",
-  "gold_result": [],
-  "comparison": {
-    "ordered": false,
-    "row_key": [],
-    "allow_extra_rows": false,
-    "numeric_absolute_tolerance": 0
-  }
+  "outcome": "answer",
+  "rows": []
 }
 ```
 
-Для `answerable` ожидается `answer`. Для `access_control`, `no_data` и `out_of_scope` ожидаемый outcome должен совпадать с категорией. `missing_skill` допускает как успешный ответ базовыми инструментами, так и подтверждённый отказ `missing_skill`.
+Правила сравнения хранятся отдельно в `gold_comparison`. Для `answerable` ожидается `answer`. Для `access_control`, `no_data` и `out_of_scope` ожидаемый outcome должен совпадать с категорией. `missing_skill` допускает как успешный ответ базовыми инструментами, так и подтверждённый отказ `missing_skill`.
 
 ## Режимы
 
@@ -155,9 +140,9 @@
 Проверяются:
 
 - JSON Schema и операционные поля кейса;
-- статус `ready`;
+- статус `verified`;
 - совместимость категории и ожидаемого outcome;
-- соответствие `gold_result` публичному контракту;
+- соответствие `gold_answer` публичному контракту;
 - наличие snapshot и совпадение `snapshot_id`;
 - существование пользователя и соответствие его роли;
 - совпадение `skill_registry_hash` с работающим стендом;
@@ -177,7 +162,7 @@
 Для каждой комбинации `case × repetition × mode` benchmark:
 
 1. проверяет закреплённую конфигурацию режима;
-2. формирует сообщение из `query` и `response_contract`;
+2. формирует сообщение из `query` и `gold_contract`;
 3. создаёт новую stateless-сессию для указанного `employee_id`;
 4. выполняет один запрос агенту;
 5. получает исходный ответ, статистику и Phoenix-трассу;
@@ -196,7 +181,7 @@
 - `PUBLIC_URL` указывает на доступный стенд;
 - указан корректный `RESEARCHER_PASSWORD`;
 - подготовлен снимок данных с `manifest.json` и `truth/people.json`;
-- кейсы имеют статус `ready`.
+- кейсы имеют статус `verified`.
 
 Команды `benchmark-check`, `benchmark-smoke` и `benchmark-run` самостоятельно поднимают локальный Docker Compose. Для уже работающего серверного стенда используются `benchmark-server` и `benchmark-server-smoke` непосредственно в checkout на сервере.
 
@@ -210,7 +195,7 @@ make benchmark-check CASES=benchmarking/cases
 
 ### Smoke-прогон
 
-Запускает первый `ready`-кейс, оба реализованных режима и один повтор:
+Запускает первый `verified`-кейс, оба реализованных режима и один повтор:
 
 ```bash
 make benchmark-smoke CASES=benchmarking/cases
@@ -239,7 +224,7 @@ make benchmark-run \
 | `BENCH_TIMEOUT` | `1800` | тайм-аут одного обращения к стенду, секунды |
 | `BENCH_TRACE_TIMEOUT` | `300` | максимальное ожидание полной Phoenix-трассы, секунды |
 | `BENCH_MODEL` | не задан | model id для benchmark-конфигурации; не меняет provider или harness |
-| `BENCH_LIMIT` | не задан | ограничение числа ready-кейсов; без него выполняется весь набор |
+| `BENCH_LIMIT` | не задан | ограничение числа verified-кейсов; без него выполняется весь набор |
 
 ## Метрики
 
@@ -248,7 +233,7 @@ make benchmark-run \
 | Метрика | Смысл |
 | --- | --- |
 | `answer_accuracy` | главная метрика: exact match для задач с ответом или правильность outcome для остальных категорий |
-| `exact_match` | совпадение нормализованного `result` с `gold_result` по правилам `comparison` |
+| `exact_match` | совпадение нормализованного `rows` с `gold_answer.rows` по правилам `gold_comparison` |
 | `outcome_accuracy` | совпадение фактического и ожидаемого outcome |
 | `correct_refusal` | правильность отказа для `access_control`, `missing_skill` и `out_of_scope` |
 | `generated_skill_loaded` | загружен ли через `get_skill` generated skill, одновременно указанный в `case.expected_skills` и входящий в generated-каталог режима; иначе метрика неприменима |
@@ -320,7 +305,7 @@ make benchmark-smoke CASES=benchmarking/cases
 make benchmark-run CASES=benchmarking/cases BENCH_REPETITIONS=3
 ```
 
-`benchmark-smoke` выполняет первый ready-кейс в каждом выбранном режиме один раз. `benchmark-run` выполняет весь выбранный набор.
+`benchmark-smoke` выполняет первый verified-кейс в каждом выбранном режиме один раз. `benchmark-run` выполняет весь выбранный набор.
 
 ### Уже развёрнутый серверный стенд
 
@@ -329,7 +314,7 @@ make benchmark-run CASES=benchmarking/cases BENCH_REPETITIONS=3
 ```bash
 cd /var/essdata/b2e-synt-data-itmo
 
-# Первый ready-кейс, один повтор
+# Первый verified-кейс, один повтор
 make benchmark-server-smoke CASES=benchmarking/cases
 
 # Полный прогон
@@ -344,7 +329,7 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 
 Дополнительные параметры:
 
-- `BENCH_LIMIT=5` — выполнить только первые пять ready-кейсов;
+- `BENCH_LIMIT=5` — выполнить только первые пять verified-кейсов;
 - `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — параметры запуска и результатов;
 - `BENCH_MODES` — по умолчанию `general_knowledge,existing_skills`;
 - `BENCH_MODEL` — модель для pinned benchmark-конфигураций без изменения provider или harness.
@@ -357,6 +342,6 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 - `generated_skills` требует отдельного механизма подключения combined-каталога.
 - LLM-as-judge не реализован; поле `llm_judge` в score остаётся незаполненным.
 - Порядок режимов детерминированный и пока не перемешивается.
-- Создание кейсов, получение gold и перевод `draft → ready` выполняются вне runner.
+- Создание кейсов, получение gold и перевод `draft → verified` выполняются вне runner.
 - Серверный прогон требует, чтобы актуальная версия benchmark-кода находилась в checkout стенда.
 - `generated_skills` остаётся mock до подключения combined-каталога к server runner.

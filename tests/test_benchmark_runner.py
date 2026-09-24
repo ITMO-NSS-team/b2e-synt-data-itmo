@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from sim.benchmark.cases import BenchmarkCase
-from sim.benchmark.contracts import PROMPT_RENDERER_VERSION, response_contract_hash
+from sim.benchmark.contracts import PROMPT_RENDERER_VERSION, gold_contract_hash
 from sim.benchmark.execution import ActivatedMode, AgentRequest, AgentTurn
 from sim.benchmark.modes import (
     GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
@@ -20,21 +20,17 @@ from sim.fingerprint import RunFingerprint
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE
 
 
-def ready_case(case_id: str = "case-ready") -> BenchmarkCase:
+def ready_case(case_id: str = "case-9999") -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
-        "case_id": case_id, "status": "ready", "employee_id": "123",
+        "case_id": case_id, "status": "verified", "employee_id": 123,
         "employee_role": "manager", "snapshot_id": "heimdall-sandbox@test",
-        "evaluation_contract": {
-            "expected_outcome": "answer",
-            "gold_result": [
+        "gold_answer": {
+            "outcome": "answer",
+            "rows": [
                 {"grade": 10, "employee_count": 3},
                 {"grade": 11, "employee_count": 2},
             ],
-            "comparison": {
-                "ordered": False, "row_key": ["grade"],
-                "allow_extra_rows": False, "numeric_absolute_tolerance": 0,
-            },
         },
     })
     return BenchmarkCase(Path(f"/authorial/{case_id}.json"), raw)
@@ -85,11 +81,11 @@ class FakeExecutor:
     def execute(self, request: AgentRequest) -> AgentTurn:
         self.requests.append(request)
         answer = json.dumps({
-            "result": [
+            "outcome": "answer",
+            "rows": [
                 {"grade": 11, "employee_count": 2},
                 {"grade": 10, "employee_count": 3},
             ],
-            "message": None,
         })
         trace = {"tree": [{
             "name": "agent.turn",
@@ -138,16 +134,15 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
         case = ready_case()
         assert request.query.startswith(case.raw["query"])
         assert "Формат ответа для автоматической проверки" in request.query
-        assert '"result"' in request.query
-        assert "access_control" not in request.query
-        assert "no_data" not in request.query
-        assert request.metadata["response_contract_hash"] == response_contract_hash(
-            case.raw["response_contract"]
+        assert '"outcome"' in request.query
+        assert '"rows"' in request.query
+        assert request.metadata["gold_contract_hash"] == gold_contract_hash(
+            case.raw["gold_contract"]
         )
         assert request.metadata["heimdall_access"] == "enabled"
         assert request.metadata["prompt_renderer_version"] == PROMPT_RENDERER_VERSION
         assert request.employee_id == "123"
-        assert "gold_result" not in repr(request)
+        assert "gold_answer" not in repr(request)
         assert "employee_count\": 3" not in repr(request)
         assert "expected_skills" not in repr(request)
     assert activator.activated == ["existing_skills", "existing_skills"]
@@ -338,10 +333,11 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     summary = json.loads((writer.root / "summary.json").read_text(encoding="utf-8"))
     writer.write_manifest({"schema_version": "1.0", "eval_id": "eval-1"})
     assert response["response"]["raw_answer"]
-    assert response["case_snapshot"]["evaluation_contract"]
+    assert response["case_snapshot"]["gold_answer"]
+    assert response["case_snapshot"]["gold_contract"]
     assert response["case_snapshot"]["original_query"]
     assert response["case_snapshot"]["rendered_query"]
-    assert response["case_snapshot"]["response_contract_hash"].startswith("sha256:")
+    assert response["case_snapshot"]["gold_contract_hash"].startswith("sha256:")
     assert (writer.root / response["trace_path"]).is_file()
     assert score["metrics"]["answer_accuracy"] == 1
     assert summary["by_mode"]["existing_skills"]["answer_accuracy"] == 1

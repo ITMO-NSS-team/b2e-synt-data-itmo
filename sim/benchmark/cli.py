@@ -28,7 +28,7 @@ class PreparedBenchmark:
     """Validated matrix ready to check or run.
 
     Attributes:
-        cases: Ready cases selected from the CLI path.
+        cases: Verified cases selected from the CLI path.
         live: Secret-free stand manifest from ``live_config``.
         selected_modes: Arms requested on the command line.
         activator: Pinned-config activator bound to the live refs.
@@ -52,13 +52,13 @@ def load_cases_path(
     Args:
         source: Directory of ``*.json``, a single case file, or a ``.jsonl`` suite.
         schema_path: Optional authorial schema override.
-        limit: If set, keep only the first N ready cases after sort.
+        limit: If set, keep only the first N verified cases after sort.
 
     Returns:
-        Ready cases in deterministic order.
+        Verified cases in deterministic order.
 
     Raises:
-        ValueError: If the path kind is unknown or contains no ready cases.
+        ValueError: If the path kind is unknown or contains no verified cases.
     """
     path = Path(source)
     if path.is_dir():
@@ -73,7 +73,7 @@ def load_cases_path(
             f"cases path must be a directory, .json or .jsonl file: {path}"
         )
     if not cases:
-        raise ValueError(f"cases path contains no ready cases: {path}")
+        raise ValueError(f"cases path contains no verified cases: {path}")
     if limit is not None:
         if limit < 1:
             raise ValueError("case limit must be >= 1")
@@ -98,7 +98,7 @@ def _load_jsonl(
         if case.case_id in seen:
             raise ValueError(f"duplicate case_id in {path}: {case.case_id}")
         seen.add(case.case_id)
-        if case.status == "ready":
+        if case.status == "verified":
             cases.append(case)
     return sorted(cases, key=lambda item: item.case_id)
 
@@ -379,7 +379,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--live-config", default="var/benchmark-live-config.json")
     result.add_argument("--results", default="benchmarking/results")
     result.add_argument("--modes", default=",".join(DEFAULT_MODES))
-    result.add_argument("--limit", type=int, help="Run/check only the first N ready cases")
+    result.add_argument("--limit", type=int, help="Run/check only the first N verified cases")
     result.add_argument("--repetitions", type=int, default=1)
     result.add_argument("--eval-id")
     result.add_argument("--eval-prefix")

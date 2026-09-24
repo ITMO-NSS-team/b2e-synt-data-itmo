@@ -7,7 +7,7 @@ from typing import Callable, Iterable, Mapping
 
 from .cases import BenchmarkCase
 from .contracts import (
-    PROMPT_RENDERER_VERSION, render_agent_query, response_contract_hash,
+    PROMPT_RENDERER_VERSION, gold_contract_hash, render_agent_query,
 )
 from .execution import (
     AgentRequest, AgentTurn, ModeActivator, SessionExecutor,
@@ -49,7 +49,7 @@ class BenchmarkRunner:
         """Execute every case × mode × repetition in a fixed order.
 
         Args:
-            cases: Ready cases.
+            cases: Verified authorial cases.
             modes: ``ModeConfigs``, a name→config mapping, or an iterable of configs.
             repetitions: Independent repeats per cell; must be ``>= 1``.
 
@@ -99,12 +99,12 @@ class BenchmarkRunner:
 
         activated = self.activator.activate(mode)
         try:
-            public_contract = case.raw["response_contract"]
-            contract_hash = response_contract_hash(public_contract)
+            public_contract = case.raw["gold_contract"]
+            contract_hash = gold_contract_hash(public_contract)
             rendered_query = render_agent_query(case.raw["query"], public_contract)
             request = AgentRequest(
                 query=rendered_query,
-                employee_id=case.raw["employee_id"],
+                employee_id=str(case.raw["employee_id"]),
                 config_ref=activated.config_ref,
                 metadata={
                     "eval_id": self.eval_id,
@@ -118,7 +118,7 @@ class BenchmarkRunner:
                     ),
                     "run_id": run_id,
                     "comparison_group_id": group_id,
-                    "response_contract_hash": contract_hash,
+                    "gold_contract_hash": contract_hash,
                     "prompt_renderer_version": PROMPT_RENDERER_VERSION,
                 },
             )
@@ -130,7 +130,7 @@ class BenchmarkRunner:
             self.activator.deactivate(mode)
 
         observations = trace_observations(turn)
-        normalized = normalize_answer(turn.answer, case.raw["response_contract"])
+        normalized = normalize_answer(turn.answer, case.raw["gold_contract"])
         status, review_reason = _classify_turn(checked, turn, normalized)
         metrics = calculate_metrics(case, mode, normalized, observations)
         if status != "completed":
@@ -148,10 +148,11 @@ class BenchmarkRunner:
                 "employee_role": case.raw["employee_role"],
                 "employee_id": case.raw["employee_id"],
                 "expected_skills": case.raw["expected_skills"],
-                "response_contract": case.raw["response_contract"],
-                "response_contract_hash": contract_hash,
+                "gold_contract": case.raw["gold_contract"],
+                "gold_contract_hash": contract_hash,
                 "prompt_renderer_version": PROMPT_RENDERER_VERSION,
-                "evaluation_contract": case.raw["evaluation_contract"],
+                "gold_answer": case.raw["gold_answer"],
+                "gold_comparison": case.raw["gold_comparison"],
             },
             "response": {"raw_answer": turn.answer, "error": review_reason},
             "observations": observations,

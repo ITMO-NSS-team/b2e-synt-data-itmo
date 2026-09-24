@@ -73,3 +73,8 @@ results/hydra/
 
 #gold dataset or "basket" with queries, skills and gold answers
 b2e-skill-benchmark/
+
+# Local benchmark runs and reproducible condition snapshots.
+benchmarking/results/
+var/benchmark-live-config.json
+var/benchmark-catalog-snapshots/

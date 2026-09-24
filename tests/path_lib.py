@@ -3,6 +3,6 @@ from __future__ import annotations
 
 from sim.benchmark.path_lib import DEFAULT_SCHEMA_PATH, PROJECT_ROOT
 
-EXAMPLE = PROJECT_ROOT / "tests/fixtures/benchmark-case-v3.json"
+EXAMPLE = PROJECT_ROOT / "tests/fixtures/benchmark-case-v2.json"
 SCHEMA = DEFAULT_SCHEMA_PATH
 MODEL_CATALOG = PROJECT_ROOT / "catalog/snapshot.json"

@@ -11,21 +11,11 @@ from sim.benchmark.cases import load_case, load_suite, validate_case, write_suit
 from tests.fixtures.constants import EXAMPLE, SCHEMA
 
 
-def ready_case(case_id: str = "case-ready") -> dict:
+def ready_case(case_id: str = "case-9999") -> dict:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw["case_id"] = case_id
-    raw["status"] = "ready"
-    raw["employee_id"] = "123456"
-    raw["evaluation_contract"] = {
-        "expected_outcome": "answer",
-        "gold_result": [{"grade": 10, "employee_count": 3}],
-        "comparison": {
-            "ordered": False,
-            "row_key": ["grade"],
-            "allow_extra_rows": False,
-            "numeric_absolute_tolerance": 0,
-        },
-    }
+    raw["status"] = "verified"
+    raw["employee_id"] = 123456
     return raw
 
 
@@ -33,15 +23,15 @@ def test_supplied_example_matches_published_contract_and_is_ready() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     assert set(schema["required"]) == set(schema["properties"])
     case = load_case(EXAMPLE, schema_path=SCHEMA)
-    assert case.case_id == "case-fixture"
-    assert case.status == "ready"
-    assert case.raw["employee_id"] == "123456"
-    assert case.raw["evaluation_contract"]["expected_outcome"] == "answer"
+    assert case.case_id == "case-0000"
+    assert case.status == "verified"
+    assert case.raw["employee_id"] == 123456
+    assert case.raw["gold_answer"]["outcome"] == "answer"
 
     incomplete = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     incomplete["status"] = "draft"
-    incomplete["response_contract"] = None
-    incomplete["evaluation_contract"] = None
+    incomplete["gold_contract"] = {}
+    incomplete["gold_answer"] = None
     incomplete["employee_id"] = None
     validate_case(incomplete, schema_path=SCHEMA)
 
@@ -59,17 +49,50 @@ def test_validation_follows_supplied_schema_path(tmp_path: Path) -> None:
     validate_case(raw, schema_path=path)
 
 
+def test_v2_loader_resolves_local_contract_and_comparison_template(tmp_path: Path) -> None:
+    raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    contract = raw["gold_contract"]
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "gold-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8",
+    )
+    raw["gold_contract"] = {
+        "$ref": "templates/gold-contract.json",
+        "properties": {
+            "rows": contract["properties"]["rows"],
+        },
+    }
+    raw["gold_comparison"] = {
+        "template": "simple_comparison",
+        "row_key": ["grade"],
+    }
+    path = tmp_path / "case-0000.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    case = load_case(path, schema_path=SCHEMA)
+
+    assert "$ref" not in case.raw["gold_contract"]
+    assert case.raw["gold_contract"]["allOf"]
+    assert case.raw["gold_comparison"] == {
+        "ordered": False,
+        "row_key": ["grade"],
+        "allow_extra_rows": False,
+        "numeric_absolute_tolerance": 0,
+    }
+
+
 def test_ready_requires_actor_and_gold() -> None:
     raw = ready_case()
     validate_case(raw, schema_path=SCHEMA)
-    for field in ("employee_id", "response_contract", "evaluation_contract"):
+    for field in ("employee_id", "gold_answer"):
         bad = copy.deepcopy(raw)
         bad[field] = None
-        with pytest.raises(ValueError, match="ready requires"):
+        with pytest.raises(ValueError, match="verified requires"):
             validate_case(bad, schema_path=SCHEMA)
     bad = copy.deepcopy(raw)
-    bad["evaluation_contract"]["expected_outcome"] = "no_data"
-    bad["evaluation_contract"]["gold_result"] = None
+    bad["gold_answer"]["outcome"] = "no_data"
+    bad["gold_answer"]["rows"] = []
     with pytest.raises(ValueError, match="incompatible with category"):
         validate_case(bad, schema_path=SCHEMA)
 
@@ -79,9 +102,9 @@ def test_missing_skill_can_expect_base_tool_answer_or_honest_refusal() -> None:
     fallback["category"] = "missing_skill"
     validate_case(fallback, schema_path=SCHEMA)
     refusal = copy.deepcopy(fallback)
-    refusal["evaluation_contract"]["expected_outcome"] = "missing_skill"
-    refusal["evaluation_contract"]["gold_result"] = None
-    refusal["evaluation_contract"]["comparison"]["row_key"] = []
+    refusal["gold_answer"]["outcome"] = "missing_skill"
+    refusal["gold_answer"]["rows"] = []
+    refusal["gold_comparison"]["row_key"] = []
     validate_case(refusal, schema_path=SCHEMA)
 
 
@@ -105,21 +128,21 @@ def test_suite_skips_draft_and_preserves_source_json(tmp_path: Path) -> None:
     cases_dir = tmp_path / "cases"
     cases_dir.mkdir()
     draft_path = cases_dir / "case-fixture.json"
-    ready_path = cases_dir / "case-ready.json"
+    ready_path = cases_dir / "case-9999.json"
     draft = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     draft["status"] = "draft"
     draft["employee_id"] = None
-    draft["evaluation_contract"] = None
+    draft["gold_answer"] = None
     draft_path.write_text(json.dumps(draft), encoding="utf-8")
     ready_path.write_text(json.dumps(ready_case()), encoding="utf-8")
     source_before = {path: path.read_bytes() for path in (draft_path, ready_path)}
     suite = load_suite(cases_dir, schema_path=SCHEMA)
-    assert [case.case_id for case in suite] == ["case-ready"]
+    assert [case.case_id for case in suite] == ["case-9999"]
     output = write_suite_jsonl(suite, tmp_path / "suite.jsonl", schema_path=SCHEMA)
     lines = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
-    assert [item["case_id"] for item in lines] == ["case-ready"]
+    assert [item["case_id"] for item in lines] == ["case-9999"]
     assert {path: path.read_bytes() for path in source_before} == source_before
-    assert load_suite(cases_dir, ["case-fixture"], schema_path=SCHEMA) == []
+    assert load_suite(cases_dir, ["case-0000"], schema_path=SCHEMA) == []
     with pytest.raises(ValueError, match="draft case"):
         load_suite(cases_dir, on_draft="error", schema_path=SCHEMA)
     with pytest.raises(ValueError, match="unknown case_ids"):
