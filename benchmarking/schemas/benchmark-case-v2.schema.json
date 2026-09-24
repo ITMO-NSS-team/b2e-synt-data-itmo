@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://b2e-itmo.local/benchmark-case-v2.schema.json",
+  "title": "BenchmarkCase authorial contract v2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "status",
+    "category",
+    "query",
+    "gold_contract",
+    "source_type",
+    "source_business_process",
+    "employee_id",
+    "employee_role",
+    "snapshot_id",
+    "skill_registry_hash",
+    "expected_skills",
+    "gold_answer",
+    "gold_comparison"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "case_id": {
+      "type": "string",
+      "pattern": "^case-[0-9]{4,}$"
+    },
+    "status": {"enum": ["draft", "verified"]},
+    "category": {
+      "enum": [
+        "answerable",
+        "no_data",
+        "missing_skill",
+        "access_control",
+        "out_of_scope"
+      ]
+    },
+    "query": {"type": "string", "minLength": 1},
+    "gold_contract": {
+      "type": "object",
+      "description": "JSON Schema итогового ответа агента без эталонных значений."
+    },
+    "source_type": {"enum": ["basket", "registry", "authored"]},
+    "source_business_process": {"type": "string", "minLength": 1},
+    "employee_id": {"type": ["integer", "null"]},
+    "employee_role": {"enum": ["self", "manager", "hr"]},
+    "snapshot_id": {"type": ["string", "null"], "minLength": 1},
+    "skill_registry_hash": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "expected_skills": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "gold_answer": {},
+    "gold_comparison": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ordered",
+            "row_key",
+            "allow_extra_rows",
+            "numeric_absolute_tolerance"
+          ],
+          "properties": {
+            "ordered": {"type": "boolean"},
+            "row_key": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1},
+              "uniqueItems": true
+            },
+            "allow_extra_rows": {"type": "boolean"},
+            "numeric_absolute_tolerance": {"type": "number", "minimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["template"],
+          "properties": {
+            "template": {"const": "simple_comparison"},
+            "ordered": {"type": "boolean"},
+            "row_key": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1},
+              "uniqueItems": true
+            },
+            "allow_extra_rows": {"type": "boolean"},
+            "numeric_absolute_tolerance": {"type": "number", "minimum": 0}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -165,16 +165,16 @@ benchmark-live-config: benchmark-data-check up
 	$(COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
 		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
 
-benchmark-check: benchmark-live-config  ## полный preflight всех ready-кейсов, без вызовов агента
+benchmark-check: benchmark-live-config  ## полный preflight всех verified-кейсов, без вызовов агента
 	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) --check-only --eval-prefix check \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
-benchmark-smoke: benchmark-live-config  ## первый ready-кейс × режимы, один повтор
+benchmark-smoke: benchmark-live-config  ## первый verified-кейс × режимы, один повтор
 	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) --limit 1 --repetitions 1 \
 		--eval-prefix smoke \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
-benchmark-run: benchmark-live-config  ## все ready-кейсы × режимы; BENCH_REPETITIONS=N
+benchmark-run: benchmark-live-config  ## все verified-кейсы × режимы; BENCH_REPETITIONS=N
 	$(PY) -m sim.benchmark.cli $(BENCH_ARGS) \
 		--repetitions "$(BENCH_REPETITIONS)" --eval-prefix benchmark \
 		$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
@@ -204,4 +204,4 @@ benchmark-server: benchmark-server-live-config  ## выполнить benchmark 
 
 benchmark-server-smoke: BENCH_LIMIT := 1
 benchmark-server-smoke: BENCH_REPETITIONS := 1
-benchmark-server-smoke: benchmark-server  ## первый ready-кейс внутри сети серверного стенда
+benchmark-server-smoke: benchmark-server  ## первый verified-кейс внутри сети серверного стенда

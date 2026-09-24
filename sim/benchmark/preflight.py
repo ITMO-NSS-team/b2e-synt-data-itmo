@@ -124,7 +124,7 @@ def preflight_case(
         ``ready`` with a fingerprint, or a skip status.
 
     Raises:
-        ValueError: If a ready case cannot run under this mode or snapshot.
+        ValueError: If a verified case cannot run under this mode or snapshot.
     """
     validate_case(case.raw, schema_path=schema_path)
     if case.status == "draft":

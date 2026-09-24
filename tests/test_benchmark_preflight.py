@@ -39,22 +39,14 @@ def common(snapshot_id: str = "heimdall-sandbox@test") -> CommonConditions:
 def ready_case(snapshot_id: str = "heimdall-sandbox@test") -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
-        "case_id": "case-ready",
-        "status": "ready",
-        "employee_id": "123",
+        "case_id": "case-9999",
+        "status": "verified",
+        "employee_id": 123,
         "employee_role": "manager",
         "snapshot_id": snapshot_id,
         "skill_registry_hash": EMPTY_HASH,
-        "evaluation_contract": {
-            "expected_outcome": "answer",
-            "gold_result": [{"grade": 10, "employee_count": 3}],
-            "comparison": {
-                "ordered": False, "row_key": ["grade"],
-                "allow_extra_rows": False, "numeric_absolute_tolerance": 0,
-            },
-        },
     })
-    return BenchmarkCase(Path("/authorial/case-ready.json"), raw)
+    return BenchmarkCase(Path("/authorial/case-9999.json"), raw)
 
 
 class FakeIdentity:
@@ -64,7 +56,7 @@ class FakeIdentity:
         self.hr_employee_ids = hr_employee_ids
 
     def scope_for(self, employee_id: str) -> SimpleNamespace:
-        if employee_id == "missing":
+        if employee_id == 999:
             raise KeyError(employee_id)
         return SimpleNamespace(role=self.role)
 
@@ -82,7 +74,7 @@ def test_preflight_skips_draft_and_generated_mock_without_llm(tmp_path: Path) ->
     standard = make_catalog(tmp_path / "standard")
     modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
     draft_raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-    draft_raw.update({"status": "draft", "employee_id": None, "evaluation_contract": None})
+    draft_raw.update({"status": "draft", "employee_id": None, "gold_answer": None})
     draft = BenchmarkCase(EXAMPLE, draft_raw)
     draft_result = preflight_case(
         draft, modes.existing_skills, snapshot_root=tmp_path / "missing",
@@ -126,15 +118,15 @@ def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:
         "schema_path": SCHEMA,
     }
     bad_gold = ready_case()
-    bad_gold.raw["evaluation_contract"]["gold_result"][0]["employee_count"] = -1
-    with pytest.raises(ValueError, match="evaluation_contract violates"):
+    bad_gold.raw["gold_answer"]["rows"][0]["employee_count"] = -1
+    with pytest.raises(ValueError, match="gold_answer violates"):
         preflight_case(bad_gold, mode, **kwargs)
     bad_role = ready_case()
     bad_role.raw["employee_role"] = "self"
     with pytest.raises(ValueError, match="role mismatch"):
         preflight_case(bad_role, mode, **kwargs)
     missing_employee = ready_case()
-    missing_employee.raw["employee_id"] = "missing"
+    missing_employee.raw["employee_id"] = 999
     with pytest.raises(ValueError, match="employee does not exist"):
         preflight_case(missing_employee, mode, **kwargs)
     with pytest.raises(ValueError, match="agent_config_version must be pinned"):

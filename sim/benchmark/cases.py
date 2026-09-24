@@ -1,4 +1,4 @@
-"""Authorial case JSON to validated, ready-only suites.
+"""Authorial v2 case JSON to validated, verified-only suites.
 
 The published contract is ``DEFAULT_SCHEMA_PATH``. Pass ``schema_path`` to use
 another file; this module checks operational fields without a stand dependency.
@@ -11,14 +11,21 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import unquote, urlsplit
 
 from jsonschema import Draft202012Validator
 
-from .contracts import response_schema, validate_response_contract
+from .contracts import response_schema, validate_gold_contract
 from .path_lib import DEFAULT_SCHEMA_PATH
 _EVALUATION_OUTCOMES = frozenset({
     "answer", "access_control", "no_data", "missing_skill", "out_of_scope",
 })
+_COMPARISON_DEFAULTS = {
+    "ordered": False,
+    "row_key": [],
+    "allow_extra_rows": False,
+    "numeric_absolute_tolerance": 0,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,55 +71,82 @@ def _nonempty(value: Any, field: str) -> str:
     return value
 
 
+def _resolve_comparison(comparison: Any) -> dict[str, Any]:
+    """Expand the v2 ``simple_comparison`` shorthand without mutating input."""
+    if not isinstance(comparison, dict):
+        raise ValueError("gold_comparison must be an object")
+    if "template" not in comparison:
+        return dict(comparison)
+    if comparison["template"] != "simple_comparison":
+        raise ValueError("gold_comparison.template is unknown")
+    overrides = {key: value for key, value in comparison.items() if key != "template"}
+    if set(overrides) - set(_COMPARISON_DEFAULTS):
+        raise ValueError("gold_comparison has unknown fields")
+    return {**_COMPARISON_DEFAULTS, **overrides}
+
+
+def _resolve_schema(value: Any, base: Path, stack: tuple = ()) -> Any:
+    """Inline local JSON Schema references relative to the authorial case."""
+    if isinstance(value, list):
+        return [_resolve_schema(item, base, stack) for item in value]
+    if not isinstance(value, dict):
+        return value
+    resolved_siblings = {
+        key: (item if key in {"const", "enum", "default", "examples"}
+              else _resolve_schema(item, base, stack))
+        for key, item in value.items() if key != "$ref"
+    }
+    if "$ref" not in value:
+        return resolved_siblings
+    ref = urlsplit(value["$ref"])
+    if ref.scheme or ref.netloc or ref.query:
+        raise ValueError("gold_contract supports only local JSON Schema references")
+    path = (base.parent / unquote(ref.path)).resolve() if ref.path else base.resolve()
+    key = (path, ref.fragment)
+    if key in stack:
+        raise ValueError(f"cyclic JSON Schema reference: {value['$ref']}")
+    target = json.loads(path.read_text(encoding="utf-8-sig"))
+    pointer = unquote(ref.fragment)
+    if pointer:
+        if not pointer.startswith("/"):
+            raise ValueError("only JSON Pointer fragments are supported")
+        for token in pointer[1:].split("/"):
+            token = token.replace("~1", "/").replace("~0", "~")
+            target = target[int(token)] if isinstance(target, list) else target[token]
+    resolved = _resolve_schema(target, path, stack + (key,))
+    return {"allOf": [resolved, resolved_siblings]} if resolved_siblings else resolved
+
+
 def _validate_comparison(comparison: Any) -> None:
     fields = {
         "ordered", "row_key", "allow_extra_rows", "numeric_absolute_tolerance",
     }
     if not isinstance(comparison, dict) or set(comparison) != fields:
-        raise ValueError("evaluation_contract.comparison has missing or unknown fields")
+        raise ValueError("gold_comparison has missing or unknown fields")
     for field in ("ordered", "allow_extra_rows"):
         if not isinstance(comparison[field], bool):
-            raise ValueError(f"evaluation_contract.comparison.{field} must be boolean")
+            raise ValueError(f"gold_comparison.{field} must be boolean")
     keys = comparison["row_key"]
     if not isinstance(keys, list) or any(not isinstance(k, str) or not k.strip() for k in keys):
-        raise ValueError("evaluation_contract.comparison.row_key must be an array of strings")
+        raise ValueError("gold_comparison.row_key must be an array of strings")
     if len(keys) != len(set(keys)):
-        raise ValueError("evaluation_contract.comparison.row_key contains duplicates")
+        raise ValueError("gold_comparison.row_key contains duplicates")
     tolerance = comparison["numeric_absolute_tolerance"]
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or tolerance < 0:
         raise ValueError(
-            "evaluation_contract.comparison.numeric_absolute_tolerance must be >= 0"
+            "gold_comparison.numeric_absolute_tolerance must be >= 0"
         )
-
-
-def _validate_evaluation_contract(contract: Any) -> None:
-    if not isinstance(contract, dict):
-        raise ValueError("evaluation_contract must be an object")
-    if set(contract) != {"expected_outcome", "gold_result", "comparison"}:
-        raise ValueError(
-            "evaluation_contract must contain expected_outcome, gold_result and comparison"
-        )
-    if contract["expected_outcome"] not in _EVALUATION_OUTCOMES:
-        raise ValueError("evaluation_contract.expected_outcome is unknown")
-    _validate_comparison(contract["comparison"])
-    if contract["expected_outcome"] == "answer":
-        if contract["gold_result"] is None:
-            raise ValueError("evaluation_contract.gold_result is required for outcome=answer")
-        if contract["comparison"]["row_key"] and not isinstance(contract["gold_result"], list):
-            raise ValueError("comparison.row_key is only valid for array gold_result")
-    elif contract["gold_result"] is not None:
-        raise ValueError("evaluation_contract.gold_result must be null for non-answer outcomes")
 
 
 def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
-    """Validate the current v3.0 authorial shape.
+    """Validate the v2.0 authorial shape used by the benchmark repository.
 
-    Draft cases may omit actor and gold fields. Ready cases must pass
+    Draft cases may retain incomplete gold. Verified cases must pass
     ``require_ready`` as well.
 
     Args:
         raw: Parsed JSON object for one case.
-        schema_path: Optional override for the published v3 schema.
+        schema_path: Optional override for the published v2 schema.
 
     Raises:
         ValueError: If required fields, enums, or nested contracts are invalid.
@@ -128,28 +162,36 @@ def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
         raise ValueError(f"schema_version must be {schema.version!r}")
     if not schema.case_id.fullmatch(_nonempty(raw["case_id"], "case_id")):
         raise ValueError("case_id contains unsafe characters")
-    if not isinstance(raw["status"], str) or raw["status"] not in {"draft", "ready"}:
-        raise ValueError("status must be draft or ready")
+    if not isinstance(raw["status"], str) or raw["status"] not in {"draft", "verified"}:
+        raise ValueError("status must be draft or verified")
     if not isinstance(raw["category"], str) or raw["category"] not in schema.categories:
         raise ValueError(f"unknown category: {raw['category']!r}")
-    for field in ("query", "source_type", "source_business_process", "snapshot_id"):
+    for field in ("query", "source_type", "source_business_process"):
         _nonempty(raw[field], field)
+    if raw["snapshot_id"] is not None:
+        _nonempty(raw["snapshot_id"], "snapshot_id")
     if not isinstance(raw["employee_role"], str) or raw["employee_role"] not in {"self", "manager", "hr"}:
         raise ValueError("employee_role must be self, manager or hr")
-    if raw["employee_id"] is not None:
-        _nonempty(raw["employee_id"], "employee_id")
-    if not schema.sha256.fullmatch(_nonempty(raw["skill_registry_hash"], "skill_registry_hash")):
-        raise ValueError("skill_registry_hash must be sha256:<64 lowercase hex digits>")
+    if raw["employee_id"] is not None and (
+        isinstance(raw["employee_id"], bool) or not isinstance(raw["employee_id"], int)
+    ):
+        raise ValueError("employee_id must be an integer or null")
+    if raw["skill_registry_hash"] is not None and not schema.sha256.fullmatch(
+        _nonempty(raw["skill_registry_hash"], "skill_registry_hash")
+    ):
+        raise ValueError("skill_registry_hash must be sha256:<64 lowercase hex digits> or null")
     skills = raw["expected_skills"]
     if not isinstance(skills, list) or any(not isinstance(s, str) or not s.strip() for s in skills):
         raise ValueError("expected_skills must be an array of non-empty strings")
     if len(set(skills)) != len(skills):
         raise ValueError("expected_skills contains duplicates")
-    if raw["response_contract"] is not None:
-        validate_response_contract(raw["response_contract"])
-    if raw["evaluation_contract"] is not None:
-        _validate_evaluation_contract(raw["evaluation_contract"])
-    if raw["status"] == "ready":
+    if not isinstance(raw["gold_contract"], dict):
+        raise ValueError("gold_contract must be an object")
+    if raw["gold_contract"]:
+        validate_gold_contract(raw["gold_contract"])
+    comparison = _resolve_comparison(raw["gold_comparison"])
+    _validate_comparison(comparison)
+    if raw["status"] == "verified":
         require_ready(raw)
 
 
@@ -160,20 +202,24 @@ def require_ready(raw: dict[str, Any]) -> None:
         raw: Already structurally validated case object.
 
     Raises:
-        ValueError: If status is draft, required ready fields are missing, or
+        ValueError: If status is draft, required verified fields are missing, or
             gold violates the public response contract.
     """
-    if raw["status"] != "ready":
+    if raw["status"] != "verified":
         raise ValueError(f"{raw['case_id']}: draft case is not runnable")
     if (
         raw["employee_id"] is None
-        or raw["response_contract"] is None
-        or raw["evaluation_contract"] is None
+        or raw["snapshot_id"] is None
+        or raw["skill_registry_hash"] is None
+        or not raw["gold_contract"]
+        or not isinstance(raw["gold_answer"], dict)
     ):
         raise ValueError(
-            f"{raw['case_id']}: ready requires employee_id, response_contract and evaluation_contract"
+            f"{raw['case_id']}: verified requires actor, snapshot, contract and gold_answer"
         )
-    expected = raw["evaluation_contract"]["expected_outcome"]
+    expected = raw["gold_answer"].get("outcome")
+    if expected not in _EVALUATION_OUTCOMES:
+        raise ValueError(f"{raw['case_id']}: gold_answer.outcome is unknown")
     fixed = {
         "answerable": {"answer"},
         "access_control": {"access_control"},
@@ -184,23 +230,22 @@ def require_ready(raw: dict[str, Any]) -> None:
     }
     if expected not in fixed[raw["category"]]:
         raise ValueError(
-            f"{raw['case_id']}: expected_outcome {expected!r} is incompatible "
+            f"{raw['case_id']}: gold_answer outcome {expected!r} is incompatible "
             f"with category {raw['category']!r}"
         )
-    expected_response = {
-        "result": raw["evaluation_contract"]["gold_result"],
-        "message": None,
-    }
     errors = list(
-        Draft202012Validator(response_schema(raw["response_contract"])).iter_errors(
-            expected_response
+        Draft202012Validator(response_schema(raw["gold_contract"])).iter_errors(
+            raw["gold_answer"]
         )
     )
     if errors:
         raise ValueError(
-            f"{raw['case_id']}: evaluation_contract violates response_contract: "
+            f"{raw['case_id']}: gold_answer violates gold_contract: "
             f"{errors[0].message}"
         )
+    comparison = _resolve_comparison(raw["gold_comparison"])
+    if comparison["row_key"] and not isinstance(raw["gold_answer"].get("rows"), list):
+        raise ValueError("gold_comparison.row_key is only valid for array rows")
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,7 +267,7 @@ class BenchmarkCase:
 
     @property
     def status(self) -> str:
-        """Authorial status: ``draft`` or ``ready``."""
+        """Authorial status: ``draft`` or ``verified``."""
         return self.raw["status"]
 
 
@@ -231,16 +276,20 @@ def load_case(path: str | Path, *, schema_path: str | Path | None = None) -> Ben
 
     Args:
         path: Path to a ``.json`` case file.
-        schema_path: Optional override for the published v3 schema.
+        schema_path: Optional override for the published v2 schema.
 
     Returns:
         Validated case wrapper. Draft files are allowed.
 
     Raises:
-        ValueError: If the file is not a valid v3 case.
+        ValueError: If the file is not a valid v2 case.
     """
     source = Path(path).resolve()
     raw = json.loads(source.read_text(encoding="utf-8"))
+    if isinstance(raw, dict) and isinstance(raw.get("gold_contract"), dict):
+        raw["gold_contract"] = _resolve_schema(raw["gold_contract"], source)
+    if isinstance(raw, dict) and isinstance(raw.get("gold_comparison"), dict):
+        raw["gold_comparison"] = _resolve_comparison(raw["gold_comparison"])
     validate_case(raw, schema_path=schema_path)
     return BenchmarkCase(source_path=source, raw=raw)
 
@@ -259,10 +308,10 @@ def load_suite(
             the runner's ``draft``/``ready`` lifecycle are ignored.
         case_ids: If set, only these ids are returned; unknown ids fail.
         on_draft: ``skip`` drops drafts, ``error`` refuses them.
-        schema_path: Optional override for the published v3 schema.
+        schema_path: Optional override for the published v2 schema.
 
     Returns:
-        Ready cases sorted by ``case_id``. Source files are never rewritten.
+        Verified cases sorted by ``case_id``. Source files are never rewritten.
 
     Raises:
         ValueError: If the directory, ids, drafts or case bodies are invalid.
@@ -279,7 +328,7 @@ def load_suite(
         if (
             not isinstance(raw, dict)
             or "case_id" not in raw
-            or raw.get("status") not in {"draft", "ready"}
+            or raw.get("status") not in {"draft", "verified"}
         ):
             continue
         case = load_case(path, schema_path=schema_path)

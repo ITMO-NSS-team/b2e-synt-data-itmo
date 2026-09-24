@@ -14,69 +14,51 @@ from jsonschema import Draft202012Validator
 
 from .path_lib import RESPONSE_PROMPT_PATH
 
-RESPONSE_PROTOCOL_VERSION = "1.0"
 PROMPT_RENDERER_VERSION = "benchmark-response-prompt@1"
 _QUERY_PLACEHOLDER = "{{query}}"
 _SCHEMA_PLACEHOLDER = "{{schema}}"
 
 
-def validate_response_contract(contract: Any) -> None:
-    """Validate the compact public contract stored in a BenchmarkCase.
+def validate_gold_contract(contract: Any) -> None:
+    """Validate the public ``gold_contract`` stored in a v2 BenchmarkCase.
 
     Args:
-        contract: Object with ``protocol_version`` and ``result_schema``.
+        contract: Complete JSON Schema sent to the agent.
 
     Raises:
-        ValueError: If the contract shape or JSON Schema is invalid, or if
-            ``result_schema`` accepts ``null`` (reserved for non-answer outcomes).
+        ValueError: If the contract is not a valid JSON Schema requiring the
+            v2 ``outcome`` and ``rows`` fields.
     """
     if not isinstance(contract, dict):
-        raise ValueError("response_contract must be an object")
-    if set(contract) != {"protocol_version", "result_schema"}:
-        raise ValueError(
-            "response_contract must contain only protocol_version and result_schema"
-        )
-    if contract["protocol_version"] != RESPONSE_PROTOCOL_VERSION:
-        raise ValueError(
-            f"response_contract.protocol_version must be {RESPONSE_PROTOCOL_VERSION!r}"
-        )
-    result_schema = contract["result_schema"]
-    if not isinstance(result_schema, dict) or not result_schema:
-        raise ValueError("response_contract.result_schema must be a non-empty JSON Schema")
+        raise ValueError("gold_contract must be an object")
+    if not contract:
+        raise ValueError("gold_contract must be a non-empty JSON Schema")
     try:
-        Draft202012Validator.check_schema(result_schema)
+        Draft202012Validator.check_schema(contract)
     except Exception as exc:
-        raise ValueError(f"response_contract.result_schema is invalid: {exc}") from exc
-    if Draft202012Validator(result_schema).is_valid(None):
-        raise ValueError(
-            "response_contract.result_schema must not accept null; null is reserved for non-answer outcomes"
-        )
+        raise ValueError(f"gold_contract is invalid: {exc}") from exc
+    required = set(contract.get("required", ()))
+    for component in contract.get("allOf", ()):
+        if isinstance(component, dict):
+            required.update(component.get("required", ()))
+    if not {"outcome", "rows"} <= required:
+        raise ValueError("gold_contract must require outcome and rows")
 
 
 def response_schema(contract: dict[str, Any]) -> dict[str, Any]:
-    """Expand a compact contract into the complete agent response schema.
+    """Return the complete v2 agent response schema.
 
     Args:
-        contract: Validated public response contract.
+        contract: Validated public ``gold_contract``.
 
     Returns:
-        Draft 2020-12 schema requiring ``result`` and ``message``.
+        Draft 2020-12 schema requiring ``outcome`` and ``rows``.
     """
-    validate_response_contract(contract)
-    result_schema = contract["result_schema"]
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["result", "message"],
-        "properties": {
-            "result": {"anyOf": [result_schema, {"type": "null"}]},
-            "message": {"type": ["string", "null"]},
-        },
-    }
+    validate_gold_contract(contract)
+    return contract
 
 
-def response_contract_hash(contract: dict[str, Any]) -> str:
+def gold_contract_hash(contract: dict[str, Any]) -> str:
     """Content hash recorded with every rendered request.
 
     Args:

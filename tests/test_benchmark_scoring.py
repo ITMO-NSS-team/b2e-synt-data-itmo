@@ -16,21 +16,17 @@ from tests.fixtures.constants import EXAMPLE
 def ready_case() -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
-        "case_id": "case-ready", "status": "ready", "employee_id": "123",
+        "case_id": "case-9999", "status": "verified", "employee_id": 123,
         "employee_role": "manager", "snapshot_id": "heimdall-sandbox@test",
-        "evaluation_contract": {
-            "expected_outcome": "answer",
-            "gold_result": [
+        "gold_answer": {
+            "outcome": "answer",
+            "rows": [
                 {"grade": 10, "employee_count": 3},
                 {"grade": 11, "employee_count": 2},
             ],
-            "comparison": {
-                "ordered": False, "row_key": ["grade"],
-                "allow_extra_rows": False, "numeric_absolute_tolerance": 0,
-            },
         },
     })
-    return BenchmarkCase(Path("/authorial/case-ready.json"), raw)
+    return BenchmarkCase(Path("/authorial/case-9999.json"), raw)
 
 
 def mode(name: str = "existing_skills") -> ModeConfig:
@@ -49,19 +45,16 @@ def mode(name: str = "existing_skills") -> ModeConfig:
 def test_normalizer_extracts_fenced_json_and_rejects_prose() -> None:
     case = ready_case()
     fence = "\x60\x60\x60"
-    expected = {
-        "result": case.raw["evaluation_contract"]["gold_result"],
-        "message": None,
-    }
+    expected = case.raw["gold_answer"]
     answer = (
         f"Результат:\n{fence}json\n"
         + json.dumps(expected, ensure_ascii=False)
         + f"\n{fence}"
     )
-    normalized = normalize_answer(answer, case.raw["response_contract"])
+    normalized = normalize_answer(answer, case.raw["gold_contract"])
     assert normalized.value == expected
     assert normalized.error is None
-    missing = normalize_answer("Получилось пять сотрудников.", case.raw["response_contract"])
+    missing = normalize_answer("Получилось пять сотрудников.", case.raw["gold_contract"])
     assert missing.value is None
     assert "no JSON object" in missing.error
 
@@ -69,13 +62,13 @@ def test_normalizer_extracts_fenced_json_and_rejects_prose() -> None:
 def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     case = ready_case()
     case.raw["expected_skills"] = ["generated_headcount"]
-    case.raw["evaluation_contract"]["comparison"]["numeric_absolute_tolerance"] = 1
+    case.raw["gold_comparison"]["numeric_absolute_tolerance"] = 1
     actual = NormalizedAnswer({
-        "result": [
+        "outcome": "answer",
+        "rows": [
             {"grade": 11, "employee_count": 3},
             {"grade": 10, "employee_count": 2},
         ],
-        "message": None,
     }, None)
     observations = {
         "loaded_skills": ["generated_headcount"], "heimdall_calls": 3,
@@ -91,10 +84,7 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
 def test_generated_routing_requires_skill_expected_by_case() -> None:
     case = ready_case()
     case.raw["expected_skills"] = ["generated_headcount"]
-    actual = NormalizedAnswer({
-        "result": case.raw["evaluation_contract"]["gold_result"],
-        "message": None,
-    }, None)
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
     observations = {
         "loaded_skills": ["another_generated_skill"],
         "heimdall_calls": 1,
@@ -115,10 +105,7 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
 
 def test_generated_routing_is_not_applicable_without_expected_generated_skill() -> None:
     case = ready_case()
-    actual = NormalizedAnswer({
-        "result": case.raw["evaluation_contract"]["gold_result"],
-        "message": None,
-    }, None)
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
     observations = {
         "loaded_skills": ["generated_headcount"],
         "heimdall_calls": 1,
@@ -140,14 +127,7 @@ def test_generated_routing_is_not_applicable_without_expected_generated_skill() 
 def test_refusal_accuracy_is_outcome_based() -> None:
     case = ready_case()
     case.raw["category"] = "access_control"
-    case.raw["evaluation_contract"] = {
-        "expected_outcome": "access_control",
-        "gold_result": None,
-        "comparison": {
-            "ordered": False, "row_key": [], "allow_extra_rows": False,
-            "numeric_absolute_tolerance": 0,
-        },
-    }
+    case.raw["gold_answer"] = {"outcome": "access_control", "rows": []}
     observations = {
         "loaded_skills": [], "heimdall_calls": 1, "mcp_query_calls": 1,
         "failed_tool_calls": 1, "total_tokens": 1, "latency_ms": 1,
@@ -158,7 +138,7 @@ def test_refusal_accuracy_is_outcome_based() -> None:
     metrics = calculate_metrics(
         case, mode(),
         NormalizedAnswer(
-            {"result": None, "message": "Нет доступа"},
+            {"outcome": "access_control", "rows": [], "comment": "Нет доступа"},
             None,
         ),
         observations,
@@ -170,19 +150,18 @@ def test_refusal_accuracy_is_outcome_based() -> None:
 
 def test_exact_match_is_not_limited_to_tabular_results() -> None:
     case = ready_case()
-    case.raw["response_contract"]["result_schema"] = {
+    case.raw["gold_contract"]["properties"]["rows"] = {
         "type": "object",
         "additionalProperties": False,
         "required": ["employee_count"],
         "properties": {"employee_count": {"type": "number"}},
     }
-    case.raw["evaluation_contract"] = {
-        "expected_outcome": "answer",
-        "gold_result": {"employee_count": 10},
-        "comparison": {
-            "ordered": False, "row_key": [], "allow_extra_rows": False,
-            "numeric_absolute_tolerance": 0.5,
-        },
+    case.raw["gold_answer"] = {
+        "outcome": "answer", "rows": {"employee_count": 10},
+    }
+    case.raw["gold_comparison"] = {
+        "ordered": False, "row_key": [], "allow_extra_rows": False,
+        "numeric_absolute_tolerance": 0.5,
     }
     observations = {
         "loaded_skills": [], "heimdall_calls": 1, "mcp_query_calls": 1,
@@ -192,34 +171,23 @@ def test_exact_match_is_not_limited_to_tabular_results() -> None:
     metrics = calculate_metrics(
         case, mode(),
         NormalizedAnswer({
-            "result": {"employee_count": 10.4},
-            "message": None,
+            "outcome": "answer", "rows": {"employee_count": 10.4},
         }, None),
         observations,
     )
     assert metrics["exact_match"] == 1
 
 
-def test_no_data_outcome_is_inferred_from_trace_not_agent_label() -> None:
+def test_no_data_outcome_uses_the_v2_agent_label() -> None:
     case = ready_case()
     case.raw["category"] = "no_data"
-    case.raw["evaluation_contract"] = {
-        "expected_outcome": "no_data",
-        "gold_result": None,
-        "comparison": {
-            "ordered": False, "row_key": [], "allow_extra_rows": False,
-            "numeric_absolute_tolerance": 0,
-        },
-    }
-    actual = NormalizedAnswer({"result": None, "message": "Данные не найдены"}, None)
+    case.raw["gold_answer"] = {"outcome": "no_data", "rows": []}
+    actual = NormalizedAnswer({"outcome": "no_data", "rows": []}, None)
     observations = {
         "loaded_skills": [], "heimdall_calls": 1, "mcp_query_calls": 1,
         "failed_tool_calls": 0, "total_tokens": 1, "latency_ms": 1,
         "agent_duration_ms": 1, "tool_time_ms": 1, "http_statuses": [200],
         "error_codes": [], "mcp_query_rows": [],
     }
-    without_evidence = calculate_metrics(case, mode(), actual, observations)
-    assert without_evidence["outcome_accuracy"] == 0
-    observations["mcp_query_rows"] = [0]
-    with_evidence = calculate_metrics(case, mode(), actual, observations)
-    assert with_evidence["outcome_accuracy"] == 1
+    metrics = calculate_metrics(case, mode(), actual, observations)
+    assert metrics["outcome_accuracy"] == 1
