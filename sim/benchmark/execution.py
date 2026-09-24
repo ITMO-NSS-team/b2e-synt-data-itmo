@@ -323,6 +323,7 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
     mcp_query_rows: list[int] = []
     heimdall_response_bytes: list[int] = []
     root_attrs: dict[str, Any] = {}
+    denial_count = 0
     for span in spans:
         attrs = span.get("attributes") or {}
         name = _tool_name(span, attrs)
@@ -334,14 +335,22 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             or _attr(attrs, "tool_parameters")
         )
         output = _decode(_attr(attrs, "output.value"))
+        denied = _permission_denied(output)
         status = _attr(attrs, "b2e.http.status")
         if isinstance(status, (int, float)):
             http_statuses.append(int(status))
         error_code = _attr(attrs, "b2e.heimdall.error_code")
         if error_code:
             error_codes.append(str(error_code))
-        if name == "get_skill" and isinstance(arguments, dict) and arguments.get("name"):
+        if (
+            name == "get_skill"
+            and isinstance(arguments, dict)
+            and arguments.get("name")
+            and not denied
+        ):
             loaded.add(str(arguments["name"]))
+        if denied and _is_tool_span(span, attrs):
+            denial_count += 1
         if name == "find_skills":
             found.update(_skill_names(output))
         if name == "mcp_query":
@@ -368,6 +377,7 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
     )
     agent_duration_ms = _number(_attr(root_attrs, "b2e.turn.duration_ms"))
     tool_time_ms = _number(_attr(root_attrs, "b2e.turn.tool_time_ms"))
+    recorded_denials = _attr(root_attrs, "b2e.permission_denials")
     return {
         "found_skills": sorted(found),
         "loaded_skills": sorted(loaded),
@@ -391,7 +401,9 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
         "iterations": _int(
             stats.get("iterations"), _attr(root_attrs, "b2e.turn.iterations")
         ),
-        "permission_denials": _int(_attr(root_attrs, "b2e.permission_denials")),
+        "permission_denials": (
+            denial_count if recorded_denials is None else _int(recorded_denials)
+        ),
         "http_error_count": sum(status >= 400 for status in http_statuses),
         "prompt_tokens": prompt_tokens,
         "uncached_prompt_tokens": _int(
@@ -466,6 +478,11 @@ def _looks_like_heimdall_tool(span: dict[str, Any], attrs: dict[str, Any]) -> bo
     return "heimdall" in str(
         _attr(attrs, "tool.name") or span.get("name") or ""
     ).lower()
+
+
+def _permission_denied(output: Any) -> bool:
+    """Claude Code don't-ask refusals are plain text on the tool span."""
+    return isinstance(output, str) and "has been denied" in output.lower()
 
 
 def _failed_span(span: dict[str, Any], attrs: dict[str, Any]) -> bool:

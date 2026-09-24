@@ -137,6 +137,35 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     assert observed["tool_time_ratio"] == 0.3
 
 
+def test_trace_observations_without_turn_span_count_denials_only() -> None:
+    denied = (
+        "Permission to use mcp__heimdall__get_skill has been denied "
+        "because Claude Code is running in don't ask mode."
+    )
+    trace = {"spans": [
+        {
+            "name": "tool.mcp__heimdall__get_skill",
+            "attributes": {
+                "tool.name": "mcp__heimdall__get_skill",
+                "input.value": json.dumps({"name": "employee_tenure_median"}),
+                "output.value": denied,
+            },
+        },
+        {
+            "name": "tool.mcp__heimdall__find_skills",
+            "attributes": {
+                "tool.name": "mcp__heimdall__find_skills",
+                "output.value": denied.replace("get_skill", "find_skills"),
+            },
+        },
+    ]}
+    observed = trace_observations(AgentTurn("", trace=trace))
+    assert observed["loaded_skills"] == []
+    assert observed["permission_denials"] == 2
+    assert observed["agent_duration_ms"] is None
+    assert observed["tool_time_ms"] is None
+
+
 def test_fatal_turn_error_ignores_successful_harness_denials() -> None:
     answer = '{"result": [{"grade": 7, "employee_count": 1}], "message": null}'
     assert fatal_turn_error("['denied:Bash']", answer=answer) is None
