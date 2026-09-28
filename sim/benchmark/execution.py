@@ -233,7 +233,7 @@ class PinnedConfigActivator:
 
 
 class StandSessionExecutor:
-    """Adapter over the stand client already used by sim.skill_eval.
+    """Adapter over the benchmark stand client.
 
     Import is lazy: defining and unit-testing the benchmark does not require
     optional HTTP dependencies or a running stand.
@@ -243,9 +243,9 @@ class StandSessionExecutor:
         """Create the HTTP adapter lazily.
 
         Args:
-            **stand_options: Keyword arguments for ``sim.skill_eval.stand.StandClient``.
+            **stand_options: Keyword arguments for ``sim.benchmark.stand.StandClient``.
         """
-        from sim.skill_eval.stand import StandClient
+        from .stand import StandClient
         self._stand = StandClient(**stand_options)
 
     def execute(self, request: AgentRequest) -> AgentTurn:
@@ -257,7 +257,7 @@ class StandSessionExecutor:
         Returns:
             Agent turn including trace when the stand can fetch it.
         """
-        from sim.skill_eval.types import EvalCase, SessionSpec
+        from .types import EvalCase, SessionSpec
 
         case = EvalCase(
             case_id=request.metadata["case_id"],

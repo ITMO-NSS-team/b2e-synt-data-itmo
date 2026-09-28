@@ -362,16 +362,20 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Build the host-side benchmark CLI.
+    """Build the benchmark-runner CLI.
 
     Returns:
         Parser for ``python -m sim.benchmark.cli``.
     """
     result = argparse.ArgumentParser(
-        description="Run ready benchmark cases against the local Compose stand."
+        description="Run verified benchmark cases inside the stand network."
     )
     result.add_argument("--cases", required=True, help="Directory, JSON case, or JSONL suite")
-    result.add_argument("--data", default="data-small", help="Host path to the mounted data snapshot")
+    result.add_argument(
+        "--data",
+        default="/data/snapshot",
+        help="Path to the data snapshot mounted from DATA_DIR",
+    )
     result.add_argument("--catalog", default="heimdall-skills")
     result.add_argument("--catalog-snapshots", default="var/benchmark-catalog-snapshots")
     result.add_argument("--model-catalog", default="catalog/snapshot.json")

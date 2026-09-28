@@ -2,7 +2,7 @@
 
 This module is executed inside ``admin-ui``: that container owns the writable
 registry and can reach the emulator on the internal network.  The resulting
-JSON is consumed by the host-side benchmark driver; secrets are never included.
+JSON is consumed by the benchmark runner; secrets are never included.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import os
 from typing import Any, Callable
 
 from sim.registry import Registry
-from sim.skill_eval.pin import pin
+from .pin import pin
 from sim.skills import SkillStore
 
 from .env import load_env, require_env
@@ -27,7 +27,7 @@ def pin_live_configs(
     Args:
         registry: Writable agent/prompt/skill registry.
         model_id: If set, rewrite ``model_id`` on each pinned arm.
-        base_pinner: Creates general/existing configs; defaults to ``skill_eval.pin``.
+        base_pinner: Creates general/existing configs; defaults to ``benchmark.pin``.
 
     Returns:
         Mapping ``general_knowledge`` / ``existing_skills`` to pinned refs.

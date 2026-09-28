@@ -11,7 +11,7 @@ from sim.benchmark.env import load_env, require_env
 from sim.benchmark.live_config import capture_live_config, pin_live_configs
 from sim.benchmark.modes import GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS
 from sim.registry import Registry
-from sim.skill_eval.pin import pin
+from sim.benchmark.pin import pin
 
 
 def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None:

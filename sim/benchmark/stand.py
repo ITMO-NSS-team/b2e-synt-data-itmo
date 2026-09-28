@@ -8,8 +8,8 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from sim.skill_eval.scoring.trace import retrieved_skills, root_span_id
-from sim.skill_eval.types import EvalCase, SessionSpec, TurnResult
+from .trace import retrieved_skills, root_span_id
+from .types import EvalCase, SessionSpec, TurnResult
 
 
 def dotenv_value(path: Path, key: str) -> str:

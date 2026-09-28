@@ -14,11 +14,11 @@ def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
     general = dict(on)
     general["tool_subset"] = []
     on_version = registry.commit(
-        ON_REF, "agent", on, actor="skill_eval",
+        ON_REF, "agent", on, actor="benchmark",
         note="benchmark: skills enabled",
     )
     general_version = registry.commit(
-        GENERAL_REF, "agent", general, actor="skill_eval",
+        GENERAL_REF, "agent", general, actor="benchmark",
         note="benchmark: general knowledge; no Heimdall tools",
     )
     return {
