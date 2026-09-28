@@ -119,10 +119,21 @@
 | Режим | Инструменты | Каталог навыков | Статус |
 | --- | --- | --- | --- |
 | `general_knowledge` | нет | отсутствует | реализован |
+| `skills_disabled` | `list_models`, `describe_model`, `mcp_query` | отсутствует | реализован |
 | `existing_skills` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | уже существующий каталог навыков информационного сервиса | реализован |
 | `generated_skills` | инструменты режима `existing_skills` | стандартный каталог плюс generated overlay | описан; CLI пока создаёт mock-конфигурацию и отклоняет её выбор |
 
 `general_knowledge` служит отрицательным baseline: агент не получает инструменты стенда, включая `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills` и `get_skill`. Он не видит перечень витрин, не читает данные, не узнаёт поля и метрики и не получает приёмы и рецепты. Режим проверяет, решается ли задача из общих знаний модели без информации со стенда.
+
+`skills_disabled` отделяет доступ к данным от доступа к навыкам. Агент может
+найти витрину через `list_models`, узнать её колонки и метрики через
+`describe_model` и выполнить запрос через `mcp_query`. Ему недоступны
+`find_skills`, `get_skill`, `get_overview` и `get_docs`. Последний также считается
+skill-инструментом: он возвращает процедурные приёмы (`aggregate`, `filters`,
+`compare_people` и другие), а не бизнес-данные. Каталог навыков к режиму не
+подключается, а разрешение на запуск одобренных исполняемых навыков снимается.
+Служебный `ToolSearch` остаётся только загрузчиком схем разрешённых data-tools:
+MCP-мост публикует ему ровно три инструмента режима и не раскрывает остальные.
 
 Для сравнимости режимов фиксируются одинаковые:
 
@@ -200,7 +211,7 @@ make benchmarking-check CASES=b2e-skill-benchmark/gold_dataset
 
 ### Smoke-прогон
 
-Запускает первый `verified`-кейс, оба реализованных режима и один повтор:
+Запускает первый `verified`-кейс, три реализованных режима и один повтор:
 
 ```bash
 make benchmarking-smoke CASES=b2e-skill-benchmark/gold_dataset
@@ -222,7 +233,7 @@ make benchmarking \
 | --- | --- | --- |
 | `DATA_DIR` | значение из `deploy/.env`, иначе `../data` | единственный источник пути к снимку для стенда и benchmark |
 | `CASES` | значение `CASES` из `deploy/.env` | источник кейсов |
-| `BENCH_MODES` | `general_knowledge,existing_skills` | режимы запуска |
+| `BENCH_MODES` | `general_knowledge,skills_disabled,existing_skills` | режимы запуска |
 | `BENCH_REPETITIONS` | `1` | число повторов полного прогона |
 | `BENCH_RESULTS` | `benchmarking/results` | каталог результатов |
 | `BENCH_EVAL_ID` | генерируется автоматически | идентификатор запуска |
@@ -259,7 +270,8 @@ make benchmarking \
 
 `summary.json` содержит средние значения по режимам и парные сравнения:
 
-- `existing_skills` относительно `general_knowledge`;
+- `skills_disabled` относительно `general_knowledge`;
+- `existing_skills` относительно `skills_disabled` и `general_knowledge`;
 - `generated_skills` относительно `general_knowledge`, когда режим будет подключён;
 - `generated_skills` относительно `existing_skills`, когда режим будет подключён.
 
@@ -324,14 +336,14 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 
 - `BENCH_LIMIT=5` — выполнить только первые пять verified-кейсов;
 - `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — параметры запуска и результатов;
-- `BENCH_MODES` — по умолчанию `general_knowledge,existing_skills`;
+- `BENCH_MODES` — по умолчанию `general_knowledge,skills_disabled,existing_skills`;
 - `BENCH_MODEL` — модель для pinned benchmark-конфигураций без изменения provider или harness.
 
 Если стенд находится на другой машине, сначала нужно войти на неё обычным способом, а затем вызвать одну из трёх команд в серверном checkout.
 
 ## Текущие ограничения
 
-- CLI запускает `general_knowledge` и `existing_skills`; `generated_skills` запускается после подключения generated overlay.
+- CLI запускает `general_knowledge`, `skills_disabled` и `existing_skills`; `generated_skills` запускается после подключения generated overlay.
 - `generated_skills` требует отдельного механизма подключения combined-каталога.
 - LLM-as-judge не реализован; поле `llm_judge` в score остаётся незаполненным.
 - Порядок режимов детерминированный и пока не перемешивается.

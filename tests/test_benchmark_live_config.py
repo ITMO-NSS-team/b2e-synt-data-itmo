@@ -9,12 +9,12 @@ import pytest
 
 from sim.benchmark.env import load_env, require_env
 from sim.benchmark.live_config import capture_live_config, pin_live_configs
-from sim.benchmark.modes import GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS
+from sim.benchmark.modes import DATA_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS
 from sim.registry import Registry
 from sim.benchmark.pin import pin
 
 
-def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None:
+def test_capture_pins_configs_and_records_actual_condition(tmp_path) -> None:
     registry = Registry(tmp_path / "registry.db")
     registry.commit(
         "system_prompt", "prompt", {"template": "test"}, actor="test",
@@ -30,8 +30,12 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
         general_body = dict(base)
         general_body["tool_subset"] = list(GENERAL_KNOWLEDGE_TOOLS)
         general = target.commit("general", "agent", general_body, actor="test")
+        disabled_body = dict(base)
+        disabled_body["tool_subset"] = list(DATA_TOOLS)
+        disabled = target.commit("disabled", "agent", disabled_body, actor="test")
         return {
             "existing_skills": enabled.ref,
+            "skills_disabled": disabled.ref,
             "general_knowledge": general.ref,
         }
 
@@ -43,8 +47,10 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
         "ignored_operator_field": "not persisted",
     }, pinner=pinner)
     disabled = payload["refs"]["general_knowledge"]
+    data_only = payload["refs"]["skills_disabled"]
     enabled = payload["refs"]["existing_skills"]
     assert tuple(payload["configs"][disabled]["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
+    assert tuple(payload["configs"][data_only]["tool_subset"]) == DATA_TOOLS
     assert tuple(payload["configs"][enabled]["tool_subset"]) == SKILL_TOOLS
     assert payload["prompt_versions"][disabled].startswith("system_prompt@")
     assert payload["skill_registry_hash"].startswith("sha256:")
@@ -71,8 +77,12 @@ def test_model_override_is_pinned_without_changing_source_config(tmp_path) -> No
         general_body = dict(raw)
         general_body["tool_subset"] = list(GENERAL_KNOWLEDGE_TOOLS)
         general = target.commit("general", "agent", general_body, actor="test")
+        disabled_body = dict(raw)
+        disabled_body["tool_subset"] = list(DATA_TOOLS)
+        disabled = target.commit("disabled", "agent", disabled_body, actor="test")
         return {
             "existing_skills": on.ref,
+            "skills_disabled": disabled.ref,
             "general_knowledge": general.ref,
         }
 
@@ -86,7 +96,7 @@ def test_model_override_is_pinned_without_changing_source_config(tmp_path) -> No
     registry.close()
 
 
-def test_real_pinner_makes_general_knowledge_tool_subset_empty(
+def test_real_pinner_separates_general_data_only_and_skill_tools(
     tmp_path, monkeypatch,
 ) -> None:
     monkeypatch.setitem(
@@ -104,8 +114,10 @@ def test_real_pinner_makes_general_knowledge_tool_subset_empty(
     refs = pin(registry)
 
     general = registry.load(refs["general_knowledge"])[1]
+    disabled = registry.load(refs["skills_disabled"])[1]
     existing = registry.load(refs["existing_skills"])[1]
     assert tuple(general["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
+    assert tuple(disabled["tool_subset"]) == DATA_TOOLS
     assert tuple(existing["tool_subset"]) == SKILL_TOOLS
     registry.close()
 

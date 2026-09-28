@@ -26,6 +26,7 @@ def test_benchmarking_uses_internal_agent_and_phoenix() -> None:
     assert "--no-auth" in output
     assert "ps --status running --services" in output
     assert "make up" in output
+    assert '--modes "general_knowledge,skills_disabled,existing_skills"' in output
     assert "ssh" not in output
 
 

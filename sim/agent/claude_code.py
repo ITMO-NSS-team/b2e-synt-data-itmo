@@ -170,6 +170,13 @@ TOOL_LOADER = "ToolSearch"
 HEIMDALL_TOOLS = ("get_overview", "get_docs", "find_skills", "get_skill",
                   "list_models", "describe_model", "mcp_query")
 
+# Any one of these means the mode intentionally exposes skill guidance.  When
+# none is granted, the approved-skill runner must disappear too; otherwise a
+# nominally data-only arm would still retain a second skill channel.
+SKILL_CHANNEL_TOOLS = frozenset({
+    "get_overview", "get_docs", "find_skills", "get_skill",
+})
+
 MCP_SERVER_NAME = "heimdall"
 
 #: Non-interactive by construction: a refused tool is refused, and the CLI never
@@ -226,6 +233,20 @@ HARNESS_NOTE = """
   будет отклонена средой, а не мной.
 * Готовый код бывает только у одобренного скилла. Запускается он одной
   командой: `{runner} <sha256> '<json>'`. Никаких других команд не будет.
+* Отказ в доступе (403) — это результат, о котором надо сообщить, а не
+  препятствие, которое надо обойти.
+{channel}"""
+
+HARNESS_NOTE_WITHOUT_SKILLS = """
+Ты работаешь в закрытом контуре.
+
+* Данные — только через инструменты Heimdall. Файлов и интернета у тебя нет.
+* Инструменты Heimdall загружаются по требованию: сначала вызови
+  `ToolSearch` с запросом `{tool_select}`,
+  затем пользуйся ими как обычно. Других инструментов Heimdall у тебя нет.
+* Канал навыков отключён: каталог, документация приёмов, рецепты и запуск
+  одобренных навыков недоступны.
+* Ты **не можешь** написать и выполнить код.
 * Отказ в доступе (403) — это результат, о котором надо сообщить, а не
   препятствие, которое надо обойти.
 {channel}"""
@@ -453,7 +474,7 @@ class ClaudeCodeHarness:
         }
 
     def allowed_tools(self, config: AgentConfig) -> list[str]:
-        """Heimdall tools in the configured subset, plus the skill runner.
+        """Configured Heimdall tools and only applicable execution channels.
 
         Named individually rather than with a wildcard: the tool subset is an
         experimental variable (RQ2 is partly about how few calls an agent can
@@ -468,9 +489,14 @@ class ClaudeCodeHarness:
             # compute. Narrowing it here would produce a straw man that loses the
             # comparison for the wrong reason.
             tools.extend(CODE_EXECUTION_TOOLS)
-        else:
+        elif self._skill_channel_enabled(config):
             tools.append(f"Bash({self.runner_path}:*)")
         return tools
+
+    @staticmethod
+    def _skill_channel_enabled(config: AgentConfig) -> bool:
+        """Whether the configured subset exposes any skill-related channel."""
+        return bool(set(config.tool_subset) & SKILL_CHANNEL_TOOLS)
 
     def granted_heimdall_tools(self, config: AgentConfig) -> list[str]:
         """The Heimdall tools the matcher will actually let through.
@@ -614,8 +640,13 @@ class ClaudeCodeHarness:
         if config.code_execution == "allowed":
             return HARNESS_NOTE_CODE_ALLOWED.format(
                 tool_select=select, channel=channel)
-        return HARNESS_NOTE.format(runner=self.runner_path, tool_select=select,
-                                   channel=channel)
+        if self._skill_channel_enabled(config):
+            return HARNESS_NOTE.format(
+                runner=self.runner_path, tool_select=select, channel=channel,
+            )
+        return HARNESS_NOTE_WITHOUT_SKILLS.format(
+            tool_select=select, channel=channel,
+        )
 
     def run(self, *, question: str, config: AgentConfig, system_prompt: str,
             employee_id: str, keep_stream: bool = True,

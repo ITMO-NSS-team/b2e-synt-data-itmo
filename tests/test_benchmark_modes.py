@@ -1,4 +1,4 @@
-"""Unit tests for the three mode configs and catalog hashes."""
+"""Unit tests for benchmark mode configs and catalog hashes."""
 from __future__ import annotations
 
 import json
@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 from sim.benchmark.modes import (
-    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions, build_modes,
-    catalog_hash, comparison_pairs, mode_strategy, write_mode_config,
+    DATA_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode,
+    CommonConditions, build_modes, catalog_hash, comparison_pairs,
+    mode_strategy, write_mode_config,
 )
 
 
@@ -49,7 +50,7 @@ def common() -> CommonConditions:
     )
 
 
-def test_three_modes_pin_same_common_conditions(
+def test_modes_pin_same_common_conditions(
     catalogs: tuple[Path, Path], common: CommonConditions,
 ) -> None:
     base, generated = catalogs
@@ -58,6 +59,9 @@ def test_three_modes_pin_same_common_conditions(
     assert all(mode.common is common for mode in modes)
     assert modes.general_knowledge.tool_subset == GENERAL_KNOWLEDGE_TOOLS
     assert modes.general_knowledge.catalog_path is None
+    assert modes.skills_disabled.tool_subset == DATA_TOOLS
+    assert modes.skills_disabled.catalog_path is None
+    assert modes.skills_disabled.skills_enabled is False
     assert modes.existing_skills.tool_subset == SKILL_TOOLS
     assert modes.generated_skills.tool_subset == SKILL_TOOLS
     assert modes.existing_skills.catalog_hash == catalog_hash(base)
@@ -67,13 +71,17 @@ def test_three_modes_pin_same_common_conditions(
 
 def test_mode_behavior_comes_from_registered_strategies() -> None:
     general = mode_strategy(BenchmarkMode.GENERAL_KNOWLEDGE)
+    disabled = mode_strategy(BenchmarkMode.SKILLS_DISABLED)
     generated = mode_strategy(BenchmarkMode.GENERATED_SKILLS)
 
     assert general.tool_subset == ()
     assert general.requires_catalog is False
+    assert disabled.tool_subset == DATA_TOOLS
+    assert disabled.requires_catalog is False
     assert generated.requires_catalog is True
     assert generated.requires_catalog_activator is True
     assert ("generated_skills", "existing_skills") in comparison_pairs()
+    assert ("existing_skills", "skills_disabled") in comparison_pairs()
 
 
 def test_config_file_explicitly_contains_all_required_variables(
@@ -158,6 +166,10 @@ def test_general_knowledge_and_mock_generated_modes_are_explicit(
         "find_skills", "get_skill",
     ):
         assert forbidden not in modes.general_knowledge.tool_subset
+    assert modes.skills_disabled.tool_subset == DATA_TOOLS
+    assert modes.skills_disabled.skills_enabled is False
+    for forbidden in ("get_overview", "get_docs", "find_skills", "get_skill"):
+        assert forbidden not in modes.skills_disabled.tool_subset
     assert modes.generated_skills.is_mock is True
     assert modes.generated_skills.generated_skill_names == ()
 

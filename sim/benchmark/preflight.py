@@ -193,7 +193,7 @@ def preflight_suite(
 
     Args:
         cases: Cases to check, typically already loaded as ready.
-        modes: The three standard arms, or a subset via iteration.
+        modes: Registered benchmark arms, or a selected subset.
         **kwargs: Forwarded to ``preflight_case``.
 
     Returns:

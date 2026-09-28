@@ -106,7 +106,7 @@ rebuild:  ## пересобрать образы без кэша
 
 DEPLOY_CASES := $(shell awk -F= '/^CASES=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
 CASES ?= $(DEPLOY_CASES)
-BENCH_MODES ?= general_knowledge,existing_skills
+BENCH_MODES ?= general_knowledge,skills_disabled,existing_skills
 BENCH_REPETITIONS ?= 1
 BENCH_RESULTS ?= benchmarking/results
 BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json

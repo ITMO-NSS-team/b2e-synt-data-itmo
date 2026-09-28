@@ -24,14 +24,20 @@ def live_payload() -> dict:
     return {
         "refs": {
             "general_knowledge": "benchmark_general@1",
+            "skills_disabled": "benchmark_disabled@1",
             "existing_skills": "benchmark_on@1",
         },
         "configs": {
             "benchmark_general@1": off,
+            "benchmark_disabled@1": {
+                **config,
+                "tool_subset": ["list_models", "describe_model", "mcp_query"],
+            },
             "benchmark_on@1": config,
         },
         "prompt_versions": {
             "benchmark_general@1": "system_prompt@2",
+            "benchmark_disabled@1": "system_prompt@2",
             "benchmark_on@1": "system_prompt@2",
         },
         "emulator": {

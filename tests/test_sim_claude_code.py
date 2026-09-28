@@ -73,6 +73,21 @@ def test_tool_subset_narrows_the_mcp_surface(harness):
     assert f"mcp__{MCP_SERVER_NAME}__describe_model" not in mcp
 
 
+@pytest.mark.parametrize("tool_subset", [
+    (),
+    ("list_models", "describe_model", "mcp_query"),
+])
+def test_modes_without_skill_tools_cannot_run_approved_skills(
+    harness, tool_subset,
+):
+    config = AgentConfig(tool_subset=tool_subset)
+
+    assert not any(tool.startswith("Bash(") for tool in harness.allowed_tools(config))
+    note = harness.harness_note(config)
+    assert "Канал навыков отключён" in note
+    assert harness.runner_path not in note
+
+
 def test_denied_and_allowed_never_overlap(harness):
     allowed = {t.split("(")[0] for t in harness.allowed_tools(AgentConfig())}
     assert not (allowed & set(DENIED_TOOLS))

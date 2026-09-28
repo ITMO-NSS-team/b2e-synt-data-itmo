@@ -19,6 +19,7 @@ from .runner import BenchmarkRunner
 
 DEFAULT_MODES = (
     BenchmarkMode.GENERAL_KNOWLEDGE.value,
+    BenchmarkMode.SKILLS_DISABLED.value,
     BenchmarkMode.EXISTING_SKILLS.value,
 )
 
@@ -143,7 +144,7 @@ def common_conditions(
         CommonConditions copied into every mode.
 
     Raises:
-        ValueError: If skills-on/off configs disagree on model, prompt or code policy.
+        ValueError: If pinned mode configs disagree on model, prompt or code policy.
     """
     refs = payload["refs"]
     configs = payload["configs"]
@@ -153,7 +154,7 @@ def common_conditions(
         raise ValueError("at least one mode is required for common conditions")
     required_modes = set(mode_names)
     if not required_modes <= refs.keys():
-        raise ValueError("live stand manifest has no pinned skills-on/off refs")
+        raise ValueError("live stand manifest has no refs for all requested modes")
     selected = [configs[refs[name]] for name in mode_names]
     stable_fields = (
         "model_id", "temperature", "code_execution", "conversation_mode",
