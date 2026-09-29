@@ -440,7 +440,9 @@ def create_app(state: AgentState | None = None) -> FastAPI:
                    "heimdall_calls": result.heimdall_calls,
                    "prompt_tokens": result.prompt_tokens,
                    "completion_tokens": result.completion_tokens,
-                   "cost_usd": result.cost_usd, "stop_reason": result.stop_reason})
+                   "reasoning_tokens": result.reasoning_tokens,
+                   "cost_usd": result.cost_usd, "cost_mode": result.cost_mode,
+                   "stop_reason": result.stop_reason})
 
         return {
             "session_id": session_id, "answer": result.answer,
@@ -450,8 +452,11 @@ def create_app(state: AgentState | None = None) -> FastAPI:
                       "heimdall_calls": result.heimdall_calls,
                       "prompt_tokens": result.prompt_tokens,
                       "completion_tokens": result.completion_tokens,
+                      "reasoning_tokens": result.reasoning_tokens,
                       "total_tokens": result.total_tokens,
-                      "cost_usd": round(result.cost_usd, 6)},
+                      "cost_usd": (round(result.cost_usd, 6)
+                                   if result.cost_usd is not None else None),
+                      "cost_mode": result.cost_mode},
             "errors": result.errors,
             "condition_id": fingerprint.condition_id,
         }
@@ -619,7 +624,7 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         state.store.bind_claude_session(session_id, outcome.session_id)
 
     if guard is not None:
-        guard.record(tokens=outcome.total_tokens, usd=outcome.cost_usd)
+        guard.record(tokens=outcome.total_tokens, usd=outcome.cost_usd or 0.0)
 
     if outcome.is_error and not outcome.answer:
         raise HTTPException(
@@ -634,8 +639,10 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         # remainder, which on this stack is ~30 tokens beside a ~25 000-token
         # cached prompt. See ClaudeCodeResult.prompt_tokens.
         prompt_tokens=outcome.prompt_tokens,
-        completion_tokens=outcome.output_tokens,
+        completion_tokens=outcome.completion_tokens,
+        reasoning_tokens=outcome.reasoning_tokens,
         cost_usd=outcome.cost_usd,
+        cost_mode=outcome.cost_mode,
         stop_reason="error" if outcome.is_error else "end_turn",
         trace_id=trace_id,
         errors=([outcome.error] if outcome.error else [])
@@ -833,7 +840,10 @@ def _run_single(state: AgentState, employee_id: str, config_ref: str,
         "trace_id": result.trace_id, "condition_id": fingerprint.condition_id,
         "iterations": result.iterations, "tool_calls": result.tool_calls,
         "heimdall_calls": result.heimdall_calls,
-        "total_tokens": result.total_tokens, "cost_usd": round(result.cost_usd, 6),
+        "total_tokens": result.total_tokens,
+        "cost_usd": (round(result.cost_usd, 6)
+                     if result.cost_usd is not None else None),
+        "cost_mode": result.cost_mode,
         "stop_reason": result.stop_reason,
         # RQ2's headline number. Nothing produced this field before, so every
         # latency percentile the research API reported was null with n=0 while

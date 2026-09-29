@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
 
 from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
@@ -110,6 +110,67 @@ def configure(
 def _trace_endpoint(endpoint: str) -> str:
     endpoint = endpoint.rstrip("/")
     return endpoint if endpoint.endswith("/v1/traces") else f"{endpoint}/v1/traces"
+
+
+def emit_benchmark_metrics(
+    metrics: Mapping[str, Any],
+    *,
+    eval_id: str,
+    run_id: str,
+    case_id: str,
+    mode: str,
+    repetition: int,
+    status: str,
+    scorer_version: str,
+    trace_id: str | None = None,
+    parent_span_id: str | None = None,
+) -> None:
+    """Export one deterministic score beside the turn that produced it.
+
+    The answer span has already ended by the time gold comparison is legal.
+    A late evaluator child keeps scoring out of the model path while making the
+    same metric map searchable in every configured OTLP backend. The JSONL
+    score remains the reproducible record; this span is its observability copy.
+    """
+    context = _remote_parent(trace_id, parent_span_id)
+    with get_tracer().start_as_current_span(
+        "b2e.benchmark.score", context=context,
+    ) as span:
+        span.set_attribute(SPAN_KIND, OpenInferenceSpanKindValues.EVALUATOR.value)
+        span.set_attribute("b2e.run.kind", "benchmark_evaluation")
+        span.set_attribute("b2e.benchmark.eval_id", eval_id)
+        span.set_attribute("b2e.benchmark.run_id", run_id)
+        span.set_attribute("b2e.benchmark.case_id", case_id)
+        span.set_attribute("b2e.benchmark.mode", mode)
+        span.set_attribute("b2e.benchmark.repetition", repetition)
+        span.set_attribute("b2e.benchmark.status", status)
+        span.set_attribute("b2e.benchmark.scorer_version", scorer_version)
+        set_attr(span, "b2e.benchmark.source_trace_id", trace_id)
+        set_attr(span, "b2e.benchmark.source_span_id", parent_span_id)
+        set_io(span, input_value={"run_id": run_id, "case_id": case_id},
+               output_value=dict(metrics))
+        for name, value in metrics.items():
+            set_attr(span, f"b2e.metric.{name}", value)
+
+
+def _remote_parent(trace_id: str | None, span_id: str | None):
+    """Build a parent for an already-ended exported span, when ids are valid."""
+    if not trace_id or not span_id or len(trace_id) != 32 or len(span_id) != 16:
+        return None
+    try:
+        trace_value, span_value = int(trace_id, 16), int(span_id, 16)
+    except ValueError:
+        return None
+    if not trace_value or not span_value:
+        return None
+    parent = trace.NonRecordingSpan(trace.SpanContext(
+        trace_id=trace_value,
+        span_id=span_value,
+        is_remote=True,
+        trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
+        trace_state=trace.TraceState(),
+    ))
+    return trace.set_span_in_context(parent)
 
 
 # ------------------------------------------------------------------ helpers
