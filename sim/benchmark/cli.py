@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
 from .results import ResultWriter, summarize_results
 from .runner import BenchmarkRunner
+from sim import telemetry
 
 DEFAULT_MODES = (
     BenchmarkMode.GENERAL_KNOWLEDGE.value,
@@ -435,12 +437,35 @@ def main(argv: list[str] | None = None) -> int:
                 "agent_calls": 0,
             }, ensure_ascii=False, indent=2))
             return 0
-        results, writer = run(args)
+        provider = _configure_metric_export()
+        try:
+            results, writer = run(args)
+        finally:
+            if provider is not None:
+                if provider.force_flush() is False:
+                    raise RuntimeError("benchmark metric OTLP export did not flush")
         print(json.dumps(_finished_report(results, writer), ensure_ascii=False, indent=2))
         return 0
     except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"benchmark failed before completion: {exc}", file=sys.stderr)
         return 2
+
+
+def _configure_metric_export():
+    """Send post-run evaluator spans to the same two stores as agent spans."""
+    endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "").strip()
+    if not endpoint:
+        return None
+    return telemetry.configure(
+        endpoint=f"{endpoint.rstrip('/')}/v1/traces",
+        project_name=os.environ.get("PHOENIX_PROJECT", "b2e-itmo"),
+        protocol="http/protobuf",
+        batch=True,
+        secondary_endpoint=(
+            os.environ.get("OPENLIT_OTLP_ENDPOINT", "").strip() or None
+        ),
+        service_name="b2e-benchmark-runner",
+    )
 
 
 def _finished_report(results: list[Any], writer: ResultWriter) -> dict[str, Any]:

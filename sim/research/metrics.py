@@ -137,7 +137,8 @@ def aggregate(runs: list[dict[str, Any]], scores: list[RunScore] | None = None
     latencies = [float(r["latency_ms"]) for r in completed if r.get("latency_ms")]
     calls = [int(r.get("heimdall_calls", 0)) for r in completed]
     tokens = [int(r.get("total_tokens", 0)) for r in completed]
-    costs = [float(r.get("cost_usd", 0.0)) for r in completed]
+    costs = [float(r["cost_usd"]) for r in completed
+             if r.get("cost_usd") is not None]
 
     summary: dict[str, Any] = {
         "runs_total": len(runs),
@@ -159,9 +160,10 @@ def aggregate(runs: list[dict[str, Any]], scores: list[RunScore] | None = None
             "mean_per_answer": round(statistics.mean(tokens), 1) if tokens else None,
         },
         "cost_usd": {
-            "total": round(sum(costs), 4),
+            "total": round(sum(costs), 4) if costs else None,
             "mean_per_answer": round(statistics.mean(costs), 6) if costs else None,
-            "basis": "projected from a configured rate table, not a measured price",
+            "basis": ("reported or explicitly configured API-equivalent estimate"
+                      if costs else "unavailable"),
         },
     }
 
