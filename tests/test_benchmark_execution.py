@@ -184,6 +184,19 @@ def test_fatal_turn_error_ignores_successful_harness_denials() -> None:
     )
 
 
+def test_fatal_turn_error_detects_transport_failure_reported_as_answer() -> None:
+    assert fatal_turn_error(
+        None, answer="API Error: Unable to connect to API (ENOTIMP)"
+    ) == "API Error: Unable to connect to API"
+    assert fatal_turn_error(
+        None,
+        answer=(
+            "API Error: Connection closed mid-response. "
+            "The response above may be incomplete."
+        ),
+    ) == "API Error: Connection closed mid-response"
+
+
 def test_stand_executor_leaves_missing_trace_to_the_runner(monkeypatch) -> None:
     from sim.benchmark.types import TurnResult
 

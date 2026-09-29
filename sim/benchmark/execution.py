@@ -19,6 +19,10 @@ _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 # ``mcp__heimdall__find_skills``.  Both are successful enforcement of the
 # benchmark arm, not transport failures.
 _HARNESS_DENIAL = re.compile(r"^denied:[A-Za-z0-9_.:/-]+$")
+_TRANSPORT_FAILURE_ANSWER = re.compile(
+    r"^\s*API Error:\s*(?:Unable to connect to API\b|Connection closed mid-response\b)",
+    re.IGNORECASE,
+)
 
 OPERATIONAL_METRICS = (
     "iterations", "tool_calls", "heimdall_calls", "mcp_query_calls",
@@ -84,11 +88,13 @@ class ActivatedMode:
 
 
 def fatal_turn_error(error: str | None, *, answer: str) -> str | None:
-    """Keep transport failures; drop successful harness denials when an answer exists.
+    """Detect transport failures and ignore successful harness denials.
 
     The agent reports ``denied:Bash`` after Claude Code refuses a forbidden
     tool. That is the intended boundary, not a broken session: the model still
-    finished the turn. Mixed or non-denial errors stay fatal.
+    finished the turn. Mixed or non-denial errors stay fatal. Some harness
+    transport failures arrive in the answer field as ``API Error: ...``;
+    known connection failures are fatal even when ``error`` is empty.
 
     Args:
         error: Stand ``errors`` payload, already stringified.
@@ -98,6 +104,9 @@ def fatal_turn_error(error: str | None, *, answer: str) -> str | None:
         The original error when the cell should be ``unscored``; ``None``
         when only harness denials remain and ``answer`` is non-empty.
     """
+    transport_answer = _TRANSPORT_FAILURE_ANSWER.match(answer)
+    if transport_answer:
+        return transport_answer.group(0).strip()
     if not error:
         return None
     items = _error_items(error)

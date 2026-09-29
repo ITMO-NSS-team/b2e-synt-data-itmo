@@ -133,7 +133,10 @@ class BenchmarkRunner:
         normalized = normalize_answer(turn.answer, case.raw["gold_contract"])
         status, review_reason = _classify_turn(checked, turn, normalized)
         metrics = calculate_metrics(case, mode, normalized, observations)
-        if status != "completed":
+        # Contract/format failures are model failures and remain scored as 0.
+        # Only invalid experimental conditions and infrastructure failures are
+        # excluded from quality metrics.
+        if status in {"condition_invalid", "unscored"}:
             for name in (
                 "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
             ):

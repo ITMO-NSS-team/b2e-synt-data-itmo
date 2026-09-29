@@ -124,7 +124,7 @@ def test_generated_routing_is_not_applicable_without_expected_generated_skill() 
     assert metrics["generated_skill_loaded"] is None
 
 
-def test_refusal_accuracy_is_outcome_based() -> None:
+def test_access_refusal_requires_heimdall_403_and_empty_rows() -> None:
     case = ready_case()
     case.raw["category"] = "access_control"
     case.raw["gold_answer"] = {"outcome": "access_control", "rows": []}
@@ -146,6 +146,40 @@ def test_refusal_accuracy_is_outcome_based() -> None:
     assert metrics["outcome_accuracy"] == 1
     assert metrics["correct_refusal"] == 1
     assert metrics["answer_accuracy"] == 1
+
+    no_heimdall = dict(observations, heimdall_calls=0, http_statuses=[])
+    metrics = calculate_metrics(
+        case, mode("general_knowledge"),
+        NormalizedAnswer(
+            {"outcome": "access_control", "rows": [], "comment": "Нет инструментов"},
+            None,
+        ),
+        no_heimdall,
+    )
+    assert metrics["outcome_accuracy"] == 1
+    assert metrics["correct_refusal"] == 0
+    assert metrics["answer_accuracy"] == 0
+
+    leaked = calculate_metrics(
+        case, mode(),
+        NormalizedAnswer(
+            {"outcome": "access_control", "rows": [{"secret": "value"}]},
+            None,
+        ),
+        observations,
+    )
+    assert leaked["correct_refusal"] == 0
+    assert leaked["answer_accuracy"] == 0
+
+
+def test_format_failure_is_scored_as_incorrect() -> None:
+    metrics = calculate_metrics(
+        ready_case(), mode(), NormalizedAnswer(None, "invalid JSON"),
+        {"loaded_skills": [], "heimdall_calls": 1},
+    )
+    assert metrics["answer_accuracy"] == 0
+    assert metrics["exact_match"] == 0
+    assert metrics["outcome_accuracy"] == 0
 
 
 def test_exact_match_is_not_limited_to_tabular_results() -> None:

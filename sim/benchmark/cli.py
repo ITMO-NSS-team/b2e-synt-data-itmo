@@ -455,7 +455,8 @@ def _finished_report(results: list[Any], writer: ResultWriter) -> dict[str, Any]
     return {
         "results_dir": str(writer.root),
         "runs": len(results),
-        "n_completed": summary["n_runs"],
+        "n_completed": summary["n_completed"],
+        "n_scored": summary["n_scored"],
         "n_review": len(summary["review"]),
         "n_normalization_pending": summary["n_normalization_pending"],
         "n_condition_invalid": summary["n_condition_invalid"],

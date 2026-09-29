@@ -217,7 +217,7 @@ def test_runner_skips_draft_and_mock_without_activation() -> None:
     assert not activator.activated
 
 
-def test_unstructured_answer_is_pending_not_counted_as_incorrect() -> None:
+def test_unstructured_answer_is_pending_and_counted_as_incorrect() -> None:
     class ProseExecutor:
         def execute(self, request: AgentRequest) -> AgentTurn:
             del request
@@ -237,9 +237,12 @@ def test_unstructured_answer_is_pending_not_counted_as_incorrect() -> None:
     result = runner.run([ready_case()], {"existing_skills": mode()})[0]
     summary = summarize_results([result])
     assert result.status == "normalization_pending"
-    assert result.score["metrics"]["answer_accuracy"] is None
+    assert result.score["metrics"]["answer_accuracy"] == 0
     assert summary["n_normalization_pending"] == 1
-    assert summary["n_runs"] == 0
+    assert summary["n_runs"] == 1
+    assert summary["n_completed"] == 0
+    assert summary["n_scored"] == 1
+    assert summary["by_mode"]["existing_skills"]["answer_accuracy"] == 0
     assert summary["review"][0]["run_id"] == result.run_id
 
 
@@ -268,7 +271,9 @@ def test_runner_marks_fingerprint_drift_without_failing_the_cell_as_wrong() -> N
     assert result.response["response"]["error"].endswith("model_id")
     assert result.score["metrics"]["answer_accuracy"] is None
     assert summary["n_condition_invalid"] == 1
-    assert summary["n_runs"] == 0
+    assert summary["n_runs"] == 1
+    assert summary["n_completed"] == 0
+    assert summary["n_scored"] == 0
 
 
 def test_runner_keeps_the_full_executor_traceback() -> None:
@@ -315,7 +320,10 @@ def test_missing_trace_is_unscored_even_when_json_matches() -> None:
     assert result.status == "unscored"
     assert "trace unavailable" in result.response["response"]["error"]
     assert result.score["metrics"]["answer_accuracy"] is None
-    assert summarize_results([result])["n_runs"] == 0
+    summary = summarize_results([result])
+    assert summary["n_runs"] == 1
+    assert summary["n_completed"] == 0
+    assert summary["n_scored"] == 0
 
 
 def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -> None:
@@ -341,6 +349,12 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     assert (writer.root / response["trace_path"]).is_file()
     assert score["metrics"]["answer_accuracy"] == 1
     assert summary["by_mode"]["existing_skills"]["answer_accuracy"] == 1
+    assert summary["n_runs"] == 1
+    assert summary["n_completed"] == 1
+    assert summary["n_scored"] == 1
+    assert summary["by_mode"]["existing_skills"]["n_runs"] == 1
+    assert summary["by_mode"]["existing_skills"]["n_completed"] == 1
+    assert summary["by_mode"]["existing_skills"]["n_scored"] == 1
     assert summary["by_mode"]["existing_skills"]["cache_read_tokens"] == 280
     assert summary["by_mode"]["existing_skills"]["ttft_ms"] == 100
     assert summary["by_mode"]["existing_skills"]["cost_usd"] == 0.03

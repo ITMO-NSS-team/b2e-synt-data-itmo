@@ -80,32 +80,46 @@ def calculate_metrics(
         observations: Trace-derived call counts, errors and timings.
 
     Returns:
-        Metric map. Accuracy fields are ``0``, ``1`` or ``None`` when the
-        answer could not be normalized or the metric does not apply.
+        Metric map. A contract/normalization failure receives ``0`` for
+        applicable accuracy metrics. ``None`` means that a metric does not
+        apply; the runner separately clears quality metrics for infrastructure
+        and invalid-condition cells.
     """
     actual = normalized.value
     gold = case.raw["gold_answer"]
     expected_outcome = gold["outcome"]
     observed_outcome = actual.get("outcome") if actual is not None else None
-    outcome_accuracy = (
-        int(observed_outcome == expected_outcome) if actual is not None else None
-    )
+    outcome_accuracy = int(observed_outcome == expected_outcome)
     exact_match: int | None = None
-    if actual is not None and expected_outcome == "answer":
+    if expected_outcome == "answer":
         exact_match = int(
-            observed_outcome == "answer" and _results_equal(
+            actual is not None
+            and observed_outcome == "answer"
+            and _results_equal(
                 actual.get("rows"),
                 gold["rows"],
                 case.raw["gold_comparison"],
             )
         )
+    correct_refusal: int | None = None
+    if expected_outcome == "access_control":
+        # A disabled tool surface is not an ACL refusal.  The run must reach
+        # Heimdall, receive an actual 403 and return no protected rows.
+        correct_refusal = int(
+            actual is not None
+            and observed_outcome == "access_control"
+            and actual.get("rows") == []
+            and observations.get("heimdall_calls", 0) > 0
+            and 403 in observations.get("http_statuses", ())
+        )
+    elif expected_outcome in _REFUSAL_OUTCOMES:
+        correct_refusal = outcome_accuracy
     if expected_outcome == "answer":
         answer_accuracy = exact_match
+    elif expected_outcome == "access_control":
+        answer_accuracy = correct_refusal
     else:
         answer_accuracy = outcome_accuracy
-    correct_refusal = (
-        outcome_accuracy if expected_outcome in _REFUSAL_OUTCOMES else None
-    )
     generated_loaded = mode.strategy.skill_loaded_metric(
         mode,
         case.raw["expected_skills"],
