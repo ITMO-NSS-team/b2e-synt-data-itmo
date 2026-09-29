@@ -336,10 +336,14 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
         activator=FakeActivator(), executor=FakeExecutor(), writer=writer,
     )
     results = runner.run([ready_case()], {"existing_skills": mode()})
-    response = json.loads(writer.responses_path.read_text(encoding="utf-8"))
-    score = json.loads(writer.scores_path.read_text(encoding="utf-8"))
-    summary = json.loads((writer.root / "summary.json").read_text(encoding="utf-8"))
+    response_text = writer.responses_path.read_text(encoding="utf-8")
+    score_text = writer.scores_path.read_text(encoding="utf-8")
+    summary_text = (writer.root / "summary.json").read_text(encoding="utf-8")
+    response = json.loads(response_text)
+    score = json.loads(score_text)
+    summary = json.loads(summary_text)
     writer.write_manifest({"schema_version": "1.0", "eval_id": "eval-1"})
+    manifest_text = (writer.root / "run-manifest.json").read_text(encoding="utf-8")
     assert response["response"]["raw_answer"]
     assert response["case_snapshot"]["gold_answer"]
     assert response["case_snapshot"]["gold_contract"]
@@ -347,6 +351,13 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     assert response["case_snapshot"]["rendered_query"]
     assert response["case_snapshot"]["gold_contract_hash"].startswith("sha256:")
     assert (writer.root / response["trace_path"]).is_file()
+    assert len(response_text.splitlines()) == 1
+    assert len(score_text.splitlines()) == 1
+    assert len((writer.root / response["trace_path"]).read_text().splitlines()) == 1
+    assert summary_text.startswith("{\n  ")
+    assert len(summary_text.splitlines()) > 1
+    assert manifest_text.startswith("{\n  ")
+    assert len(manifest_text.splitlines()) > 1
     assert score["metrics"]["answer_accuracy"] == 1
     assert summary["by_mode"]["existing_skills"]["answer_accuracy"] == 1
     assert summary["n_runs"] == 1

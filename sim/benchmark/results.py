@@ -97,7 +97,7 @@ class ResultWriter:
         path = self.root / "run-manifest.json"
         if path.exists():
             raise ValueError(f"run manifest already exists: {path}")
-        path.write_text(_json(manifest) + "\n", encoding="utf-8")
+        path.write_text(_pretty_json(manifest) + "\n", encoding="utf-8")
         return path
 
     def write_summary(self, results: Iterable[RunResult]) -> Path:
@@ -111,7 +111,7 @@ class ResultWriter:
         """
         summary = summarize_results(results)
         path = self.root / "summary.json"
-        path.write_text(_json(summary) + "\n", encoding="utf-8")
+        path.write_text(_pretty_json(summary) + "\n", encoding="utf-8")
         return path
 
 
@@ -238,3 +238,10 @@ def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _pretty_json(value: Any) -> str:
+    """Render human-facing artifacts without changing their JSON structure."""
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, indent=2, default=str,
+    )
