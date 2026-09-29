@@ -17,6 +17,7 @@ The fields are fixed by the research questions:
 ``agent_config_version``   which agent config produced this run
 ``prompt_registry_version``which system prompt revision was rendered
 ``skill_registry_hash``    which skills were executable
+``harness``                which agent runtime executed the turn
 ``model_id``               which model answered
 ``temperature``            sampling temperature
 ``data_snapshot_hash``     which corpus snapshot was served
@@ -57,6 +58,7 @@ FINGERPRINT_FIELDS: tuple[str, ...] = (
     "agent_config_version",
     "prompt_registry_version",
     "skill_registry_hash",
+    "harness",
     "model_id",
     "temperature",
     "data_snapshot_hash",
@@ -121,6 +123,7 @@ class RunFingerprint:
     agent_config_version: str
     prompt_registry_version: str
     skill_registry_hash: str
+    harness: str
     model_id: str
     temperature: float
     data_snapshot_hash: str
@@ -169,6 +172,7 @@ class RunFingerprint:
             agent_config_version=str(fields["agent_config_version"]),
             prompt_registry_version=str(fields["prompt_registry_version"]),
             skill_registry_hash=str(fields["skill_registry_hash"]),
+            harness=str(fields["harness"]),
             model_id=str(fields["model_id"]),
             temperature=float(fields["temperature"]),
             data_snapshot_hash=str(fields["data_snapshot_hash"]),

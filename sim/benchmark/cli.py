@@ -108,7 +108,7 @@ def load_live_config(path: str | Path) -> dict[str, Any]:
     """Load and validate a secret-free stand manifest.
 
     Args:
-        path: JSON written by ``python -m sim.benchmark.live_config``.
+        path: JSON written by ``python3.12 -m sim.benchmark.live_config``.
 
     Returns:
         Manifest with refs, configs, prompt versions and emulator condition.
@@ -157,7 +157,8 @@ def common_conditions(
         raise ValueError("live stand manifest has no refs for all requested modes")
     selected = [configs[refs[name]] for name in mode_names]
     stable_fields = (
-        "model_id", "temperature", "code_execution", "conversation_mode",
+        "model_id", "harness", "temperature", "code_execution",
+        "conversation_mode",
     )
     for field in stable_fields:
         if len({json.dumps(config.get(field), sort_keys=True) for config in selected}) != 1:
@@ -174,6 +175,7 @@ def common_conditions(
         traps_enabled=emulator["traps_enabled"],
         latency_profile=emulator["latency_profile"],
         hr_employee_ids=tuple(str(value) for value in emulator["hr_employee_ids"]),
+        harness=selected[0].get("harness", "claude_code"),
         code_execution=selected[0]["code_execution"],
     )
 
@@ -366,7 +368,7 @@ def parser() -> argparse.ArgumentParser:
     """Build the benchmark-runner CLI.
 
     Returns:
-        Parser for ``python -m sim.benchmark.cli``.
+        Parser for ``python3.12 -m sim.benchmark.cli``.
     """
     result = argparse.ArgumentParser(
         description="Run verified benchmark cases inside the stand network."

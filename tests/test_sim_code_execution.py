@@ -116,15 +116,16 @@ def test_unknown_mode_is_refused():
         AgentConfig(code_execution="sometimes")
 
 
-def test_allowed_requires_the_claude_code_harness():
+def test_allowed_requires_a_cli_harness():
     """messages_api exposes no tool that can run code. Silently accepting this
     would produce an arm labelled 'code allowed' that is really the control."""
-    with pytest.raises(ValueError, match="requires harness='claude_code'"):
+    with pytest.raises(ValueError, match="requires a CLI harness"):
         AgentConfig(code_execution="allowed", harness="messages_api")
+    assert AgentConfig(code_execution="allowed", harness="open_code")
 
 
-def test_forbidden_works_with_either_harness():
-    for harness_name in ("claude_code", "messages_api"):
+def test_forbidden_works_with_every_harness():
+    for harness_name in ("claude_code", "open_code", "messages_api"):
         assert AgentConfig(harness=harness_name).code_execution == "forbidden"
 
 
@@ -148,6 +149,7 @@ def test_the_two_arms_are_different_conditions(tmp_path):
         base = dict(
             prompt_registry_version="system_prompt@1",
             skill_registry_hash="sha256:" + "00" * 32,
+            harness="claude_code",
             model_id="claude-haiku-4-5-20251001", temperature=0.0,
             data_snapshot_hash="snap@1", traps_enabled=True,
             latency_profile="realistic", hr_employee_ids=[])

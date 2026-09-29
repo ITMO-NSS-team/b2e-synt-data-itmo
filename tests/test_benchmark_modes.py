@@ -94,7 +94,8 @@ def test_config_file_explicitly_contains_all_required_variables(
     for mode in saved["modes"].values():
         assert set(mode["common"]) == {
             "model_id", "temperature", "prompt_registry_version", "snapshot_id",
-            "traps_enabled", "latency_profile", "hr_employee_ids", "code_execution",
+            "traps_enabled", "latency_profile", "hr_employee_ids", "harness",
+            "code_execution",
         }
         assert mode["common"]["code_execution"] == "forbidden"
         assert "tool_subset" in mode

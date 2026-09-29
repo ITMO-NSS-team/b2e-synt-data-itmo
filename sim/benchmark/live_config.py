@@ -7,9 +7,9 @@ JSON is consumed by the benchmark runner; secrets are never included.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Callable
 
+from sim.agent.provider import runtime_agent_config
 from sim.registry import Registry
 from .pin import pin
 from sim.skills import SkillStore
@@ -19,10 +19,10 @@ from .modes import BenchmarkMode
 
 
 def pin_live_configs(
-    registry: Registry, *, model_id: str | None = None,
+    registry: Registry,
     base_pinner: Callable[[Registry], dict[str, str]] = pin,
 ) -> dict[str, str]:
-    """Pin the benchmark arms, optionally overriding only their model.
+    """Pin the benchmark arms.
 
     Args:
         registry: Writable agent/prompt/skill registry.
@@ -32,24 +32,7 @@ def pin_live_configs(
     Returns:
         Mapping of general, data-only and existing-skill modes to pinned refs.
     """
-    refs = base_pinner(registry)
-    selected_model = (model_id or "").strip()
-    if not selected_model:
-        return refs
-    updated: dict[str, str] = {}
-    for key, ref in refs.items():
-        version, raw = registry.load(ref)
-        body = dict(raw)
-        body["model_id"] = selected_model
-        committed = registry.commit(
-            version.name,
-            "agent",
-            body,
-            actor="benchmark_smoke",
-            note=f"benchmark: model override {selected_model}",
-        )
-        updated[key] = committed.ref
-    return updated
+    return base_pinner(registry)
 
 
 def capture_live_config(
@@ -85,7 +68,7 @@ def capture_live_config(
         if not isinstance(raw, dict) or not isinstance(raw.get("system_prompt_ref"), str):
             raise ValueError(f"pinned agent config is malformed: {ref}")
         prompt_version, _prompt = registry.load(raw["system_prompt_ref"])
-        configs[ref] = raw
+        configs[ref] = runtime_agent_config(raw).as_dict()
         prompt_versions[ref] = prompt_version.ref
 
     required = {
@@ -133,8 +116,8 @@ def fetch_json(url: str, *, opener: Callable[..., Any] | None = None) -> dict[st
 def main() -> None:
     """Print the live-stand manifest as JSON to stdout.
 
-    Reads ``B2E_REGISTRY_DB``, ``HEIMDALL_URL`` and optional ``B2E_BENCH_MODEL``
-    from local ``deploy/.env``, overlaid by the process environment.
+    Reads ``B2E_REGISTRY_DB``, ``HEIMDALL_URL``, ``B2E_MODEL`` and
+    ``B2E_HARNESS`` from the process environment.
     """
     load_env()
     registry_path = require_env("B2E_REGISTRY_DB")
@@ -144,10 +127,7 @@ def main() -> None:
         payload = capture_live_config(
             registry,
             fetch_json(f"{emulator_url.rstrip('/')}/control/config"),
-            pinner=lambda target: pin_live_configs(
-                target,
-                model_id=(os.getenv("B2E_BENCH_MODEL") or "").strip() or None,
-            ),
+            pinner=pin_live_configs,
         )
     finally:
         registry.close()

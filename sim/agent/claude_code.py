@@ -403,7 +403,7 @@ class ClaudeCodeHarness:
         bridge_path: str = "/app/heimdall/bridge.py",
         runner_path: str = "/opt/skills/run",
         claude_bin: str = "claude",
-        python_bin: str = "python3",
+        python_bin: str = "python3.12",
         proxy: dict[str, str] | None = None,
         workdir: str | None = None,
         session_root: str = "var/sessions",
@@ -1647,13 +1647,14 @@ class ToolSpanRecorder:
             # Falls back to the turn when there is no iteration — a tool call
             # the stream announced without a message id would otherwise vanish.
             parent = self._current_iteration or self._root
+        started_ns = int(block.get("_b2e_started_ns") or time.time_ns())
         span = telemetry.open_tool_span(
             name, parent=parent, parameters=block.get("input"),
-            tool_call_id=call_id or None)
+            tool_call_id=call_id or None, start_time=started_ns)
         with self._lock:
             self._open[call_id] = _OpenCall(
                 span=span, name=name, started=time.perf_counter(),
-                started_ns=time.time_ns(), command=_bash_command(block.get("input")))
+                started_ns=started_ns, command=_bash_command(block.get("input")))
             if call_id:
                 self._seen.add(call_id)
 
@@ -1664,9 +1665,9 @@ class ToolSpanRecorder:
         if call is None:
             return
         output = _tool_result_text(block.get("content"))
-        ended_ns = time.time_ns()
+        ended_ns = int(block.get("_b2e_ended_ns") or time.time_ns())
         with self._lock:
-            self._tool_time_s += time.perf_counter() - call.started
+            self._tool_time_s += max(0.0, (ended_ns - call.started_ns) / 1e9)
             self._last_activity_ns = max(self._last_activity_ns, ended_ns)
             self._finished.append(_FinishedCall(
                 span=call.span, name=call.name,
@@ -1674,7 +1675,7 @@ class ToolSpanRecorder:
         # Nested before the parent closes, so the sandbox span is filed under
         # the tool call rather than beside it.
         _emit_sandbox_span(call, output, ended_ns=ended_ns)
-        telemetry.close_tool_span(call.span, output=output)
+        telemetry.close_tool_span(call.span, output=output, end_time=ended_ns)
 
     def finish(self) -> None:
         """Close whatever the turn left open. Safe to call more than once."""
@@ -1808,7 +1809,8 @@ def _emit_heimdall_span(record: dict[str, Any], *, root: Span,
 
 def emit_spans(result: ClaudeCodeResult, *, root,
                config: AgentConfig | None = None,
-               recorder: "ToolSpanRecorder | None" = None) -> None:
+               recorder: "ToolSpanRecorder | None" = None,
+               harness_name: str = "claude_code") -> None:
     """Attach what the session reported to the current trace.
 
     ``recorder`` is the live one, when there was one. Tool calls it already
@@ -1827,7 +1829,7 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute("b2e.turn.heimdall_calls", result.heimdall_calls)
     root.set_attribute("b2e.turn.skill_runs", result.skill_runs)
     root.set_attribute("b2e.turn.cost_usd", round(result.cost_usd, 6))
-    root.set_attribute("b2e.harness", "claude_code")
+    root.set_attribute("b2e.harness", harness_name)
     provider = _provider_name()
     root.set_attribute("gen_ai.operation.name", "chat")
     root.set_attribute("gen_ai.provider.name", provider)
@@ -1886,7 +1888,9 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     if result.resumed_failed:
         root.set_attribute("b2e.resume_failed", True)
     if result.session_id:
-        root.set_attribute("b2e.claude_session_id", result.session_id)
+        root.set_attribute("b2e.harness_session_id", result.session_id)
+        if harness_name == "claude_code":
+            root.set_attribute("b2e.claude_session_id", result.session_id)
     if result.context_window:
         root.set_attribute("b2e.context_window", int(result.context_window))
     if result.max_output_tokens:

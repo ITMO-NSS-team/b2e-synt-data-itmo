@@ -1,5 +1,12 @@
-PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
+PYTHON := python3.12
+PY := $(shell [ -x .venv/bin/python3.12 ] && echo .venv/bin/python3.12 || echo $(PYTHON))
 export PYTHONPATH := .:skill-factory
+
+DEPLOY_HARNESS := $(shell awk -F= '/^B2E_HARNESS=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
+DEPLOY_MODEL := $(shell awk -F= '/^B2E_MODEL=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
+override B2E_HARNESS := $(DEPLOY_HARNESS)
+override B2E_MODEL := $(DEPLOY_MODEL)
+export B2E_HARNESS B2E_MODEL
 
 OPENAPI ?= Heimdall_openapi.json
 HEIMDALL_URL ?= http://127.0.0.1:8081
@@ -25,11 +32,11 @@ SMOKE_DATA ?= $(STAND_DATA_PATH)
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
 
-setup:  ## окружение и зависимости, включая serve (uvicorn)
-	@test -x .venv/bin/python || python3 -m venv .venv
-	@test -x .venv/bin/pip || .venv/bin/python -m ensurepip --upgrade
-	.venv/bin/python -m pip install -q -U pip
-	.venv/bin/python -m pip install -q -e ".[serve]"
+setup:  ## окружение и зависимости
+	@command -v $(PYTHON) >/dev/null || { echo "$(PYTHON) is required (macOS: brew install python@3.12)"; exit 1; }
+	$(PYTHON) -m venv --clear .venv
+	.venv/bin/python3.12 -m pip install -q -U pip
+	.venv/bin/python3.12 -m pip install -q -e ".[serve]"
 
 catalog:  ## каталог витрин из спецификации OpenAPI (OPENAPI=путь)
 	$(PY) -m b2e.cli catalog --openapi $(OPENAPI) --overlay catalog --out catalog/snapshot.json
@@ -53,7 +60,7 @@ serve:  ## эмулятор Heimdall на :8080
 	$(PY) -m b2e.cli serve --data $(DATA)
 
 test:  ## тесты; replay-режим, обращений к API модели нет и трат нет
-	B2E_LLM_MODE=replay $(PY) -m pytest tests -q
+	B2E_LLM_MODE=replay B2E_HARNESS=messages_api B2E_MODEL=test-model $(PY) -m pytest tests -q
 
 clean:
 	rm -rf .pytest-data .pytest_cache **/__pycache__
@@ -87,7 +94,7 @@ seed-traps-off:  ## корпус без каверз — обязателен д
 smoke:  ## сквозной путь: вопрос → ответ → трасса → обратная связь → сравнение
 	SMOKE_DATA="$(SMOKE_DATA)" $(PY) scripts/smoke.py
 
-demo:  ## golden path against a running stack (Claude Code / Z.ai, spends plan quota)
+demo:  ## golden path against the selected harness / provider; may spend quota
 	$(PY) scripts/demo.py
 
 check-docs:  ## выполнить каждый пример из heimdall-skills против живого эмулятора
@@ -113,7 +120,6 @@ BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
 BENCH_EVAL_ID ?=
 BENCH_TIMEOUT ?= 1800
 BENCH_TRACE_TIMEOUT ?= 300
-BENCH_MODEL ?=
 BENCH_LIMIT ?=
 BENCH_REQUIRED_SERVICES := admin-ui b2e-agent phoenix heimdall-emulator
 BENCH_EVAL_PREFIX ?= benchmark
@@ -144,7 +150,7 @@ benchmarking:  ## полный прогон verified-кейсов внутри �
 	$(BENCHMARK_PREPARE)
 	$(COMPOSE) --profile benchmark run --rm --no-deps \
 		--user "$$(id -u):$$(id -g)" benchmark-runner \
-		python -m sim.benchmark.cli \
+		python3.12 -m sim.benchmark.cli \
 			--cases "/app/$(CASES)" --data /data/snapshot \
 			--catalog /app/heimdall-skills \
 			--catalog-snapshots /app/var/benchmark-catalog-snapshots \

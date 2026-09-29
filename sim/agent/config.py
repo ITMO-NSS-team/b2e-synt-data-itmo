@@ -88,10 +88,11 @@ CODE_EXECUTION_MODES = ("forbidden", "allowed")
 #: Code session already *is* a ReAct agent with a fixed tool surface — the thing
 #: under test — rather than a reimplementation of one.
 #:
-#: ``messages_api`` drives the loop in ``sim.agent.loop`` against the Messages
+#: ``open_code`` runs the OpenCode CLI with the same isolated Heimdall MCP
+#: surface. ``messages_api`` drives the loop in ``sim.agent.loop`` against the Messages
 #: API. Kept because it is deterministic under replay, which CI needs, and
 #: because it gives finer-grained spans when a study is about the loop itself.
-HARNESSES = ("claude_code", "messages_api")
+HARNESSES = ("claude_code", "open_code", "messages_api")
 
 #: Whether a session is a conversation or a sequence of independent turns.
 #:
@@ -191,13 +192,13 @@ class AgentConfig:
         if self.code_execution not in CODE_EXECUTION_MODES:
             raise ValueError(
                 f"code_execution {self.code_execution!r} not in {CODE_EXECUTION_MODES}")
-        if self.code_execution == "allowed" and self.harness != "claude_code":
+        if self.code_execution == "allowed" and self.harness == "messages_api":
             # Refuse rather than ignore. The messages_api loop has no tool that
             # can execute code, so this combination would produce runs labelled
             # "code allowed" in which no code could ever run — a whole arm of
             # the experiment quietly measuring the control condition.
             raise ValueError(
-                "code_execution='allowed' requires harness='claude_code'; the "
+                "code_execution='allowed' requires a CLI harness; the "
                 "messages_api loop exposes no tool capable of executing code, "
                 "so the combination would mislabel the control arm")
         if self.conversation_mode not in CONVERSATION_MODES:
@@ -226,7 +227,7 @@ class AgentConfig:
                 f"context_strategy={self.context_strategy!r} requires "
                 f"harness='messages_api'; only the sim.agent.loop packer "
                 f"implements windowing and summarisation, and the Claude Code "
-                f"CLI owns its own context window, so the combination would "
+                f"CLI harness owns its own context window, so the combination would "
                 f"label an arm that runs identically to 'full'. Set "
                 f"harness='messages_api', or leave context_strategy='full'.")
         if self.memory_strategy not in MEMORY_STRATEGIES:

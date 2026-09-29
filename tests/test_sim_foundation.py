@@ -24,6 +24,7 @@ GOOD = dict(
     agent_config_version="cfg@3",
     prompt_registry_version="system_prompt@7",
     skill_registry_hash="sha256:" + "ab" * 32,
+    harness="claude_code",
     model_id="claude-haiku-4-5-20251001",
     temperature=0.0,
     data_snapshot_hash="heimdall-sandbox@78d53675db91e17f",
@@ -68,6 +69,12 @@ def test_condition_id_distinguishes_the_rq1_variable():
     off = RunFingerprint.create(**{**GOOD, "traps_enabled": False})
     assert on.condition_id != off.condition_id
     assert on.condition_id == RunFingerprint.create(**GOOD).condition_id
+
+
+def test_condition_id_distinguishes_the_harness():
+    claude = RunFingerprint.create(**GOOD)
+    opencode = RunFingerprint.create(**{**GOOD, "harness": "open_code"})
+    assert claude.condition_id != opencode.condition_id
 
 
 # ----------------------------------------------------------- the HR grant

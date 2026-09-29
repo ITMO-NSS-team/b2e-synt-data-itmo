@@ -26,6 +26,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_USER", AUTH[0])
     monkeypatch.setenv("ADMIN_PASSWORD", AUTH[1])
     monkeypatch.setenv("B2E_REGISTRY_DB", str(tmp_path / "registry.db"))
+    monkeypatch.setenv("B2E_HARNESS", "claude_code")
+    monkeypatch.setenv("B2E_MODEL", "test-model")
     # AdminState seeds the shipped configs on construction — it holds the only
     # read-write mount of the registry, so if it did not, nothing in the stack
     # could. That makes the shipped defaults version 1, and the known-content
@@ -146,10 +148,7 @@ def test_invalid_config_is_rejected_not_committed(client):
 
 
 def test_a_context_strategy_the_harness_cannot_honour_is_rejected(client):
-    """The dropdown offers all three values because harness is edited on the
-    same form. Submitting windowed while the harness stays claude_code is the
-    incoherent half of that, and it must not commit a version whose declared
-    condition the run would ignore."""
+    """The env-selected CLI cannot silently accept loop-only context packing."""
     c, state = client
     token = _token(c)
     before = state.registry.head("agent_config").version
@@ -160,19 +159,16 @@ def test_a_context_strategy_the_harness_cannot_honour_is_rejected(client):
     assert state.registry.head("agent_config").version == before
 
 
-def test_switching_harness_and_context_strategy_together_is_accepted(client):
-    """The coherent half: the form must not block a researcher moving the whole
-    pair onto the loop that implements packing."""
+def test_posting_a_harness_cannot_override_the_environment(client):
+    """A form value cannot override the deployment's harness."""
     c, state = client
     token = _token(c)
     before = state.registry.head("agent_config").version
     r = c.post("/config", auth=AUTH, follow_redirects=False,
                data={"context_strategy": "windowed", "harness": "messages_api",
                      CSRF_FIELD: token})
-    assert r.status_code == 303
-    version, body = state.registry.load("agent_config")
-    assert version.version == before + 1
-    assert (body["context_strategy"], body["harness"]) == ("windowed", "messages_api")
+    assert r.status_code == 422
+    assert state.registry.head("agent_config").version == before
 
 
 def test_a_stored_config_that_predates_the_constraint_renders_instead_of_500(client):

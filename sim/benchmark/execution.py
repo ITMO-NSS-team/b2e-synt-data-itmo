@@ -218,6 +218,7 @@ class PinnedConfigActivator:
             raise ValueError(f"{mode.name}: live agent tool_subset differs from mode")
         if (
             config.get("model_id") != mode.common.model_id
+            or config.get("harness", "claude_code") != mode.common.harness
             or config.get("temperature") != mode.common.temperature
             or config.get("code_execution") != mode.common.code_execution
             or config.get("conversation_mode") != "stateless"

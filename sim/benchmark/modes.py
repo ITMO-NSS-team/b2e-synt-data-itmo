@@ -44,6 +44,7 @@ class CommonConditions:
 
     Attributes:
         model_id: Model identifier under test.
+        harness: Runtime executing the model.
         temperature: Sampling temperature; must be finite.
         prompt_registry_version: Pinned prompt ref, e.g. ``system_prompt@1``.
         snapshot_id: Data corpus id that every case must match.
@@ -59,6 +60,7 @@ class CommonConditions:
     traps_enabled: bool
     latency_profile: str
     hr_employee_ids: tuple[str, ...]
+    harness: str = "claude_code"
     code_execution: str = "forbidden"
 
     def __post_init__(self) -> None:
@@ -78,6 +80,8 @@ class CommonConditions:
             raise ValueError("unknown latency_profile")
         if self.code_execution != "forbidden":
             raise ValueError("benchmark modes require code_execution=forbidden")
+        if self.harness not in ("claude_code", "open_code", "messages_api"):
+            raise ValueError("unknown harness")
         if not isinstance(self.hr_employee_ids, tuple) or any(
             not isinstance(value, str) or not value.strip() for value in self.hr_employee_ids
         ):

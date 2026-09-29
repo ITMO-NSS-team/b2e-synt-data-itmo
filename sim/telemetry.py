@@ -410,6 +410,7 @@ def open_tool_span(
     description: str = "",
     parameters: dict[str, Any] | None = None,
     tool_call_id: str | None = None,
+    start_time: int | None = None,
 ) -> Span:
     """A TOOL span opened now and closed later, explicitly parented.
 
@@ -424,13 +425,15 @@ def open_tool_span(
     instrumentation right up until you try to read a turn.
     """
     ctx = trace.set_span_in_context(parent)
-    span = get_tracer().start_span(f"tool.{name}", context=ctx)
+    span = get_tracer().start_span(
+        f"tool.{name}", context=ctx, start_time=start_time)
     _describe_tool(span, name, description, parameters, tool_call_id)
     return span
 
 
 def close_tool_span(span: Span, *, output: Any = None,
-                    unfinished: bool = False) -> None:
+                    unfinished: bool = False,
+                    end_time: int | None = None) -> None:
     """End a span opened by :func:`open_tool_span`.
 
     ``unfinished`` marks a tool whose result never arrived — the turn timed out
@@ -443,7 +446,7 @@ def close_tool_span(span: Span, *, output: Any = None,
     if unfinished:
         span.set_attribute("b2e.tool.unfinished", True)
         span.set_status(Status(StatusCode.ERROR, "no tool_result before the turn ended"))
-    span.end()
+    span.end(end_time=end_time)
 
 
 @contextmanager

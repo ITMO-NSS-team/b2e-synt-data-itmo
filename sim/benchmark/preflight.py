@@ -174,6 +174,7 @@ def preflight_case(
         agent_config_version=agent_config_version,
         prompt_registry_version=mode.common.prompt_registry_version,
         skill_registry_hash=case.raw["skill_registry_hash"],
+        harness=mode.common.harness,
         model_id=mode.common.model_id,
         temperature=mode.common.temperature,
         data_snapshot_hash=manifest["snapshot_id"],

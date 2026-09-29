@@ -141,7 +141,7 @@ def test_worker_does_not_pass_its_environment_to_the_skill(monkeypatch):
     keys = out["result"]["keys"]
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in keys
     assert set(keys) <= {"PATH", "HOME", "LC_ALL", "PYTHONDONTWRITEBYTECODE",
-                         "PYTHONPATH"}
+                         "PYTHONPATH", "__CF_USER_TEXT_ENCODING"}
 
 
 # ------------------------------------------------------------------- spool

@@ -101,7 +101,7 @@ class AgentState:
             self.harness_status = f"failed: {type(exc).__name__}: {exc}"
 
     def _build_harness(self):
-        """The Claude Code harness, or None if the CLI is unavailable.
+        """Build the CLI selected by ``B2E_HARNESS``.
 
         Absence is reported through /healthz rather than raised at import: the
         messages_api harness still works without the CLI, and a service that
@@ -110,15 +110,48 @@ class AgentState:
         """
         from shutil import which
 
-        from sim.agent.claude_code import ClaudeCodeHarness
+        from sim.agent.provider import env_harness, turn_timeout_seconds
 
         env = os.environ
+        selected = env_harness()
+        if not selected:
+            raise ValueError("B2E_HARNESS is empty; set it in deploy/.env")
+        if selected == "messages_api":
+            self.harness_status = "ready (messages_api; no CLI)"
+            return None
+        if selected == "open_code":
+            from sim.agent.opencode import OpenCodeHarness
+
+            binary = env.get("B2E_OPENCODE_BIN", "opencode")
+            if which(binary) is None:
+                self.harness_status = f"unavailable: {binary} not on PATH"
+                return None
+            self.harness_status = f"ready ({binary})"
+            return OpenCodeHarness(
+                heimdall_url=self.heimdall_url,
+                heimdall_token=self.heimdall_token,
+                bridge_path=env.get("B2E_MCP_BRIDGE", "/app/heimdall/bridge.py"),
+                runner_path=env.get("B2E_SKILL_RUNNER", "/opt/skills/run"),
+                opencode_bin=binary,
+                python_bin=env.get("B2E_PYTHON_BIN", "python3.12"),
+                proxy={k: env[k] for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
+                       if env.get(k)},
+                session_root=env.get("B2E_SESSION_ROOT", "var/sessions"),
+                opencode_home=env.get("B2E_OPENCODE_HOME") or None,
+                timeout_seconds=turn_timeout_seconds(),
+            )
+        if selected != "claude_code":
+            raise ValueError(
+                f"B2E_HARNESS={selected!r} is unsupported; choose one of "
+                "claude_code, open_code, messages_api"
+            )
+
+        from sim.agent.claude_code import ClaudeCodeHarness
+
         claude_bin = env.get("B2E_CLAUDE_BIN", "claude")
         if which(claude_bin) is None:
             self.harness_status = f"unavailable: {claude_bin} not on PATH"
             return None
-
-        from sim.agent.provider import turn_timeout_seconds
 
         proxy = {k: env[k] for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
                  if env.get(k)}
@@ -129,6 +162,7 @@ class AgentState:
             bridge_path=env.get("B2E_MCP_BRIDGE", "/app/heimdall/bridge.py"),
             runner_path=env.get("B2E_SKILL_RUNNER", "/opt/skills/run"),
             claude_bin=claude_bin,
+            python_bin=env.get("B2E_PYTHON_BIN", "python3.12"),
             proxy=proxy,
             session_root=env.get("B2E_SESSION_ROOT", "var/sessions"),
             claude_home=env.get("B2E_CLAUDE_HOME") or None,
@@ -235,7 +269,9 @@ class AgentState:
                 detail=f"config ref {config_ref!r} is not in the registry. {status}",
             ) from exc
         try:
-            return config_version, AgentConfig.from_dict(config_body)
+            from sim.agent.provider import runtime_agent_config
+
+            return config_version, runtime_agent_config(config_body)
         except (ValueError, TypeError) as exc:
             # AgentConfig refuses pairs it cannot honour, and those refusals are
             # added over time: `context_strategy` other than `full` on the
@@ -262,6 +298,7 @@ class AgentState:
                 agent_config_version=config_version.ref,
                 prompt_registry_version=prompt_version.ref,
                 skill_registry_hash=self.skill_registry_hash(config.skill_registry_ref),
+                harness=config.harness,
                 model_id=config.model_id,
                 temperature=config.temperature,
                 data_snapshot_hash=condition.get("data_snapshot_hash"),
@@ -368,7 +405,7 @@ def create_app(state: AgentState | None = None) -> FastAPI:
             "employee_role": session["metadata"].get("role"),
         }
 
-        if config.harness == "claude_code":
+        if config.harness in ("claude_code", "open_code"):
             result = _run_claude_code(state, session, config, system_prompt,
                                       payload.content, fingerprint, session_id,
                                       metadata)
@@ -503,7 +540,7 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
                      config: AgentConfig, system_prompt: str, question: str,
                      fingerprint: RunFingerprint, session_id: str,
                      metadata: dict[str, Any]) -> "TurnResult":
-    """Run one turn as a headless Claude Code session, traced like any other.
+    """Run one turn through the environment-selected headless CLI harness.
 
     The root span is opened here rather than inside the harness so that both
     harnesses produce the same span shape — otherwise a study comparing them
@@ -515,8 +552,8 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
     if state.harness is None:
         raise HTTPException(
             status_code=503,
-            detail=f"harness=claude_code but the CLI is {state.harness_status}. "
-                   f"Install it, or set harness=messages_api in the agent config.")
+            detail=f"harness={config.harness} but the CLI is {state.harness_status}. "
+                   f"Install it, or change B2E_HARNESS in deploy/.env.")
 
     # Registered before the session starts so a poller that arrives during the
     # CLI's own startup — which is seconds, before any tool runs — sees "думаю"
@@ -573,7 +610,8 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
             raise
         turn.finish(failed=outcome.is_error)
         recorder.finish()
-        emit_spans(outcome, root=root, config=config, recorder=recorder)
+        emit_spans(outcome, root=root, config=config, recorder=recorder,
+                   harness_name=config.harness)
 
     # Bound after the turn, not before: the id is what the CLI actually used,
     # which is not always the one we asked it to resume.
@@ -584,7 +622,8 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         guard.record(tokens=outcome.total_tokens, usd=outcome.cost_usd)
 
     if outcome.is_error and not outcome.answer:
-        raise HTTPException(502, f"claude session failed: {outcome.error[:500]}")
+        raise HTTPException(
+            502, f"{config.harness} session failed: {outcome.error[:500]}")
 
     return TurnResult(
         answer=outcome.answer,
@@ -766,7 +805,7 @@ def _run_single(state: AgentState, employee_id: str, config_ref: str,
         **config.prompt_variables,
     })
     started = time.perf_counter()
-    if config.harness == "claude_code":
+    if config.harness in ("claude_code", "open_code"):
         result = _run_claude_code(
             state, {"employee_id": employee_id, "metadata": {}}, config,
             system_prompt, question, fingerprint, session_id,
