@@ -313,8 +313,14 @@ class ClaudeCodeResult:
     output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
-    cost_usd: float
+    cost_usd: float | None
     duration_ms: int
+    #: Tokens OpenCode reports separately from visible output. Claude Code's
+    #: output total already includes thinking, so its parser leaves this zero.
+    reasoning_tokens: int | None = None
+    #: Whether USD came from the harness, explicit API-equivalent rates, or is
+    #: unavailable because the provider is subscription-metered.
+    cost_mode: str = "reported"
     permission_denials: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     context_window: int | None = None
@@ -370,7 +376,11 @@ class ClaudeCodeResult:
 
     @property
     def total_tokens(self) -> int:
-        return self.prompt_tokens + self.output_tokens
+        return self.prompt_tokens + self.completion_tokens
+
+    @property
+    def completion_tokens(self) -> int:
+        return self.output_tokens + (self.reasoning_tokens or 0)
 
     @property
     def heimdall_calls(self) -> int:
@@ -872,6 +882,9 @@ class LlmCall:
     #: transcript carries no duration of any kind — see parse_transcript.
     ended_ns: int
     started_ns: int
+    reasoning_tokens: int | None = None
+    cost_usd: float | None = None
+    cost_mode: str = "reported"
     #: What the model produced, in the convention's vocabulary: `reasoning` and
     #: `text` blocks in the order they were written.
     contents: list[dict[str, Any]] = field(default_factory=list)
@@ -884,6 +897,10 @@ class LlmCall:
     @property
     def prompt_tokens(self) -> int:
         return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
+
+    @property
+    def completion_tokens(self) -> int:
+        return self.output_tokens + (self.reasoning_tokens or 0)
 
     @property
     def reasoning(self) -> str:
@@ -1151,7 +1168,8 @@ def _prompt_messages(call: LlmCall) -> tuple[list[dict[str, Any]], int]:
 
 def emit_llm_spans(calls: list[LlmCall], *, root: Span,
                    system: str | None = None, content: bool = True,
-                   recorder: "ToolSpanRecorder | None" = None) -> None:
+                   recorder: "ToolSpanRecorder | None" = None,
+                   protocol: str = "anthropic") -> None:
     """One LLM span per API call, under the turn.
 
     Unlike the AGENT root, these do populate Phoenix's own token columns — that
@@ -1192,18 +1210,26 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
             span.set_attribute("gen_ai.request.model", call.model)
             span.set_attribute("gen_ai.response.model", call.model)
             span.set_attribute("gen_ai.usage.input_tokens", call.prompt_tokens)
-            span.set_attribute("gen_ai.usage.output_tokens", call.output_tokens)
+            span.set_attribute("gen_ai.usage.output_tokens", call.completion_tokens)
             span.set_attribute("gen_ai.usage.cache_read.input_tokens",
                                call.cache_read_tokens)
             span.set_attribute("gen_ai.usage.cache_creation.input_tokens",
                                call.cache_creation_tokens)
-            span.set_attribute("b2e.llm.protocol", "anthropic")
+            span.set_attribute("b2e.llm.protocol", protocol)
             span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT,
                                call.prompt_tokens)
             span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION,
-                               call.output_tokens)
+                               call.completion_tokens)
             span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL,
-                               call.prompt_tokens + call.output_tokens)
+                               call.prompt_tokens + call.completion_tokens)
+            if call.reasoning_tokens is not None:
+                span.set_attribute(
+                    SpanAttributes.LLM_TOKEN_COUNT_COMPLETION_DETAILS_REASONING,
+                    call.reasoning_tokens)
+            span.set_attribute("b2e.llm.visible_output_tokens", call.output_tokens)
+            span.set_attribute("b2e.cost.mode", call.cost_mode)
+            if call.cost_usd is not None:
+                span.set_attribute(SpanAttributes.LLM_COST_TOTAL, call.cost_usd)
             span.set_attribute(
                 SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_READ,
                 call.cache_read_tokens)
@@ -1828,7 +1854,9 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute("b2e.turn.tool_calls", len(result.tool_calls))
     root.set_attribute("b2e.turn.heimdall_calls", result.heimdall_calls)
     root.set_attribute("b2e.turn.skill_runs", result.skill_runs)
-    root.set_attribute("b2e.turn.cost_usd", round(result.cost_usd, 6))
+    root.set_attribute("b2e.cost.mode", result.cost_mode)
+    if result.cost_usd is not None:
+        root.set_attribute("b2e.turn.cost_usd", round(result.cost_usd, 6))
     root.set_attribute("b2e.harness", harness_name)
     provider = _provider_name()
     root.set_attribute("gen_ai.operation.name", "chat")
@@ -1849,15 +1877,23 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     # kept beside it, because a cache read and a fresh prompt token cost
     # different money.
     root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT, result.prompt_tokens)
-    root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, result.output_tokens)
+    root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION,
+                       result.completion_tokens)
     root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, result.total_tokens)
+    if result.reasoning_tokens is not None:
+        root.set_attribute(
+            SpanAttributes.LLM_TOKEN_COUNT_COMPLETION_DETAILS_REASONING,
+            result.reasoning_tokens)
     root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_READ,
                        result.cache_read_tokens)
     root.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_WRITE,
                        result.cache_creation_tokens)
     root.set_attribute("b2e.turn.uncached_prompt_tokens", result.input_tokens)
+    root.set_attribute("b2e.turn.visible_output_tokens", result.output_tokens)
+    if result.reasoning_tokens is not None:
+        root.set_attribute("b2e.turn.reasoning_tokens", result.reasoning_tokens)
     root.set_attribute("gen_ai.usage.input_tokens", result.prompt_tokens)
-    root.set_attribute("gen_ai.usage.output_tokens", result.output_tokens)
+    root.set_attribute("gen_ai.usage.output_tokens", result.completion_tokens)
     root.set_attribute("gen_ai.usage.cache_read.input_tokens",
                        result.cache_read_tokens)
     root.set_attribute("gen_ai.usage.cache_creation.input_tokens",
@@ -1906,7 +1942,8 @@ def emit_spans(result: ClaudeCodeResult, *, root,
 
     content = capture_llm_content()
     emit_llm_spans(result.llm_calls, root=root, system=result.system_suffix or None,
-                   content=content, recorder=recorder)
+                   content=content, recorder=recorder,
+                   protocol="openai" if harness_name == "open_code" else "anthropic")
     if not content:
         root.set_attribute("b2e.trace.llm_content", "disabled")
     if result.transcript_status:
