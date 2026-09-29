@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from sim.benchmark.cli import common_conditions, load_cases_path, select_modes
+from sim.benchmark.cli import common_conditions, load_cases_path, parser, select_modes
 from sim.benchmark.modes import CommonConditions, build_modes
 from tests.fixtures.constants import EXAMPLE
 
@@ -24,14 +24,20 @@ def live_payload() -> dict:
     return {
         "refs": {
             "general_knowledge": "benchmark_general@1",
+            "skills_disabled": "benchmark_disabled@1",
             "existing_skills": "benchmark_on@1",
         },
         "configs": {
             "benchmark_general@1": off,
+            "benchmark_disabled@1": {
+                **config,
+                "tool_subset": ["list_models", "describe_model", "mcp_query"],
+            },
             "benchmark_on@1": config,
         },
         "prompt_versions": {
             "benchmark_general@1": "system_prompt@2",
+            "benchmark_disabled@1": "system_prompt@2",
             "benchmark_on@1": "system_prompt@2",
         },
         "emulator": {
@@ -41,6 +47,12 @@ def live_payload() -> dict:
             "hr_employee_ids": [],
         },
     }
+
+
+def test_cli_uses_the_snapshot_mounted_from_data_dir_by_default() -> None:
+    args = parser().parse_args(["--cases", "cases"])
+
+    assert args.data == "/data/snapshot"
 
 
 def test_cases_path_accepts_directory_json_and_jsonl_and_skips_draft(tmp_path) -> None:

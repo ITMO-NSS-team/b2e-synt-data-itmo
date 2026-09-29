@@ -1,8 +1,8 @@
 """Stand trace polling waits for the requested session, not any HTTP 200."""
 from __future__ import annotations
 
-from sim.skill_eval.stand import StandClient
-from sim.skill_eval.types import EvalCase, SessionSpec
+from sim.benchmark.stand import StandClient
+from sim.benchmark.types import EvalCase, SessionSpec
 import httpx
 import pytest
 
@@ -40,7 +40,7 @@ def test_wait_trace_ignores_foreign_200_until_target_arrives(monkeypatch) -> Non
     stand = object.__new__(StandClient)
     stand.trace_attempts = 2
     stand._client = Client([Response("ses-foreign"), Response("ses-target")])
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _seconds: None)
 
     trace = stand._wait_trace("ses-target")
 
@@ -52,7 +52,7 @@ def test_wait_trace_returns_none_when_every_200_is_foreign(monkeypatch) -> None:
     stand = object.__new__(StandClient)
     stand.trace_attempts = 2
     stand._client = Client([Response("ses-a"), Response("ses-b")])
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _seconds: None)
 
     assert stand._wait_trace("ses-target") is None
 
@@ -105,7 +105,7 @@ def test_http_error_keeps_the_full_body(monkeypatch) -> None:
     stand = object.__new__(StandClient)
     stand.trace_attempts = 1
     stand._client = ScriptedClient(posts=[HttpResponse(502, text=long_body)])
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _seconds: None)
 
     turn = stand.run(_case(), _spec())
 
@@ -128,7 +128,7 @@ def test_message_http_error_still_stores_the_session_trace(monkeypatch) -> None:
         ],
         gets=[Response("ses-target")],
     )
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _seconds: None)
 
     turn = stand.run(_case(), _spec())
 
@@ -174,7 +174,7 @@ def test_tool_free_arm_does_not_wait_for_denied_heimdall_attempts(monkeypatch) -
 
 
 def test_mixed_research_response_discards_foreign_spans():
-    from sim.skill_eval.stand import _owned_trace
+    from sim.benchmark.stand import _owned_trace
     mixed = {"tree": [
         {"name": "b2e.turn", "context": {"trace_id": "ours"},
          "attributes": {"session.id": "ses-ours"}, "children": [
@@ -210,7 +210,7 @@ def test_direct_phoenix_reads_paginated_trace_waits_and_filters(monkeypatch):
     stand.trace_backend = "phoenix"
     stand.trace_attempts = 3
     stand._phoenix_http = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _: None)
     trace = stand._wait_trace("ses-ours", trace_id="ours")
     assert len(requests) == 4  # two complete identical reads
     assert len(trace["spans"]) == 2
@@ -248,10 +248,10 @@ def test_direct_phoenix_waits_for_reported_heimdall_calls(monkeypatch):
     stand.trace_backend = "phoenix"
     stand.trace_attempts = 4
     stand._phoenix_http = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _: None)
     trace = stand._wait_trace("ses-ours", trace_id="ours", expected_heimdall_calls=1)
     assert len(calls) == 4
-    from sim.skill_eval.scoring.trace import root_span_id
+    from sim.benchmark.trace import root_span_id
     assert root_span_id(trace) == "zzz-root"
 
 
@@ -278,7 +278,7 @@ def test_direct_phoenix_keeps_polling_while_spans_still_arrive(monkeypatch):
     stand.trace_attempts = 2
     stand._phoenix_http = httpx.Client(
         transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _: None)
     trace = stand._wait_trace("ses-ours", trace_id="ours", expected_heimdall_calls=6)
     assert len(calls) == 7
     assert len(trace["spans"]) == 7
@@ -300,7 +300,7 @@ def test_direct_phoenix_keeps_polling_before_any_span_lands(monkeypatch):
     stand.trace_attempts = 2
     stand._phoenix_http = httpx.Client(
         transport=httpx.MockTransport(handler), base_url="https://stand/phoenix")
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _: None)
     trace = stand._wait_trace("ses-ours", trace_id="ours")
     assert len(calls) == 7
     assert trace["spans"] == [root]
@@ -356,6 +356,6 @@ def test_failed_phoenix_never_falls_back_to_unfiltered_research(monkeypatch):
     stand._phoenix_http = httpx.Client(transport=httpx.MockTransport(
         lambda request: httpx.Response(503)), base_url="https://stand/phoenix")
     clock = iter([0.0, 1.0, 2.0])
-    monkeypatch.setattr("sim.skill_eval.stand.time.monotonic", lambda: next(clock))
-    monkeypatch.setattr("sim.skill_eval.stand.time.sleep", lambda _: None)
+    monkeypatch.setattr("sim.benchmark.stand.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("sim.benchmark.stand.time.sleep", lambda _: None)
     assert stand._wait_trace("ses-ours", trace_id="ours") is None

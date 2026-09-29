@@ -81,7 +81,7 @@ def main() -> int:
     step("1 · bring up the emulator")
     emu_port = free_port()
     emulator = create_emulator(EmulatorConfig(
-        snapshot_traps_on=os.environ.get("SMOKE_DATA", "data-small"),
+        snapshot_traps_on=os.environ.get("SMOKE_DATA", "data"),
         latency_profile="realistic"))
     emu_server, emu_thread = serve(emulator, emu_port)
     emu_url = f"http://127.0.0.1:{emu_port}"
@@ -91,8 +91,14 @@ def main() -> int:
           f"snapshot={health['data_snapshot_hash']} traps={health['traps_enabled']} "
           f"latency={health['latency_profile']}")
 
-    identities = httpx.get(f"{emu_url}/control/identities?n=3",
-                           trust_env=False).json()
+    # The first identity lookup builds an index over the whole snapshot.  The
+    # full corpus is intentionally much larger than data-small, so the default
+    # five-second httpx timeout is too short on a cold run.
+    identities = httpx.get(
+        f"{emu_url}/control/identities?n=3",
+        trust_env=False,
+        timeout=float(os.environ.get("SMOKE_TIMEOUT", "120")),
+    ).json()
     employee = next(i for i in identities if i["role"] == "self")
     check("researcher picked an employee identity", True,
           f"employee_id={employee['employee_id']} role={employee['role']}")

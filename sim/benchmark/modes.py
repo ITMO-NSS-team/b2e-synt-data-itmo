@@ -15,6 +15,7 @@ from heimdall.skills.registry import EXTENSIONS, Registry
 from sim.fingerprint import VALID_LATENCY_PROFILES
 
 GENERAL_KNOWLEDGE_TOOLS: tuple[str, ...] = ()
+DATA_TOOLS = ("list_models", "describe_model", "mcp_query")
 SKILL_TOOLS = (
     "list_models", "describe_model", "get_docs", "mcp_query",
     "find_skills", "get_skill",
@@ -27,10 +28,12 @@ class BenchmarkMode(str, Enum):
 
     Attributes:
         GENERAL_KNOWLEDGE: Model knowledge only; no Heimdall tools or catalog.
+        SKILLS_DISABLED: Data discovery and query tools, without skill guidance.
         EXISTING_SKILLS: Catalog of already-deployed skills plus ``find_skills``/``get_skill``.
         GENERATED_SKILLS: Combined catalog with generated skills; may still be a mock.
     """
     GENERAL_KNOWLEDGE = "general_knowledge"
+    SKILLS_DISABLED = "skills_disabled"
     EXISTING_SKILLS = "existing_skills"
     GENERATED_SKILLS = "generated_skills"
 
@@ -202,11 +205,21 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
             "none",
         ),
         ModeStrategy(
+            BenchmarkMode.SKILLS_DISABLED,
+            DATA_TOOLS,
+            False,
+            "none",
+            comparison_baselines=(BenchmarkMode.GENERAL_KNOWLEDGE,),
+        ),
+        ModeStrategy(
             BenchmarkMode.EXISTING_SKILLS,
             SKILL_TOOLS,
             True,
             "base",
-            comparison_baselines=(BenchmarkMode.GENERAL_KNOWLEDGE,),
+            comparison_baselines=(
+                BenchmarkMode.GENERAL_KNOWLEDGE,
+                BenchmarkMode.SKILLS_DISABLED,
+            ),
         ),
         ModeStrategy(
             BenchmarkMode.GENERATED_SKILLS,
@@ -216,6 +229,7 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
             generated=True,
             comparison_baselines=(
                 BenchmarkMode.GENERAL_KNOWLEDGE,
+                BenchmarkMode.SKILLS_DISABLED,
                 BenchmarkMode.EXISTING_SKILLS,
             ),
         ),
@@ -252,6 +266,7 @@ class ModeConfigs:
 
     Attributes:
         general_knowledge: Baseline with no Heimdall tools, catalog, docs or data access.
+        skills_disabled: Data tools without skill discovery, recipes or procedural docs.
         existing_skills: Catalog of already-deployed skills.
         generated_skills: Combined catalog, possibly still a mock.
     """
@@ -273,6 +288,10 @@ class ModeConfigs:
     @property
     def general_knowledge(self) -> ModeConfig:
         return self[BenchmarkMode.GENERAL_KNOWLEDGE]
+
+    @property
+    def skills_disabled(self) -> ModeConfig:
+        return self[BenchmarkMode.SKILLS_DISABLED]
 
     @property
     def existing_skills(self) -> ModeConfig:
@@ -408,7 +427,7 @@ def write_mode_config(modes: ModeConfigs, output: str | Path) -> Path:
     """Persist all experiment variables explicitly for subsequent preflight.
 
     Args:
-        modes: The three arms; they must share identical ``common`` conditions.
+        modes: Registered arms; they must share identical ``common`` conditions.
         output: Destination JSON path.
 
     Returns:

@@ -184,8 +184,21 @@ def test_fatal_turn_error_ignores_successful_harness_denials() -> None:
     )
 
 
+def test_fatal_turn_error_detects_transport_failure_reported_as_answer() -> None:
+    assert fatal_turn_error(
+        None, answer="API Error: Unable to connect to API (ENOTIMP)"
+    ) == "API Error: Unable to connect to API"
+    assert fatal_turn_error(
+        None,
+        answer=(
+            "API Error: Connection closed mid-response. "
+            "The response above may be incomplete."
+        ),
+    ) == "API Error: Connection closed mid-response"
+
+
 def test_stand_executor_leaves_missing_trace_to_the_runner(monkeypatch) -> None:
-    from sim.skill_eval.types import TurnResult
+    from sim.benchmark.types import TurnResult
 
     class TraceMissingStand:
         def __init__(self, **_options) -> None:
@@ -199,7 +212,7 @@ def test_stand_executor_leaves_missing_trace_to_the_runner(monkeypatch) -> None:
                 trace_id=None, root_span_id=None,
             )
 
-    monkeypatch.setattr("sim.skill_eval.stand.StandClient", TraceMissingStand)
+    monkeypatch.setattr("sim.benchmark.stand.StandClient", TraceMissingStand)
     executor = StandSessionExecutor(trace_attempts=1)
 
     turn = executor.execute(AgentRequest(

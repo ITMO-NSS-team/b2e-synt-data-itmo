@@ -157,7 +157,7 @@ services:
       HEIMDALL_QUERY_BUDGET_BYTES: ${QUERY_BUDGET_BYTES:-4294967296}
     volumes:
       - *resolv-overlay
-      - ${DATA_DIR:-../data-small}:/data/snapshot:ro
+      - ${DATA_DIR:-../data}:/data/snapshot:ro
       - ${DATA_DIR_NOTRAPS:-../data-small}:/data/snapshot-notraps:ro
       - ../heimdall-skills:/app/heimdall-skills:ro
     networks: [internal]
@@ -349,7 +349,7 @@ services:
       registry-init: {condition: service_completed_successfully}
 
   # -------------------------------------------------------- benchmark runner
-  # One-off job used by `make benchmark-server`. It shares the stand's
+  # One-off job used by `make benchmarking`. It shares the stand's
   # internal network but is not part of the long-running deployment. Source
   # datasets and catalogs are read-only; only var/ and benchmarking/results/
   # are writable experiment artifacts.
@@ -373,7 +373,7 @@ services:
       - ../heimdall-skills:/app/heimdall-skills:ro
       - ../catalog:/app/catalog:ro
       - ../var:/app/var
-      - ${DATA_DIR:-../data-small}:/data/snapshot:ro
+      - ${DATA_DIR:-../data}:/data/snapshot:ro
     networks: [internal]
     read_only: true
     tmpfs:

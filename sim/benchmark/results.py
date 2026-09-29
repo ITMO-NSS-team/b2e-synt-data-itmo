@@ -97,7 +97,7 @@ class ResultWriter:
         path = self.root / "run-manifest.json"
         if path.exists():
             raise ValueError(f"run manifest already exists: {path}")
-        path.write_text(_json(manifest) + "\n", encoding="utf-8")
+        path.write_text(_pretty_json(manifest) + "\n", encoding="utf-8")
         return path
 
     def write_summary(self, results: Iterable[RunResult]) -> Path:
@@ -111,7 +111,7 @@ class ResultWriter:
         """
         summary = summarize_results(results)
         path = self.root / "summary.json"
-        path.write_text(_json(summary) + "\n", encoding="utf-8")
+        path.write_text(_pretty_json(summary) + "\n", encoding="utf-8")
         return path
 
 
@@ -119,21 +119,24 @@ _REVIEW_STATUSES = frozenset({
     "normalization_pending", "condition_invalid", "unscored",
 })
 _SKIP_STATUSES = frozenset({"draft_skipped", "mock_skipped"})
+_SCORED_STATUSES = frozenset({"completed", "normalization_pending"})
 
 
 def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
-    """Aggregate completed runs by mode and list cells that need manual review.
+    """Aggregate scored runs by mode and list cells that need manual review.
 
     Args:
         results: Cells from one evaluation, including skips.
 
     Returns:
-        Mapping with ``n_runs``, skip/review counts, ``review`` rows,
-        ``by_mode`` means and ``comparisons``. Only ``completed`` rows with a
-        score enter the means.
+        Mapping with separate total, completed and scored counts, skip/review
+        counts, ``review`` rows, ``by_mode`` means and ``comparisons``.
+        Format failures are scored failures; infrastructure and condition
+        failures are excluded from metric means.
     """
     rows = list(results)
     complete = [row for row in rows if row.status == "completed" and row.score]
+    scored = [row for row in rows if row.status in _SCORED_STATUSES and row.score]
     review = [
         {
             "run_id": row.run_id,
@@ -148,14 +151,18 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
     modes = sorted({row.mode for row in rows})
     by_mode: dict[str, dict[str, Any]] = {}
     for mode in modes:
-        group = [row for row in complete if row.mode == mode]
-        skipped = [row for row in rows if row.mode == mode and row.status in _SKIP_STATUSES]
+        mode_rows = [row for row in rows if row.mode == mode]
+        group = [row for row in scored if row.mode == mode]
+        completed = [row for row in complete if row.mode == mode]
+        skipped = [row for row in mode_rows if row.status in _SKIP_STATUSES]
         metrics = [row.score["metrics"] for row in group]
         by_mode[mode] = {
-            "n_runs": len(group),
+            "n_runs": len(mode_rows),
+            "n_completed": len(completed),
+            "n_scored": len(group),
             "n_skipped": len(skipped),
             "n_review": sum(
-                row.mode == mode and row.status in _REVIEW_STATUSES for row in rows
+                row.status in _REVIEW_STATUSES for row in mode_rows
             ),
             **{
                 name: _mean(metric.get(name) for metric in metrics)
@@ -173,7 +180,9 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
         key = f"{target}_vs_{baseline}"
         comparisons[key] = _compare(by_mode[target], by_mode[baseline])
     return {
-        "n_runs": len(complete),
+        "n_runs": len(rows),
+        "n_completed": len(complete),
+        "n_scored": len(scored),
         "n_skipped": sum(row.status in _SKIP_STATUSES for row in rows),
         "n_normalization_pending": sum(row.status == "normalization_pending" for row in rows),
         "n_condition_invalid": sum(row.status == "condition_invalid" for row in rows),
@@ -229,3 +238,10 @@ def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _pretty_json(value: Any) -> str:
+    """Render human-facing artifacts without changing their JSON structure."""
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, indent=2, default=str,
+    )

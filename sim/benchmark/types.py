@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -41,25 +41,3 @@ class TurnResult:
     root_span_id: str | None
     live_snapshot_id: str | None = None
     fingerprint: dict[str, Any] | None = None
-
-
-@dataclass(slots=True)
-class CaseScore:
-    task_success: bool
-    routing_hit: bool | None
-    reasons: list[str] = field(default_factory=list)
-    skipped_numeric: bool = False
-
-
-@dataclass(slots=True)
-class RunSummary:
-    eval_id: str
-    catalog_name: str
-    n_cases: int
-    task_success_rate: float
-    routing_accuracy: float | None
-    mean_heimdall_calls: float
-    mean_tokens: float
-    mean_latency_ms: float
-    per_category: dict[str, dict[str, float]]
-    records: list[dict[str, Any]]

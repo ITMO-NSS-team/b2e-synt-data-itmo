@@ -19,6 +19,7 @@ from .runner import BenchmarkRunner
 
 DEFAULT_MODES = (
     BenchmarkMode.GENERAL_KNOWLEDGE.value,
+    BenchmarkMode.SKILLS_DISABLED.value,
     BenchmarkMode.EXISTING_SKILLS.value,
 )
 
@@ -143,7 +144,7 @@ def common_conditions(
         CommonConditions copied into every mode.
 
     Raises:
-        ValueError: If skills-on/off configs disagree on model, prompt or code policy.
+        ValueError: If pinned mode configs disagree on model, prompt or code policy.
     """
     refs = payload["refs"]
     configs = payload["configs"]
@@ -153,7 +154,7 @@ def common_conditions(
         raise ValueError("at least one mode is required for common conditions")
     required_modes = set(mode_names)
     if not required_modes <= refs.keys():
-        raise ValueError("live stand manifest has no pinned skills-on/off refs")
+        raise ValueError("live stand manifest has no refs for all requested modes")
     selected = [configs[refs[name]] for name in mode_names]
     stable_fields = (
         "model_id", "temperature", "code_execution", "conversation_mode",
@@ -362,16 +363,20 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Build the host-side benchmark CLI.
+    """Build the benchmark-runner CLI.
 
     Returns:
         Parser for ``python -m sim.benchmark.cli``.
     """
     result = argparse.ArgumentParser(
-        description="Run ready benchmark cases against the local Compose stand."
+        description="Run verified benchmark cases inside the stand network."
     )
     result.add_argument("--cases", required=True, help="Directory, JSON case, or JSONL suite")
-    result.add_argument("--data", default="data-small", help="Host path to the mounted data snapshot")
+    result.add_argument(
+        "--data",
+        default="/data/snapshot",
+        help="Path to the data snapshot mounted from DATA_DIR",
+    )
     result.add_argument("--catalog", default="heimdall-skills")
     result.add_argument("--catalog-snapshots", default="var/benchmark-catalog-snapshots")
     result.add_argument("--model-catalog", default="catalog/snapshot.json")
@@ -450,7 +455,8 @@ def _finished_report(results: list[Any], writer: ResultWriter) -> dict[str, Any]
     return {
         "results_dir": str(writer.root),
         "runs": len(results),
-        "n_completed": summary["n_runs"],
+        "n_completed": summary["n_completed"],
+        "n_scored": summary["n_scored"],
         "n_review": len(summary["review"]),
         "n_normalization_pending": summary["n_normalization_pending"],
         "n_condition_invalid": summary["n_condition_invalid"],

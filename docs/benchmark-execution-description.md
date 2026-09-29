@@ -1,6 +1,6 @@
 # Запуск и оценка benchmark-кейсов
 
-Модуль `sim.benchmark` запускает эталонные бизнес-задачи на B2E-стенде и сравнивает ответы агента в режимах с уже существующими навыками информационного сервиса и без них. Runner выполняется рядом со стендом: либо в локальном Compose, либо в одноразовом контейнере внутри сети уже развёрнутого серверного стенда.
+Модуль `sim.benchmark` запускает эталонные бизнес-задачи на B2E-стенде и сравнивает ответы агента в режимах с уже существующими навыками информационного сервиса и без них. Единственный путь запуска — одноразовый `benchmark-runner` внутри сети Compose-стенда.
 
 В текущей реализации доступны:
 
@@ -25,6 +25,9 @@
 | `sim/benchmark/modes.py` | конфигурации режимов и хеширование каталогов навыков |
 | `sim/benchmark/preflight.py` | проверки перед обращением к LLM |
 | `sim/benchmark/execution.py` | запуск изолированной сессии и разбор трассы |
+| `sim/benchmark/stand.py` | HTTP-клиент агента и получение Phoenix-трассы |
+| `sim/benchmark/pin.py` | append-only конфигурации режимов в Registry |
+| `sim/benchmark/trace.py` | извлечение загруженных навыков из трассы |
 | `sim/benchmark/scoring.py` | нормализация ответа и расчёт метрик |
 | `sim/benchmark/results.py` | сохранение результатов и сводная статистика |
 | `sim/benchmark/cli.py` | командный интерфейс benchmark |
@@ -116,10 +119,21 @@
 | Режим | Инструменты | Каталог навыков | Статус |
 | --- | --- | --- | --- |
 | `general_knowledge` | нет | отсутствует | реализован |
+| `skills_disabled` | `list_models`, `describe_model`, `mcp_query` | отсутствует | реализован |
 | `existing_skills` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | уже существующий каталог навыков информационного сервиса | реализован |
 | `generated_skills` | инструменты режима `existing_skills` | стандартный каталог плюс generated overlay | описан; CLI пока создаёт mock-конфигурацию и отклоняет её выбор |
 
 `general_knowledge` служит отрицательным baseline: агент не получает инструменты стенда, включая `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills` и `get_skill`. Он не видит перечень витрин, не читает данные, не узнаёт поля и метрики и не получает приёмы и рецепты. Режим проверяет, решается ли задача из общих знаний модели без информации со стенда.
+
+`skills_disabled` отделяет доступ к данным от доступа к навыкам. Агент может
+найти витрину через `list_models`, узнать её колонки и метрики через
+`describe_model` и выполнить запрос через `mcp_query`. Ему недоступны
+`find_skills`, `get_skill`, `get_overview` и `get_docs`. Последний также считается
+skill-инструментом: он возвращает процедурные приёмы (`aggregate`, `filters`,
+`compare_people` и другие), а не бизнес-данные. Каталог навыков к режиму не
+подключается, а разрешение на запуск одобренных исполняемых навыков снимается.
+Служебный `ToolSearch` остаётся только загрузчиком схем разрешённых data-tools:
+MCP-мост публикует ему ровно три инструмента режима и не раскрывает остальные.
 
 Для сравнимости режимов фиксируются одинаковые:
 
@@ -153,9 +167,7 @@
 - валидность `recipe`, `reference` и исполняемых примеров `mcp_query`;
 - существование используемых витрин, полей и метрик.
 
-`benchmark-check` выполняет эти проверки без создания агентных сессий и без вызовов LLM.
-
-Текущая Make-обёртка `benchmark-live-config` рассчитана на Compose-развёртывание на той же машине, где запускается benchmark: она вызывает `make up`, а затем получает фактическую конфигурацию через `docker compose exec admin-ui`. Это ограничение Makefile, а не HTTP-клиента benchmark.
+`make benchmarking-check` выполняет эти проверки без создания агентных сессий и без вызовов LLM.
 
 ## Выполнение
 
@@ -178,27 +190,31 @@
 Требования:
 
 - заполнен `deploy/.env`;
-- `PUBLIC_URL` указывает на доступный стенд;
-- указан корректный `RESEARCHER_PASSWORD`;
 - подготовлен снимок данных с `manifest.json` и `truth/people.json`;
 - кейсы имеют статус `verified`.
 
-Команды `benchmark-check`, `benchmark-smoke` и `benchmark-run` самостоятельно поднимают локальный Docker Compose. Для уже работающего серверного стенда используются `benchmark-server` и `benchmark-server-smoke` непосредственно в checkout на сервере.
+Снимок выбирается только переменной `DATA_DIR` в `deploy/.env` (по умолчанию
+`../data`). Тот же путь используется при проверке `manifest.json` и монтируется
+в Heimdall и `benchmark-runner` как `/data/snapshot`, поэтому отдельный
+`BENCH_DATA_PATH` настраивать не требуется. Разовый запуск можно переопределить
+через `DATA_DIR=/absolute/path make benchmarking-check`.
+
+Каждая команда проверяет `manifest.json` и состояние `admin-ui`, `b2e-agent`, `phoenix`, `heimdall-emulator`. Если сервисы уже работают, они не перезапускаются. Иначе выполняется `make up`. Затем из `admin-ui` снимается live-config и запускается `benchmark-runner`.
 
 `CASES` может указывать на каталог JSON-файлов, один JSON-файл или JSONL-suite.
 
 ### Проверка без LLM
 
 ```bash
-make benchmark-check CASES=benchmarking/cases
+make benchmarking-check CASES=b2e-skill-benchmark/gold_dataset
 ```
 
 ### Smoke-прогон
 
-Запускает первый `verified`-кейс, оба реализованных режима и один повтор:
+Запускает первый `verified`-кейс, три реализованных режима и один повтор:
 
 ```bash
-make benchmark-smoke CASES=benchmarking/cases
+make benchmarking-smoke CASES=b2e-skill-benchmark/gold_dataset
 ```
 
 Smoke проверяет полный технический путь `case → agent → information service → trace → normalization → metrics`. Низкая accuracy не считается технической ошибкой. Ошибки preflight (снимок, роль, каталог, недоступный стенд) останавливают запуск до LLM. После старта хода ненормализуемый JSON, отсутствующая трасса или несовпадение fingerprint не останавливают матрицу: ячейка попадает в `summary.json` → `review` и не входит в средние метрики. Успешный отказ харнесса (`denied:Bash` и аналоги) при готовом ответе остаётся обычным `completed`.
@@ -206,8 +222,8 @@ Smoke проверяет полный технический путь `case → 
 ### Полный прогон
 
 ```bash
-make benchmark-run \
-  CASES=benchmarking/cases \
+make benchmarking \
+  CASES=b2e-skill-benchmark/gold_dataset \
   BENCH_REPETITIONS=3
 ```
 
@@ -215,9 +231,9 @@ make benchmark-run \
 
 | Параметр | По умолчанию | Назначение |
 | --- | --- | --- |
+| `DATA_DIR` | значение из `deploy/.env`, иначе `../data` | единственный источник пути к снимку для стенда и benchmark |
 | `CASES` | значение `CASES` из `deploy/.env` | источник кейсов |
-| `BENCH_DATA` | `DATA_DIR` из `deploy/.env` или `data-small` | снимок данных, доступный процессу benchmark |
-| `BENCH_MODES` | `general_knowledge,existing_skills` | режимы запуска |
+| `BENCH_MODES` | `general_knowledge,skills_disabled,existing_skills` | режимы запуска |
 | `BENCH_REPETITIONS` | `1` | число повторов полного прогона |
 | `BENCH_RESULTS` | `benchmarking/results` | каталог результатов |
 | `BENCH_EVAL_ID` | генерируется автоматически | идентификатор запуска |
@@ -254,7 +270,8 @@ make benchmark-run \
 
 `summary.json` содержит средние значения по режимам и парные сравнения:
 
-- `existing_skills` относительно `general_knowledge`;
+- `skills_disabled` относительно `general_knowledge`;
+- `existing_skills` относительно `skills_disabled` и `general_knowledge`;
 - `generated_skills` относительно `general_knowledge`, когда режим будет подключён;
 - `generated_skills` относительно `existing_skills`, когда режим будет подключён.
 
@@ -294,36 +311,24 @@ benchmarking/results/<eval_id>/
 - `unscored` — ход был, но нет трассы, пустой ответ после сбоя клиента и т.п.; ручной разбор, не в средних;
 - `draft_skipped` / `mock_skipped` — кейс или режим не допускается к выполнению.
 
-## Запуск на локальном или серверном стенде
+## Единый запуск
 
-### Локальный стенд
-
-Полный локальный путь сам поднимает Compose и затем запускает benchmark-клиент:
+Команды одинаковы для локального и серверного checkout:
 
 ```bash
-make benchmark-smoke CASES=benchmarking/cases
-make benchmark-run CASES=benchmarking/cases BENCH_REPETITIONS=3
-```
-
-`benchmark-smoke` выполняет первый verified-кейс в каждом выбранном режиме один раз. `benchmark-run` выполняет весь выбранный набор.
-
-### Уже развёрнутый серверный стенд
-
-Команды выполняются непосредственно в актуальном checkout на сервере:
-
-```bash
-cd /var/essdata/b2e-synt-data-itmo
-
 # Первый verified-кейс, один повтор
-make benchmark-server-smoke CASES=benchmarking/cases
+make benchmarking-smoke CASES=b2e-skill-benchmark/gold_dataset
+
+# Preflight всех verified-кейсов без LLM
+make benchmarking-check CASES=b2e-skill-benchmark/gold_dataset
 
 # Полный прогон
-make benchmark-server \
-  CASES=benchmarking/cases \
+make benchmarking \
+  CASES=b2e-skill-benchmark/gold_dataset \
   BENCH_REPETITIONS=3
 ```
 
-`benchmark-server` фиксирует live-конфигурацию и **append-only** пинит benchmark-конфиги от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Долгоживущие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются.
+`benchmarking` фиксирует live-конфигурацию и **append-only** пинит benchmark-конфиги от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Уже работающие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются.
 
 Runner обращается напрямую к `http://b2e-agent:8082` и `http://phoenix:6006`. Публичный proxy, HTTP Basic и SSH-транспорт не используются. Результаты сохраняются на той же машине в `benchmarking/results/<eval_id>/`.
 
@@ -331,14 +336,14 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 
 - `BENCH_LIMIT=5` — выполнить только первые пять verified-кейсов;
 - `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — параметры запуска и результатов;
-- `BENCH_MODES` — по умолчанию `general_knowledge,existing_skills`;
+- `BENCH_MODES` — по умолчанию `general_knowledge,skills_disabled,existing_skills`;
 - `BENCH_MODEL` — модель для pinned benchmark-конфигураций без изменения provider или harness.
 
-Отдельного remote-driver нет. Если стенд находится на другой машине, сначала нужно войти на неё обычным способом, а затем вызвать `benchmark-server` или `benchmark-server-smoke` в серверном checkout.
+Если стенд находится на другой машине, сначала нужно войти на неё обычным способом, а затем вызвать одну из трёх команд в серверном checkout.
 
 ## Текущие ограничения
 
-- CLI запускает `general_knowledge` и `existing_skills`; `generated_skills` запускается после подключения generated overlay.
+- CLI запускает `general_knowledge`, `skills_disabled` и `existing_skills`; `generated_skills` запускается после подключения generated overlay.
 - `generated_skills` требует отдельного механизма подключения combined-каталога.
 - LLM-as-judge не реализован; поле `llm_judge` в score остаётся незаполненным.
 - Порядок режимов детерминированный и пока не перемешивается.
