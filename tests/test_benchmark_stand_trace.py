@@ -255,6 +255,18 @@ def test_direct_phoenix_waits_for_reported_heimdall_calls(monkeypatch):
     assert root_span_id(trace) == "zzz-root"
 
 
+def test_root_span_id_finds_agent_in_an_unordered_flat_trace():
+    from sim.benchmark.trace import root_span_id
+
+    trace = {"spans": [
+        {"context": {"span_id": "child"}, "parent_id": "root",
+         "attributes": {"openinference.span.kind": "TOOL"}},
+        {"context": {"span_id": "root"},
+         "attributes": {"openinference.span.kind": "AGENT"}},
+    ]}
+    assert root_span_id(trace) == "root"
+
+
 def test_direct_phoenix_keeps_polling_while_spans_still_arrive(monkeypatch):
     root = {"name": "b2e.turn", "context": {"trace_id": "ours", "span_id": "root"},
             "end_time": "2026-01-01", "attributes": {"session.id": "ses-ours"}}
