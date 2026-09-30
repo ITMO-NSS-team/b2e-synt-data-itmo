@@ -74,24 +74,32 @@ def test_admin_redirects_are_relative():
     ("sim.agent.app", "/agent"),
     ("sim.research.app", "/research"),
 ])
-def test_root_path_is_read_from_the_environment(monkeypatch, module, prefix):
+def test_root_path_is_read_from_the_environment(monkeypatch, tmp_path, module, prefix):
     """With root_path set, FastAPI advertises {prefix}/openapi.json — which is
     the one URL Swagger needs and the only one it cannot guess."""
     import importlib
 
     monkeypatch.setenv("B2E_ROOT_PATH", prefix)
+    monkeypatch.setenv("B2E_REGISTRY_DB", str(tmp_path / "registry.db"))
+    monkeypatch.setenv("B2E_AGENT_DB", str(tmp_path / "agent.db"))
+    monkeypatch.setenv("B2E_HARNESS", "messages_api")
+    monkeypatch.setenv("B2E_MODEL", "test-model")
     mod = importlib.import_module(module)
     app = mod.create_app()
     assert app.root_path == prefix
 
 
 @pytest.mark.parametrize("module", ["sim.agent.app", "sim.research.app"])
-def test_unmounted_is_still_the_default(monkeypatch, module):
+def test_unmounted_is_still_the_default(monkeypatch, tmp_path, module):
     """Running bare — `make serve`, tests, a direct container call — must not
     require the variable to be set."""
     import importlib
 
     monkeypatch.delenv("B2E_ROOT_PATH", raising=False)
+    monkeypatch.setenv("B2E_REGISTRY_DB", str(tmp_path / "registry.db"))
+    monkeypatch.setenv("B2E_AGENT_DB", str(tmp_path / "agent.db"))
+    monkeypatch.setenv("B2E_HARNESS", "messages_api")
+    monkeypatch.setenv("B2E_MODEL", "test-model")
     mod = importlib.import_module(module)
     assert mod.create_app().root_path == ""
 

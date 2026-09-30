@@ -432,6 +432,11 @@ approval.</p>
         token = _csrf(request, response)
         version, body_json = state.registry.load("agent_config")
         current, load_error = _config_for_form(body_json)
+        from sim.agent.provider import env_harness, env_model_id
+
+        runtime = dict(current)
+        runtime["model_id"] = env_model_id()
+        runtime["harness"] = env_harness()
         history = state.registry.history("agent_config")
         rows = "".join(
             f'<tr><td><code>{esc(v.ref)}</code></td><td class=mut>{esc(v.actor)}</td>'
@@ -449,7 +454,7 @@ approval.</p>
 
         from sim.agent.config import (
             BUDGET_STRATEGIES, CODE_EXECUTION_MODES, CONTEXT_STRATEGIES,
-            HARNESSES, MEMORY_STRATEGIES,
+            MEMORY_STRATEGIES,
         )
 
         stale_warning = ""
@@ -462,7 +467,7 @@ approval.</p>
                 'batch cell against this ref fails.</div>')
 
         code_warning = ""
-        if current["code_execution"] == "allowed":
+        if runtime["code_execution"] == "allowed":
             code_warning = (
                 '<div class=warn><b>Code execution is ON.</b> This is the rival '
                 'arm, not the default. Two things are true while it is set: the '
@@ -479,12 +484,12 @@ approval.</p>
 <form method=post action="config">
 {csrf_input(token)}
 <table>
-{field("model_id", current["model_id"])}
+<tr><th>model_id</th><td><code>{esc(runtime["model_id"])}</code> <span class=mut>from B2E_MODEL</span></td></tr>
 {field("temperature", current["temperature"])}
 {field("max_output_tokens", current["max_output_tokens"])}
 {field("context_window_tokens", current["context_window_tokens"])}
 {field("max_tool_iterations", current["max_tool_iterations"])}
-{field("harness", current["harness"], HARNESSES)}
+<tr><th>harness</th><td><code>{esc(runtime["harness"])}</code> <span class=mut>from B2E_HARNESS</span></td></tr>
 {field("code_execution", current["code_execution"], CODE_EXECUTION_MODES)}
 {field("budget_strategy", current["budget_strategy"], BUDGET_STRATEGIES)}
 {field("context_strategy", current["context_strategy"], CONTEXT_STRATEGIES)}
@@ -495,17 +500,12 @@ approval.</p>
 </form>
 <p class=mut>The context window is a config value, not a constant: hardcoding
 200 000 becomes a lie the moment the model changes, and the failure is silent.</p>
-<p class=mut><code>code_execution=allowed</code> lifts the project's premise so the
-rival hypothesis can be measured rather than assumed. It requires
-<code>harness=claude_code</code>; the messages_api loop has no tool that can run
-code, so the combination is refused rather than silently mislabelled.</p>
+<p class=mut><code>model_id</code> and <code>harness</code> are intentionally not
+editable here. Change <code>B2E_MODEL</code> or <code>B2E_HARNESS</code> in
+<code>deploy/.env</code> and recreate the agent/admin containers.</p>
 <p class=mut><code>context_strategy=windowed</code> and <code>summarised</code> are
 implemented only by the messages_api loop's packer, so they require
-<code>harness=messages_api</code>. Under <code>claude_code</code> the CLI owns its
-own context window and the field was read by nothing at all — three values, three
-condition_ids, one behaviour. Both dropdowns stay fully populated because harness
-is edited on this same form: switch the pair together and the save succeeds;
-submit an incoherent pair and you get a 422 naming it.</p>
+<code>harness=messages_api</code>. CLI harnesses own their context window.</p>
 <h2>Version history</h2>
 <table><tr><th>version</th><th>actor</th><th>note</th></tr>{rows}</table>
 """
@@ -518,8 +518,8 @@ submit an incoherent pair and you get a 422 naming it.</p>
         form = await request.form()
         verify_csrf(request, csrf_token)
         updated, _load_error = _config_for_form(state.registry.load("agent_config")[1])
-        for key in ("model_id", "budget_strategy", "context_strategy",
-                    "memory_strategy", "harness", "code_execution"):
+        for key in ("budget_strategy", "context_strategy",
+                    "memory_strategy", "code_execution"):
             if key in form:
                 updated[key] = str(form[key])
         for key in ("temperature",):
@@ -530,7 +530,9 @@ submit an incoherent pair and you get a 422 naming it.</p>
             if key in form:
                 updated[key] = int(form[key])
         try:
-            AgentConfig.from_dict(updated)
+            from sim.agent.provider import runtime_agent_config
+
+            runtime_agent_config(updated)
         except (ValueError, TypeError) as exc:
             raise HTTPException(422, str(exc)) from exc
         state.registry.commit("agent_config", "agent", updated, actor=actor,

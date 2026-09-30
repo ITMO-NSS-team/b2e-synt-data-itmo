@@ -17,6 +17,8 @@ OUT = Path("docs/openapi")
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("B2E_LLM_MODE", "replay")
+    os.environ.setdefault("B2E_HARNESS", "messages_api")
+    os.environ.setdefault("B2E_MODEL", "openapi-schema-model")
     os.environ.setdefault("B2E_REGISTRY_DB", "var/openapi-export.db")
     os.environ.setdefault("B2E_AGENT_DB", "var/openapi-export-agent.db")
 

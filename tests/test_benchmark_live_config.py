@@ -14,7 +14,19 @@ from sim.registry import Registry
 from sim.benchmark.pin import pin
 
 
-def test_capture_pins_configs_and_records_actual_condition(tmp_path) -> None:
+@pytest.fixture(autouse=True)
+def runtime_provider(monkeypatch):
+    monkeypatch.setenv("B2E_MODEL", "env-model")
+    monkeypatch.setenv("B2E_HARNESS", "open_code")
+
+
+@pytest.fixture(autouse=True)
+def runtime_provider(monkeypatch):
+    monkeypatch.setenv("B2E_MODEL", "env-model")
+    monkeypatch.setenv("B2E_HARNESS", "open_code")
+
+
+def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None:
     registry = Registry(tmp_path / "registry.db")
     registry.commit(
         "system_prompt", "prompt", {"template": "test"}, actor="test",
@@ -52,6 +64,8 @@ def test_capture_pins_configs_and_records_actual_condition(tmp_path) -> None:
     assert tuple(payload["configs"][disabled]["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
     assert tuple(payload["configs"][data_only]["tool_subset"]) == DATA_TOOLS
     assert tuple(payload["configs"][enabled]["tool_subset"]) == SKILL_TOOLS
+    assert payload["configs"][enabled]["model_id"] == "env-model"
+    assert payload["configs"][enabled]["harness"] == "open_code"
     assert payload["prompt_versions"][disabled].startswith("system_prompt@")
     assert payload["skill_registry_hash"].startswith("sha256:")
     assert payload["emulator"] == {
@@ -63,7 +77,7 @@ def test_capture_pins_configs_and_records_actual_condition(tmp_path) -> None:
     registry.close()
 
 
-def test_model_override_is_pinned_without_changing_source_config(tmp_path) -> None:
+def test_pin_does_not_duplicate_model_configuration(tmp_path) -> None:
     registry = Registry(tmp_path / "registry.db")
     source = {
         "model_id": "heavy-model", "system_prompt_ref": "system_prompt",
@@ -86,12 +100,10 @@ def test_model_override_is_pinned_without_changing_source_config(tmp_path) -> No
             "general_knowledge": general.ref,
         }
 
-    refs = pin_live_configs(
-        registry, model_id="light-model", base_pinner=pinner,
-    )
+    refs = pin_live_configs(registry, base_pinner=pinner)
     assert registry.load(source_version.ref)[1]["model_id"] == "heavy-model"
     assert {registry.load(ref)[1]["model_id"] for ref in refs.values()} == {
-        "light-model"
+        "heavy-model"
     }
     registry.close()
 

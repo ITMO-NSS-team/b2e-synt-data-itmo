@@ -48,8 +48,10 @@ class TurnResult:
     heimdall_calls: int
     prompt_tokens: int
     completion_tokens: int
-    cost_usd: float
+    cost_usd: float | None
     stop_reason: str
+    reasoning_tokens: int | None = None
+    cost_mode: str = "reported"
     trace_id: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

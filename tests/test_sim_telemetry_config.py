@@ -47,3 +47,24 @@ def test_configure_adds_optional_secondary_otlp_exporter(monkeypatch) -> None:
     assert provider.processors[0].exporter.endpoint == "http://openlit:4318/v1/traces"
     assert provider.options == [{"replace_default_processor": False}]
     assert register_options["resource"].attributes["service.name"] == "b2e-agent"
+
+
+def test_benchmark_metrics_are_exported_as_a_correlated_evaluator_span(spans) -> None:
+    from sim import telemetry
+
+    telemetry.emit_benchmark_metrics(
+        {"exact_match": 1, "latency_ms": 1250.5, "cost_usd": None},
+        eval_id="eval-1", run_id="run-1", case_id="case-1",
+        mode="existing_skills", repetition=1, status="completed",
+        scorer_version="benchmark-scorer@1",
+        trace_id="1" * 32, parent_span_id="2" * 16,
+    )
+
+    span = spans.get_finished_spans()[0]
+    assert span.name == "b2e.benchmark.score"
+    assert span.context.trace_id == int("1" * 32, 16)
+    assert span.parent.span_id == int("2" * 16, 16)
+    assert span.attributes["openinference.span.kind"] == "EVALUATOR"
+    assert span.attributes["b2e.metric.exact_match"] == 1
+    assert span.attributes["b2e.metric.latency_ms"] == 1250.5
+    assert "b2e.metric.cost_usd" not in span.attributes

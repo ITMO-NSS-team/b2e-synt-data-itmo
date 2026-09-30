@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
 from .results import ResultWriter, summarize_results
 from .runner import BenchmarkRunner
+from sim import telemetry
 
 DEFAULT_MODES = (
     BenchmarkMode.GENERAL_KNOWLEDGE.value,
@@ -108,7 +110,7 @@ def load_live_config(path: str | Path) -> dict[str, Any]:
     """Load and validate a secret-free stand manifest.
 
     Args:
-        path: JSON written by ``python -m sim.benchmark.live_config``.
+        path: JSON written by ``python3.12 -m sim.benchmark.live_config``.
 
     Returns:
         Manifest with refs, configs, prompt versions and emulator condition.
@@ -157,7 +159,8 @@ def common_conditions(
         raise ValueError("live stand manifest has no refs for all requested modes")
     selected = [configs[refs[name]] for name in mode_names]
     stable_fields = (
-        "model_id", "temperature", "code_execution", "conversation_mode",
+        "model_id", "harness", "temperature", "code_execution",
+        "conversation_mode",
     )
     for field in stable_fields:
         if len({json.dumps(config.get(field), sort_keys=True) for config in selected}) != 1:
@@ -174,6 +177,7 @@ def common_conditions(
         traps_enabled=emulator["traps_enabled"],
         latency_profile=emulator["latency_profile"],
         hr_employee_ids=tuple(str(value) for value in emulator["hr_employee_ids"]),
+        harness=selected[0].get("harness", "claude_code"),
         code_execution=selected[0]["code_execution"],
     )
 
@@ -366,7 +370,7 @@ def parser() -> argparse.ArgumentParser:
     """Build the benchmark-runner CLI.
 
     Returns:
-        Parser for ``python -m sim.benchmark.cli``.
+        Parser for ``python3.12 -m sim.benchmark.cli``.
     """
     result = argparse.ArgumentParser(
         description="Run verified benchmark cases inside the stand network."
@@ -433,12 +437,35 @@ def main(argv: list[str] | None = None) -> int:
                 "agent_calls": 0,
             }, ensure_ascii=False, indent=2))
             return 0
-        results, writer = run(args)
+        provider = _configure_metric_export()
+        try:
+            results, writer = run(args)
+        finally:
+            if provider is not None:
+                if provider.force_flush() is False:
+                    raise RuntimeError("benchmark metric OTLP export did not flush")
         print(json.dumps(_finished_report(results, writer), ensure_ascii=False, indent=2))
         return 0
     except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"benchmark failed before completion: {exc}", file=sys.stderr)
         return 2
+
+
+def _configure_metric_export():
+    """Send post-run evaluator spans to the same two stores as agent spans."""
+    endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "").strip()
+    if not endpoint:
+        return None
+    return telemetry.configure(
+        endpoint=f"{endpoint.rstrip('/')}/v1/traces",
+        project_name=os.environ.get("PHOENIX_PROJECT", "b2e-itmo"),
+        protocol="http/protobuf",
+        batch=True,
+        secondary_endpoint=(
+            os.environ.get("OPENLIT_OTLP_ENDPOINT", "").strip() or None
+        ),
+        service_name="b2e-benchmark-runner",
+    )
 
 
 def _finished_report(results: list[Any], writer: ResultWriter) -> dict[str, Any]:

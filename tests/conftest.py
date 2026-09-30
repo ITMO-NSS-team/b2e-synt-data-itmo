@@ -46,6 +46,7 @@ def fingerprint() -> RunFingerprint:
         agent_config_version="agent_config@3",
         prompt_registry_version="system_prompt@1",
         skill_registry_hash="sha256:" + "0" * 64,
+        harness="claude_code",
         model_id="claude-haiku-4-5-20251001",
         temperature=0.0,
         data_snapshot_hash="heimdall-sandbox@test",

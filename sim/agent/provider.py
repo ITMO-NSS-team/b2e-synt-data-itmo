@@ -34,6 +34,36 @@ def env_harness() -> str:
     return (os.environ.get("B2E_HARNESS") or "").strip()
 
 
+def runtime_agent_config(data: dict, *, require: bool = True):
+    """Build an agent config with model and harness owned by the environment.
+
+    Registry versions still own every other experimental setting.  These two
+    fields are replaced before validation, so an old registry value can never
+    override the deployment's ``B2E_MODEL`` / ``B2E_HARNESS`` selection.
+    """
+    from sim.agent.config import AgentConfig
+
+    model = env_model_id()
+    harness = env_harness()
+    missing = [
+        name for name, value in (
+            ("B2E_MODEL", model), ("B2E_HARNESS", harness)
+        ) if not value
+    ]
+    if require and missing:
+        raise ValueError(
+            "runtime agent configuration is incomplete: set "
+            + ", ".join(missing)
+            + " in deploy/.env"
+        )
+    payload = dict(data)
+    if model:
+        payload["model_id"] = model
+    if harness:
+        payload["harness"] = harness
+    return AgentConfig.from_dict(payload)
+
+
 def turn_timeout_seconds(fallback: int = 600) -> int:
     raw = (os.environ.get("B2E_TURN_TIMEOUT") or "").strip()
     timeout = int(raw) if raw else fallback

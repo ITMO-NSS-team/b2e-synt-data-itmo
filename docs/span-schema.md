@@ -15,7 +15,7 @@ installed enum (`openinference-semantic-conventions` 0.1.31) offers: `AGENT`,
 `CHAIN`, `LLM`, `TOOL`, `RETRIEVER`, `EMBEDDING`, `RERANKER`, `GUARDRAIL`,
 `EVALUATOR`, `PROMPT`, `UNKNOWN`.
 
-This environment uses five:
+This environment uses six:
 
 | Kind | Emitted for | One per |
 |---|---|---|
@@ -24,6 +24,7 @@ This environment uses five:
 | `LLM` | one model call | request to Anthropic |
 | `TOOL` | one tool invocation by the agent | tool call |
 | `CHAIN` | one Heimdall HTTP call, nested under its `TOOL` | HTTP request |
+| `EVALUATOR` | deterministic benchmark result | executed case × mode × repetition |
 
 Heimdall calls are `CHAIN` rather than `TOOL` on purpose: the *tool* is what the
 agent chose to do, the HTTP call is how it was carried out. One tool call can
@@ -256,6 +257,24 @@ and a fresh prompt token do not cost the same.
 Model time is `b2e.turn.duration_ms - b2e.turn.tool_time_ms`. It is derived
 rather than stored: storing it would imply this process measured it, and it
 did not.
+
+### `EVALUATOR` (post-run score)
+
+`b2e.benchmark.score` is emitted only after the answer and its trace have been
+collected, because gold comparison must never enter the model path. When the
+source ids are available it is a late child of the ended `AGENT` span; otherwise
+`b2e.benchmark.source_trace_id` and `.source_span_id` retain the correlation.
+The score is exported through the same dual OTLP provider as the agent trace, so
+Phoenix and OpenLIT receive the same values.
+
+- `b2e.benchmark.eval_id`, `.run_id`, `.case_id`, `.mode`, `.repetition`
+- `b2e.benchmark.status`, `.scorer_version`
+- `b2e.metric.answer_accuracy`, `.exact_match`, `.outcome_accuracy`,
+  `.correct_refusal`, `.generated_skill_loaded`
+- every operational metric named by `sim.benchmark.execution.OPERATIONAL_METRICS`
+
+The immutable `scores.jsonl` remains the reproducible source of truth. The
+evaluator span is an observability copy for filtering and dashboards.
 
 ### `LLM`
 `llm.model_name`, `llm.provider`, `llm.system`, `llm.invocation_parameters`,

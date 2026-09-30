@@ -143,7 +143,7 @@ services:
   heimdall-emulator:
     <<: [*python-image, *hardening]
     command: >
-      uvicorn --factory sim.emulator.app:create_app
+      python3.12 -m uvicorn --factory sim.emulator.app:create_app
               --host 0.0.0.0 --port 8081 --workers 1
     environment:
       HEIMDALL_SNAPSHOT_ON: /data/snapshot
@@ -167,7 +167,7 @@ services:
     # См. docs/query-budget.md.
     mem_limit: 5g
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/control/healthz',timeout=5).status==200 else 1)\""]
+      test: ["CMD-SHELL", "python3.12 -c \"import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/control/healthz',timeout=5).status==200 else 1)\""]
       interval: 15s
       timeout: 8s
       retries: 8
@@ -208,7 +208,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: >
-      uvicorn --factory sim.agent.app:create_app
+      python3.12 -m uvicorn --factory sim.agent.app:create_app
               --host 0.0.0.0 --port 8082 --workers 1
     environment:
       HEIMDALL_URL: http://heimdall-emulator:8081
@@ -223,8 +223,8 @@ services:
       OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-}
       # Read from the environment only. Never written to a file or a commit.
       LLM_PROVIDER: ${LLM_PROVIDER:-}
-      B2E_HARNESS: ${B2E_HARNESS:-claude_code}
-      B2E_MODEL: ${B2E_MODEL:-}
+      B2E_HARNESS: ${B2E_HARNESS:?set B2E_HARNESS in .env}
+      B2E_MODEL: ${B2E_MODEL:?set B2E_MODEL in .env}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
@@ -235,9 +235,15 @@ services:
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-}
       API_TIMEOUT_MS: ${API_TIMEOUT_MS:-}
       ZAI_OPENAI_BASE_URL: ${ZAI_OPENAI_BASE_URL:-}
+      B2E_API_PRICE_INPUT_USD_PER_MTOK: ${B2E_API_PRICE_INPUT_USD_PER_MTOK:-}
+      B2E_API_PRICE_OUTPUT_USD_PER_MTOK: ${B2E_API_PRICE_OUTPUT_USD_PER_MTOK:-}
+      B2E_API_PRICE_CACHE_READ_USD_PER_MTOK: ${B2E_API_PRICE_CACHE_READ_USD_PER_MTOK:-}
+      B2E_API_PRICE_CACHE_WRITE_USD_PER_MTOK: ${B2E_API_PRICE_CACHE_WRITE_USD_PER_MTOK:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       B2E_CLAUDE_BIN: claude
+      B2E_OPENCODE_BIN: opencode
+      B2E_PYTHON_BIN: python3.12
       B2E_SKILL_RUNNER: /opt/skills/run
       B2E_MCP_BRIDGE: /app/heimdall/bridge.py
       # Resumable sessions live on the agent's volume, not in the image layer,
@@ -245,6 +251,7 @@ services:
       # (HOME, project dir) and needs both stable to resume.
       B2E_SESSION_ROOT: /app/var/sessions
       B2E_CLAUDE_HOME: /app/var/claude-home
+      B2E_OPENCODE_HOME: /app/var/opencode-home
       # The proxy publishes this service under /agent and strips the prefix.
       # FastAPI needs to be told, or the Swagger page it serves asks the browser
       # for /openapi.json — an absolute URL that never reaches this app.
@@ -285,7 +292,7 @@ services:
   research-api:
     <<: [*python-image, *hardening]
     command: >
-      uvicorn --factory sim.research.app:create_app
+      python3.12 -m uvicorn --factory sim.research.app:create_app
               --host 0.0.0.0 --port 8083 --workers 1
     environment:
       B2E_AGENT_URL: http://b2e-agent:8082
@@ -304,7 +311,7 @@ services:
   admin-ui:
     <<: [*python-image, *hardening]
     command: >
-      uvicorn --factory sim.admin.app:create_app
+      python3.12 -m uvicorn --factory sim.admin.app:create_app
               --host 0.0.0.0 --port 8084 --workers 1
     environment:
       B2E_REGISTRY_DB: /app/registry/registry.db
@@ -321,10 +328,10 @@ services:
       PHOENIX_PROJECT: b2e-itmo
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
-      # Bootstrap seeds model_id / harness from these on a fresh registry.
+      # Runtime source of truth; bootstrap also mirrors these into fresh rows.
       LLM_PROVIDER: ${LLM_PROVIDER:-}
-      B2E_HARNESS: ${B2E_HARNESS:-claude_code}
-      B2E_MODEL: ${B2E_MODEL:-}
+      B2E_HARNESS: ${B2E_HARNESS:?set B2E_HARNESS in .env}
+      B2E_MODEL: ${B2E_MODEL:?set B2E_MODEL in .env}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
@@ -357,11 +364,13 @@ services:
     <<: [*python-image, *hardening]
     profiles: ["benchmark"]
     restart: "no"
-    command: ["python", "-m", "sim.benchmark.cli", "--help"]
+    command: ["python3.12", "-m", "sim.benchmark.cli", "--help"]
     environment:
       PYTHONPATH: /app
       HOME: /tmp
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
+      OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-}
     volumes:
       - *resolv-overlay
       - ../sim:/app/sim:ro
@@ -369,7 +378,7 @@ services:
       - ../heimdall:/app/heimdall:ro
       - ../benchmarking:/app/benchmarking:ro
       - ../benchmarking/results:/app/benchmarking/results
-      - ${BENCHMARK_REPO_DIR:-../../b2e-skill-benchmark}:/app/b2e-skill-benchmark:ro
+      - ${BENCHMARK_REPO_DIR:-../b2e-skill-benchmark}:/app/b2e-skill-benchmark:ro
       - ../heimdall-skills:/app/heimdall-skills:ro
       - ../catalog:/app/catalog:ro
       - ../var:/app/var
@@ -416,7 +425,7 @@ services:
       - sh
       - -c
       - >-
-        python -c "from sim.registry import Registry; Registry('/app/registry/registry.db')"
+        python3.12 -c "from sim.registry import Registry; Registry('/app/registry/registry.db')"
         && chown -R 10001:10001 /app/registry
         && chmod 0770 /app/registry
     volumes: [registry_data:/app/registry]
@@ -426,7 +435,7 @@ services:
 
   sandbox-worker:
     <<: [*python-image, *hardening]
-    command: python -m sim.sandbox.worker
+    command: python3.12 -m sim.sandbox.worker
     environment:
       SANDBOX_SPOOL: /spool
     volumes:
@@ -450,7 +459,7 @@ services:
   # proxy for Telegram to call; polling adds no exposed surface at all.
   telegram-bot:
     <<: [*python-image, *hardening]
-    command: python -m sim.telegram_bot
+    command: python3.12 -m sim.telegram_bot
     # api.telegram.org is only reachable from this host through the same proxy
     # Anthropic needs. Without this the bot polls forever and answers nobody,
     # which is indistinguishable from the bot not being deployed at all.

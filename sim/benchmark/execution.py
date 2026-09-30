@@ -29,7 +29,8 @@ OPERATIONAL_METRICS = (
     "failed_tool_calls", "permission_denials", "http_error_count",
     "mcp_query_rows_total", "heimdall_response_bytes", "prompt_tokens",
     "uncached_prompt_tokens", "cache_read_tokens", "cache_creation_tokens",
-    "completion_tokens", "total_tokens", "cache_hit_ratio", "cost_usd",
+    "completion_tokens", "reasoning_tokens", "total_tokens", "cache_hit_ratio",
+    "cost_usd",
     "latency_ms", "agent_duration_ms", "api_duration_ms", "ttft_ms",
     "ttft_stream_ms", "time_to_request_ms", "tool_time_ms", "tool_time_ratio",
 )
@@ -218,6 +219,7 @@ class PinnedConfigActivator:
             raise ValueError(f"{mode.name}: live agent tool_subset differs from mode")
         if (
             config.get("model_id") != mode.common.model_id
+            or config.get("harness", "claude_code") != mode.common.harness
             or config.get("temperature") != mode.common.temperature
             or config.get("code_execution") != mode.common.code_execution
             or config.get("conversation_mode") != "stateless"
@@ -427,6 +429,10 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             stats.get("completion_tokens"),
             _attr(root_attrs, "llm.token_count.completion"),
         ),
+        "reasoning_tokens": _optional_int(
+            stats.get("reasoning_tokens"),
+            _attr(root_attrs, "llm.token_count.completion_details.reasoning"),
+        ),
         "total_tokens": _int(
             stats.get("total_tokens"), _attr(root_attrs, "llm.token_count.total")
         ),
@@ -549,6 +555,16 @@ def _int(*values: Any) -> int:
             except (TypeError, ValueError):
                 pass
     return 0
+
+
+def _optional_int(*values: Any) -> int | None:
+    for value in values:
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+    return None
 
 
 def _number(value: Any) -> float | None:

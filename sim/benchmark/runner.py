@@ -17,6 +17,8 @@ from .modes import ModeConfig, ModeConfigs
 from .preflight import PreflightResult
 from .results import ResultWriter, RunResult
 from .scoring import NormalizedAnswer, calculate_metrics, normalize_answer
+from .trace import root_span_id
+from sim import telemetry
 from sim.fingerprint import RunFingerprint
 
 
@@ -182,10 +184,23 @@ class BenchmarkRunner:
             },
             "reasons": reasons,
         }
-        return RunResult(
+        result = RunResult(
             run_id, group_id, case.case_id, mode.name, repetition,
             status, response, score, turn.trace,
         )
+        telemetry.emit_benchmark_metrics(
+            metrics,
+            eval_id=self.eval_id,
+            run_id=run_id,
+            case_id=case.case_id,
+            mode=mode.name,
+            repetition=repetition,
+            status=status,
+            scorer_version=self.scorer_version,
+            trace_id=turn.trace_id,
+            parent_span_id=root_span_id(turn.trace),
+        )
+        return result
 
 
 def _mode_list(

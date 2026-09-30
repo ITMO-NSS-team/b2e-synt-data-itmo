@@ -34,6 +34,7 @@ FINGERPRINT = RunFingerprint.create(
     agent_config_version="agent_config@1",
     prompt_registry_version="system_prompt@1",
     skill_registry_hash="sha256:" + "00" * 32,
+    harness="claude_code",
     model_id="claude-haiku-4-5-20251001",
     temperature=0.0,
     data_snapshot_hash="heimdall-sandbox@78d53675db91e17f",
@@ -375,6 +376,8 @@ def test_a_stored_config_the_constraint_refuses_is_a_503_not_a_bare_500(
     monkeypatch.setenv("B2E_REGISTRY_DB", str(tmp_path / "registry.db"))
     monkeypatch.setenv("B2E_AGENT_DB", str(tmp_path / "agent.db"))
     monkeypatch.setenv("B2E_LLM_MODE", "replay")
+    monkeypatch.setenv("B2E_HARNESS", "claude_code")
+    monkeypatch.setenv("B2E_MODEL", "claude-haiku-4-5-20251001")
     from fastapi import HTTPException
 
     from sim.agent.app import AgentState

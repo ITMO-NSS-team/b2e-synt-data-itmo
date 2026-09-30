@@ -55,7 +55,7 @@ def mode(name: str = "existing_skills", *, mock: bool = False) -> ModeConfig:
 def fingerprint() -> RunFingerprint:
     return RunFingerprint.create(
         agent_config_version="agent@1", prompt_registry_version="prompt@1",
-        skill_registry_hash=EMPTY_HASH, model_id="model",
+        skill_registry_hash=EMPTY_HASH, harness="claude_code", model_id="model",
         temperature=0, data_snapshot_hash="heimdall-sandbox@test",
         traps_enabled=True, latency_profile="instant", hr_employee_ids=(),
     )

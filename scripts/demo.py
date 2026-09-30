@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -25,9 +26,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
+from b2e.store import ProceduralSnapshot
 from sim.emulator.identity import AccessDenied, IdentityIndex
+from sim.research.answer import parse_answer
 
-QUESTION = "Сколько сотрудников в моём подразделении?"
+QUESTION = (
+    "Сколько сотрудников в моём подразделении, включая дочерние подразделения?"
+)
 OK, BAD = "  ok  ", " FAIL "
 _failures: list[str] = []
 DEFAULT_DEMO_CONFIG_REF = "agent_config"
@@ -118,6 +123,19 @@ def pick_manager(data_dir: Path, *, employee_id: str = "",
     return fallback
 
 
+def factual_headcount(data_dir: Path, employee_id: str) -> int:
+    """Oracle for the demo check: fact_flag inside the manager's full scope."""
+    scope = IdentityIndex(data_dir).scope_for(employee_id)
+    table = ProceduralSnapshot(data_dir).table("dm_core.employee_actual")
+    return sum(
+        int(value or 0)
+        for person_id, value in zip(
+            table.column("person_id"), table.column("fact_flag")
+        )
+        if str(person_id) in scope.visible_uuids
+    )
+
+
 def proxy_client(base: str, *, public_host: str, auth: tuple[str, str],
                  timeout: float) -> httpx.Client:
     """Talk to the edge proxy without needing working container DNS.
@@ -147,8 +165,8 @@ def main() -> int:
     password = env.get("RESEARCHER_PASSWORD", "")
     config_ref = env.get("DEMO_CONFIG_REF", DEFAULT_DEMO_CONFIG_REF)
     timeout = float(env.get("DEMO_TIMEOUT", "600"))
-    trace_timeout = float(env.get("DEMO_TRACE_TIMEOUT", "60"))
-    data_dir = Path(env.get("DEMO_DATA", "data-small"))
+    trace_timeout = float(env.get("DEMO_TRACE_TIMEOUT", "600"))
+    data_dir = Path(env.get("DEMO_DATA", "data"))
     openlit_endpoint = env.get("OPENLIT_OTLP_ENDPOINT", "").strip()
 
     if not password:
@@ -173,6 +191,7 @@ def main() -> int:
     check("manager identity", manager["visible_people"] >= 2,
           f"person_id={manager['person_id']} employee_id={manager['employee_id']} "
           f"unit={manager['unit_id']} visible={manager['visible_people']}")
+    expected_headcount = factual_headcount(data_dir, manager["employee_id"])
 
     step("2 · stack is reachable")
     try:
@@ -216,17 +235,37 @@ def main() -> int:
         return 1
     answer = reply.json()
     stats = answer.get("stats") or {}
-    check("answer returned", bool(answer.get("answer")),
-          repr(answer.get("answer", ""))[:120])
-    check("the agent actually called Heimdall",
-          int(stats.get("heimdall_calls") or 0) >= 1,
-          f"heimdall_calls={stats.get('heimdall_calls')} "
-          f"tool_calls={stats.get('tool_calls')} "
-          f"tokens={stats.get('total_tokens')}")
+    returned = check("answer returned", bool(answer.get("answer")),
+                     repr(answer.get("answer", ""))[:120])
+    answer_text = str(answer.get("answer") or "")
+    parsed = parse_answer(answer_text)
+    blocks = re.findall(r"```answer\s*\n(.*?)```", answer_text,
+                        flags=re.DOTALL | re.IGNORECASE)
+    tail = blocks[-1] if blocks else ""
+    shaped = check("answer matches the structured template",
+                   parsed.present and not parsed.field_errors and all(
+                       re.search(rf"(?m)^\s*{field}\s*:", tail)
+                       for field in ("verdict", "ids", "value", "refused", "reason")
+                   ),
+                   parsed.error or repr(parsed.field_errors))
+    answered = check("answer is not a refusal",
+                     parsed.present and not parsed.refused,
+                     parsed.reason or "")
+    exact = check("answer is exact", parsed.value == expected_headcount,
+                  f"expected={expected_headcount} actual={parsed.value}")
+    used_tools = check(
+        "the agent actually called Heimdall",
+        int(stats.get("heimdall_calls") or 0) >= 1,
+        f"heimdall_calls={stats.get('heimdall_calls')} "
+        f"tool_calls={stats.get('tool_calls')} "
+        f"tokens={stats.get('total_tokens')}",
+    )
     if int(stats.get("heimdall_calls") or 0) < 1:
         print("The model answered without tools. Check B2E_MODEL / Z.ai credentials "
               "in deploy/.env, or set a working model_id in /admin/config and rerun "
               "with DEMO_CONFIG_REF=agent_config@N.")
+
+    print("\nFinal answer:\n" + str(answer.get("answer") or ""))
 
     step("4 · pull the trace")
     trace = None
@@ -244,7 +283,8 @@ def main() -> int:
     step("5 · leave feedback")
     feedback = client.post("/research/feedback", json={
         "session_id": session_id,
-        "label": "like" if int(stats.get("heimdall_calls") or 0) >= 1 else "dislike",
+        "label": ("like" if all((returned, shaped, answered, exact, used_tools))
+                  else "dislike"),
         "explanation": "golden-path demo",
         "annotator": "demo",
     })
