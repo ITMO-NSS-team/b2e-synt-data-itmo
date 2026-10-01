@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
 from sim import telemetry
-from sim.agent.claude_code import emit_spans
+from sim.agent.claude_code import ClaudeCodeHarness, emit_spans
 from sim.agent.config import AgentConfig
 from sim.agent.opencode import (
     OpenCodeHarness,
@@ -18,6 +19,87 @@ from sim.agent.provider import runtime_agent_config
 
 def harness() -> OpenCodeHarness:
     return OpenCodeHarness(heimdall_url="http://heimdall:8081", heimdall_token="t")
+
+
+@pytest.mark.parametrize("tool_subset,skill_enabled", [
+    pytest.param((), False, id="general_knowledge"),
+    pytest.param(("list_models", "describe_model", "mcp_query"), False,
+                 id="skills_disabled"),
+    pytest.param(("get_overview",), True, id="overview"),
+    pytest.param(("get_docs",), True, id="docs"),
+    pytest.param(("find_skills",), True, id="find_skills"),
+    pytest.param(("get_skill",), True, id="get_skill"),
+])
+@pytest.mark.parametrize("code_execution", ["forbidden", "allowed"])
+@pytest.mark.parametrize("conversation_mode", ["stateless", "resume"])
+def test_harness_notes_share_policy_but_not_tool_discovery(
+    tool_subset, skill_enabled, code_execution, conversation_mode, monkeypatch,
+):
+    monkeypatch.setenv("LLM_PROVIDER", "zai")
+    config = AgentConfig(harness="open_code", tool_subset=tool_subset,
+                         code_execution=code_execution, conversation_mode=conversation_mode)
+    kwargs = dict(heimdall_url="http://unused", heimdall_token="test",
+                  runner_path="/custom/approved-runner")
+    opencode = OpenCodeHarness(**kwargs)
+    claude = ClaudeCodeHarness(**kwargs)
+    note = opencode.harness_note(config)
+    claude_note = claude.harness_note(config)
+
+    # Only the discovery paragraph may differ; all capability and channel rules match.
+    discovery = r"\* Инструменты Heimdall[^\n]*(?:\n  [^\n]*)*\n"
+    assert re.sub(discovery, "", note) == re.sub(discovery, "", claude_note)
+    assert "ToolSearch" not in note
+    assert "mcp__heimdall__" not in note
+    assert set(re.findall(r"\bheimdall_\w+", note)) == {
+        name for name, grant in opencode._permissions(config).items()
+        if name.startswith("heimdall_") and grant == "allow"
+    }
+    assert ("ToolSearch" in claude_note) == bool(tool_subset)
+    assert "Данные — только через инструменты Heimdall" in note
+    assert "Отказ в доступе (403)" in note
+    assert "Не проси разрешений" in note
+    assert ("Это диалог" in note) == (conversation_mode == "resume")
+    assert ("Каждый ход самодостаточен" in note) == (conversation_mode == "stateless")
+    if code_execution == "allowed":
+        assert "разрешено писать код" in note
+        assert "не можешь" not in note
+    else:
+        assert "**не можешь** написать и выполнить код" in note
+        assert ("Канал навыков отключён" in note) == (not skill_enabled)
+        assert (opencode.runner_path in note) == skill_enabled
+        if skill_enabled:
+            assert f"{opencode.runner_path} <sha256> '<json>'" in note
+    built = opencode.build_config(config=config, system_prompt="system",
+                                 employee_id="42", trace_log="/tmp/unused")
+    assert built["agent"]["b2e"]["prompt"] == "system\n" + note
+
+
+@pytest.mark.parametrize("tool_subset,skill_enabled", [
+    pytest.param((), False, id="general_knowledge"),
+    pytest.param(("list_models", "describe_model", "mcp_query"), False,
+                 id="skills_disabled"),
+    pytest.param(("get_overview",), True, id="overview"),
+    pytest.param(("get_docs",), True, id="docs"),
+    pytest.param(("find_skills",), True, id="find_skills"),
+    pytest.param(("get_skill",), True, id="get_skill"),
+])
+@pytest.mark.parametrize("code_execution", ["forbidden", "allowed"])
+def test_bash_permission_respects_skill_channel(
+    tool_subset, skill_enabled, code_execution,
+):
+    runner = harness()
+    permissions = runner._permissions(AgentConfig(
+        harness="open_code", tool_subset=tool_subset,
+        code_execution=code_execution,
+    ))
+
+    assert permissions["*"] == "deny"
+    if code_execution == "allowed":
+        assert permissions["bash"] == "allow"
+    elif skill_enabled:
+        assert permissions["bash"] == {"*": "deny", f"{runner.runner_path} *": "allow"}
+    else:
+        assert "bash" not in permissions
 
 
 def test_environment_is_the_runtime_source_of_model_and_harness(monkeypatch):
@@ -157,7 +239,11 @@ def test_partial_api_price_configuration_is_rejected(monkeypatch):
         api_token_prices_from_env()
 
 
-def test_reasoning_and_unknown_subscription_cost_reach_spans(spans, fingerprint):
+@pytest.mark.parametrize("capture_content", [True, False])
+def test_reasoning_and_unknown_subscription_cost_reach_spans(
+    spans, fingerprint, monkeypatch, capture_content,
+):
+    monkeypatch.setenv("B2E_TRACE_LLM_CONTENT", "1" if capture_content else "0")
     rows = [
         {"type": "step_start", "timestamp": 1000,
          "part": {"messageID": "msg_1"}},
@@ -172,6 +258,8 @@ def test_reasoning_and_unknown_subscription_cost_reach_spans(spans, fingerprint)
     ]
     result = parse_stream("\n".join(map(json.dumps, rows)),
                           model="zai-coding-plan/glm")
+    assert result.llm_calls[0].input_messages is None
+    result.system_suffix = "known harness instructions"
     with telemetry.start_run(
         "b2e.turn", fingerprint=fingerprint,
         session_id="ses_test", employee_id="employee_test",
@@ -185,9 +273,21 @@ def test_reasoning_and_unknown_subscription_cost_reach_spans(spans, fingerprint)
     assert root.attributes["b2e.cost.mode"] == "subscription"
     assert "b2e.turn.cost_usd" not in root.attributes
     assert root.attributes["b2e.turn.reasoning_tokens"] == 2
-    assert llm.attributes[
-        "llm.output_messages.0.message.contents.0.message_content.type"
-    ] == "reasoning"
+    assert not any(key.startswith("llm.input_messages") for key in llm.attributes)
+    if capture_content:
+        assert llm.attributes["b2e.llm.prompt_reconstruction"] == "unavailable"
+        assert llm.attributes["b2e.llm.prompt_missing"] == (
+            "conversation,cli_system_prompt,tool_schemas")
+        assert llm.attributes["llm.system"] == "known harness instructions"
+        assert llm.attributes["b2e.llm.system_partial"] is True
+        assert llm.attributes[
+            "llm.output_messages.0.message.contents.0.message_content.type"
+        ] == "reasoning"
+    else:
+        assert llm.attributes["b2e.trace.llm_content"] == "disabled"
+        assert "b2e.llm.prompt_reconstruction" not in llm.attributes
+        assert "llm.system" not in llm.attributes
+        assert not any(key.startswith("llm.output_messages") for key in llm.attributes)
     assert llm.attributes[
         "llm.token_count.completion_details.reasoning"
     ] == 2

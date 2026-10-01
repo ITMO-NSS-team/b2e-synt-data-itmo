@@ -25,6 +25,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
 
 from sim.fingerprint import RunFingerprint, require_complete
+from sim.tool_outcomes import tool_outcome
 
 try:
     from openinference.semconv.trace import (
@@ -613,6 +614,7 @@ def open_tool_span(
 
 def close_tool_span(span: Span, *, output: Any = None,
                     unfinished: bool = False,
+                    is_error: bool = False, permission_denied: bool = False,
                     end_time: int | None = None) -> None:
     """End a span opened by :func:`open_tool_span`.
 
@@ -623,10 +625,23 @@ def close_tool_span(span: Span, *, output: Any = None,
     """
     if output is not None:
         set_io(span, output_value=output)
+    record_tool_outcome(span, output=output, is_error=is_error,
+                        permission_denied=permission_denied, unfinished=unfinished)
     if unfinished:
         span.set_attribute("b2e.tool.unfinished", True)
         span.set_status(Status(StatusCode.ERROR, "no tool_result before the turn ended"))
     span.end(end_time=end_time)
+
+
+def record_tool_outcome(span: Span, *, output: Any = None,
+                        is_error: bool = False, permission_denied: bool = False,
+                        unfinished: bool = False) -> None:
+    outcome = tool_outcome(output, is_error=is_error, denied=permission_denied,
+                           unfinished=unfinished)
+    for key, value in outcome.items():
+        span.set_attribute(f"b2e.tool.{key}", value)
+    span.set_status(Status(StatusCode.ERROR, outcome["status"]) if outcome["is_error"]
+                    else Status(StatusCode.OK))
 
 
 @contextmanager

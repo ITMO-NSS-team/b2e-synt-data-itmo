@@ -82,6 +82,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -100,6 +101,7 @@ from opentelemetry.trace import Span, Status, StatusCode
 from sim import telemetry
 from sim.agent.config import AgentConfig
 from sim.agent.provider import is_zai, llm_provider
+from sim.tool_outcomes import tool_outcome
 
 logger = logging.getLogger("b2e.claude_code")
 
@@ -201,19 +203,22 @@ PERMISSION_MODE = "dontAsk"
 #: enforcement is the tool policy above. It is here so the agent understands the
 #: shape of its world rather than discovering it through refusals.
 #:
-#: ``{tool_select}`` is filled from the tools the matcher will actually grant,
+#: ``{tool_discovery}`` is supplied by each runtime from its actual grants,
 #: never from a hardcoded list. The two had drifted: the note named
 #: ``get_overview``, which the default ``tool_subset`` does not grant, so the
 #: agent dutifully loaded its schema, called it, and was refused. A note that
 #: promises more than the allowlist gives does not merely fail to help — it
 #: walks the agent into the one failure mode this channel cannot recover from.
+CLAUDE_TOOL_DISCOVERY_NOTE = """\
+* Инструменты Heimdall загружаются по требованию: сначала вызови
+  `ToolSearch` с запросом `{tool_select}`,
+  затем пользуйся ими как обычно. Других инструментов Heimdall у тебя нет."""
+
 HARNESS_NOTE_CODE_ALLOWED = """
 Ты работаешь в закрытом контуре.
 
 * Данные — только через инструменты Heimdall. Интернета у тебя нет.
-* Инструменты Heimdall загружаются по требованию: сначала вызови
-  `ToolSearch` с запросом `{tool_select}`,
-  затем пользуйся ими как обычно. Других инструментов Heimdall у тебя нет.
+{tool_discovery}
 * **В этом режиме тебе разрешено писать код и выполнять его.** Считай на месте
   то, что дешевле посчитать, чем выспрашивать у API постранично.
 * Числа в ответе должны быть получены из данных API — своими вычислениями или
@@ -226,9 +231,7 @@ HARNESS_NOTE = """
 Ты работаешь в закрытом контуре.
 
 * Данные — только через инструменты Heimdall. Файлов и интернета у тебя нет.
-* Инструменты Heimdall загружаются по требованию: сначала вызови
-  `ToolSearch` с запросом `{tool_select}`,
-  затем пользуйся ими как обычно. Других инструментов Heimdall у тебя нет.
+{tool_discovery}
 * Ты **не можешь** написать и выполнить код. Попытка запустить интерпретатор
   будет отклонена средой, а не мной.
 * Готовый код бывает только у одобренного скилла. Запускается он одной
@@ -241,9 +244,7 @@ HARNESS_NOTE_WITHOUT_SKILLS = """
 Ты работаешь в закрытом контуре.
 
 * Данные — только через инструменты Heimdall. Файлов и интернета у тебя нет.
-* Инструменты Heimdall загружаются по требованию: сначала вызови
-  `ToolSearch` с запросом `{tool_select}`,
-  затем пользуйся ими как обычно. Других инструментов Heimdall у тебя нет.
+{tool_discovery}
 * Канал навыков отключён: каталог, документация приёмов, рецепты и запуск
   одобренных навыков недоступны.
 * Ты **не можешь** написать и выполнить код.
@@ -304,6 +305,22 @@ DIALOGUE_NOTE = PERMISSION_NOTE + """\
 """
 
 
+def harness_policy_note(config: AgentConfig, *, runner: str,
+                        tool_discovery: str) -> str:
+    """Shared capability/channel policy; native tool discovery stays with the CLI."""
+    if not config.tool_subset:
+        tool_discovery = "* Инструменты Heimdall в этом режиме недоступны."
+    if config.code_execution == "allowed":
+        template = HARNESS_NOTE_CODE_ALLOWED
+    elif set(config.tool_subset) & SKILL_CHANNEL_TOOLS:
+        template = HARNESS_NOTE
+    else:
+        template = HARNESS_NOTE_WITHOUT_SKILLS
+    channel = (DIALOGUE_NOTE if config.conversation_mode == "resume"
+               else NON_INTERACTIVE_NOTE)
+    return template.format(runner=runner, tool_discovery=tool_discovery, channel=channel)
+
+
 @dataclass
 class ClaudeCodeResult:
     answer: str
@@ -355,10 +372,13 @@ class ClaudeCodeResult:
     #: are the CLI's numbers, and `api_duration_ms` can exceed `duration_ms`
     #: (5 732 against 3 898 on the probe of 2026-08-09), so it is plainly not a
     #: wall-clock slice of the turn.
-    api_duration_ms: int = 0
-    ttft_ms: int = 0
-    ttft_stream_ms: int = 0
-    time_to_request_ms: int = 0
+    api_duration_ms: float | None = None
+    ttft_ms: float | None = None
+    ttft_stream_ms: float | None = None
+    time_to_request_ms: float | None = None
+    timing_source: str = ""
+    timing_calls: int = 0
+    runner_path: str = "/opt/skills/run"
 
     @property
     def prompt_tokens(self) -> int:
@@ -389,7 +409,16 @@ class ClaudeCodeResult:
 
     @property
     def skill_runs(self) -> int:
-        return sum(1 for c in self.tool_calls if c.get("name") == "Bash")
+        return sum(_skill_execution(c, self.runner_path) is not None for c in self.tool_calls)
+
+    @property
+    def bash_attempts(self) -> int:
+        return sum(c.get("name") == "Bash" for c in self.tool_calls)
+
+    @property
+    def skill_successes(self) -> int:
+        return sum(payload.get("ok") is True for c in self.tool_calls
+                   if (payload := _skill_execution(c, self.runner_path)) is not None)
 
     @property
     def attempted_forbidden_tools(self) -> list[str]:
@@ -641,21 +670,10 @@ class ClaudeCodeHarness:
         same argument applies to the tool list: naming a tool the matcher will
         refuse is a false description of the world, and the agent pays for it.
         """
-        select = self.tool_select_query(config)
-        # Same argument, applied to the channel: telling a resumable session
-        # that it has no history, or a stateless one that it may ask a
-        # follow-up, describes a world the agent is not in.
-        channel = (DIALOGUE_NOTE if config.conversation_mode == "resume"
-                   else NON_INTERACTIVE_NOTE)
-        if config.code_execution == "allowed":
-            return HARNESS_NOTE_CODE_ALLOWED.format(
-                tool_select=select, channel=channel)
-        if self._skill_channel_enabled(config):
-            return HARNESS_NOTE.format(
-                runner=self.runner_path, tool_select=select, channel=channel,
-            )
-        return HARNESS_NOTE_WITHOUT_SKILLS.format(
-            tool_select=select, channel=channel,
+        return harness_policy_note(
+            config, runner=self.runner_path,
+            tool_discovery=CLAUDE_TOOL_DISCOVERY_NOTE.format(
+                tool_select=self.tool_select_query(config)),
         )
 
     def run(self, *, question: str, config: AgentConfig, system_prompt: str,
@@ -708,6 +726,7 @@ class ClaudeCodeHarness:
                                 f"continued in a new session without history")
 
         result.system_suffix = suffix
+        result.runner_path = self.runner_path
         result.bridge_calls = _read_bridge_log(bridge_log)
         self._read_transcript(result, since=started_at,
                               resumable=persistent is not None,
@@ -891,8 +910,12 @@ class LlmCall:
     #: The tool calls this response asked for.
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     #: The conversation as it stood *before* this call. A reconstruction, not
-    #: the request — see ``PROMPT_RECONSTRUCTION``.
-    input_messages: list[dict[str, Any]] = field(default_factory=list)
+    #: the request — see ``PROMPT_RECONSTRUCTION``. None means unavailable;
+    #: an explicit empty list means the captured conversation prefix was empty.
+    input_messages: list[dict[str, Any]] | None = None
+    api_duration_ms: float | None = None
+    ttft_stream_ms: float | None = None
+    timing_source: str = ""
 
     @property
     def prompt_tokens(self) -> int:
@@ -1156,7 +1179,7 @@ def parse_transcript(path: Path, *, since: float) -> list[LlmCall]:
 
 def _prompt_messages(call: LlmCall) -> tuple[list[dict[str, Any]], int]:
     """The prefix to record, and how many messages were elided to get there."""
-    messages = call.input_messages
+    messages = call.input_messages or []
     if len(messages) <= MAX_PROMPT_MESSAGES:
         return messages, 0
     # The question is what the whole turn is about and the tail is what this
@@ -1181,8 +1204,9 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
     response, not an interpretation of it.
 
     The *prompt* is a different kind of thing and is labelled as one. What goes
-    into ``llm.input_messages`` is the conversation, which is real; what is
-    missing from it is Claude Code's own system prompt and the tool schemas,
+    into ``llm.input_messages``, when available, is the captured conversation;
+    otherwise reconstruction is labelled unavailable. Missing even from a
+    captured conversation are the CLI's own system prompt and the tool schemas,
     which are most of the request. ``system`` is the suffix this harness
     appended — genuinely known, and genuinely not the whole system prompt, which
     is why it travels with ``b2e.llm.system_partial``.
@@ -1243,6 +1267,12 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
             # this window is the gap between two recorded timestamps, not a
             # timed request.
             span.set_attribute("b2e.llm.timing", "derived")
+            if call.timing_source:
+                span.set_attribute("b2e.llm.timing_source", call.timing_source)
+            for name in ("api_duration_ms", "ttft_stream_ms"):
+                value = getattr(call, name)
+                if value is not None:
+                    span.set_attribute(f"b2e.llm.{name}", value)
             # …but the first token *was* timed, by the CLI, and reported on the
             # `message_start` row. One measured number beside a derived one, and
             # each says which it is.
@@ -1265,9 +1295,13 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
                 # The reconstruction flags. Not optional, and not in a doc:
                 # anyone reading these messages as "the prompt" has to meet
                 # them first.
+                conversation_available = call.input_messages is not None
                 span.set_attribute("b2e.llm.prompt_reconstruction",
-                                   PROMPT_RECONSTRUCTION)
-                span.set_attribute("b2e.llm.prompt_missing", PROMPT_MISSING)
+                                   PROMPT_RECONSTRUCTION if conversation_available
+                                   else "unavailable")
+                span.set_attribute("b2e.llm.prompt_missing", PROMPT_MISSING
+                                   if conversation_available else
+                                   f"conversation,{PROMPT_MISSING}")
                 if elided:
                     span.set_attribute("b2e.llm.input_messages_elided", elided)
                 if system:
@@ -1374,6 +1408,7 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
                         "input": block.get("input"),
                         "id": block.get("id"),
                         "output": None,
+                        **tool_outcome(None, unfinished=True),
                     })
         elif event.get("type") == "user":
             # Tool RESULTS come back as user-role messages. Without capturing
@@ -1388,6 +1423,9 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
                 for call in tool_calls:
                     if call.get("id") == use_id:
                         call["output"] = _tool_result_text(block.get("content"))
+                        call.update(tool_outcome(
+                            block.get("content"), is_error=bool(block.get("is_error")),
+                            denied=bool(block.get("permission_denied"))))
                         break
         elif event.get("type") == "result":
             final = event
@@ -1395,6 +1433,17 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
     usage = final.get("usage") or {}
     model_usage = final.get("modelUsage") or {}
     first_model = next(iter(model_usage.values()), {}) if model_usage else {}
+    denials = list(final.get("permission_denials") or [])
+    for call in tool_calls:
+        if any(d.get("tool_use_id") == call.get("id") and call.get("id") for d in denials):
+            call.update(tool_outcome(call["output"], denied=True))
+        if call["permission_denied"] and not any(
+            d.get("tool_use_id") == call.get("id") if d.get("tool_use_id")
+            else (d.get("tool_name") or d.get("tool")) == call.get("name")
+            for d in denials
+        ):
+            denials.append({"tool_name": call["name"], "tool_use_id": call["id"],
+                            "tool_input": call["input"]})
 
     return ClaudeCodeResult(
         answer=str(final.get("result", "")),
@@ -1406,7 +1455,7 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
         cache_creation_tokens=int(usage.get("cache_creation_input_tokens") or 0),
         cost_usd=float(final.get("total_cost_usd") or 0.0),
         duration_ms=int(final.get("duration_ms") or 0),
-        permission_denials=list(final.get("permission_denials") or []),
+        permission_denials=denials,
         tool_calls=tool_calls,
         # Read from the session, never hardcoded: Claude Code reports 32 000
         # max output for Haiku 4.5, not the 64 000 the original spec assumed.
@@ -1414,10 +1463,10 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
         max_output_tokens=first_model.get("maxOutputTokens"),
         is_error=bool(final.get("is_error")),
         error=str(final.get("api_error_status") or ""),
-        api_duration_ms=int(final.get("duration_api_ms") or 0),
-        ttft_ms=int(final.get("ttft_ms") or 0),
-        ttft_stream_ms=int(final.get("ttft_stream_ms") or 0),
-        time_to_request_ms=int(final.get("time_to_request_ms") or 0),
+        api_duration_ms=final.get("duration_api_ms"),
+        ttft_ms=final.get("ttft_ms"),
+        ttft_stream_ms=final.get("ttft_stream_ms"),
+        time_to_request_ms=final.get("time_to_request_ms"),
     )
 
 
@@ -1475,7 +1524,8 @@ def _bash_command(payload: Any) -> str:
     return ""
 
 
-def _emit_sandbox_span(call: "_OpenCall", output: str, *, ended_ns: int) -> None:
+def _emit_sandbox_span(call: "_OpenCall", output: str, *, ended_ns: int,
+                       runner_path: str = "/opt/skills/run") -> None:
     """A `sandbox.execute` span under a Bash call that ran an approved skill.
 
     The runner already reports everything the schema asks for — digest, state,
@@ -1490,7 +1540,8 @@ def _emit_sandbox_span(call: "_OpenCall", output: str, *, ended_ns: int) -> None
     the call is not something anyone measured, and inventing it would put a
     fabricated timestamp next to a real one.
     """
-    payload = _runner_payload(call.command, output)
+    payload = _skill_execution({"name": call.name, "input": {"command": call.command},
+                                "output": output}, runner_path)
     if payload is None:
         return
     skill = payload.get("skill") or {}
@@ -1518,7 +1569,8 @@ def _emit_sandbox_span(call: "_OpenCall", output: str, *, ended_ns: int) -> None
         span.end(end_time=ended_ns)
 
 
-def _runner_payload(command: str, output: str) -> dict[str, Any] | None:
+def _runner_payload(command: str, output: str,
+                    runner_path: str = "/opt/skills/run") -> dict[str, Any] | None:
     """The runner's JSON, or None if this Bash call was not a skill run.
 
     Both conditions have to hold. `echo` and `pwd` are permitted regardless of
@@ -1526,7 +1578,11 @@ def _runner_payload(command: str, output: str) -> dict[str, Any] | None:
     other command must not be allowed to manufacture a sandbox execution that
     never happened.
     """
-    if "/run" not in command and "skills/run" not in command:
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    if not argv or argv[0] != runner_path or len(argv) not in (2, 3):
         return None
     try:
         payload = json.loads(output)
@@ -1535,6 +1591,33 @@ def _runner_payload(command: str, output: str) -> dict[str, Any] | None:
     if not isinstance(payload, dict) or "ok" not in payload:
         return None
     return payload
+
+
+def _skill_execution(call: dict[str, Any], runner_path: str) -> dict[str, Any] | None:
+    """Count runner-reported execution, not a shell attempt or pre-dispatch refusal."""
+    if call.get("name") != "Bash" or call.get("permission_denied"):
+        return None
+    payload = _runner_payload(_bash_command(call.get("input")),
+                              _tool_result_text(call.get("output")), runner_path)
+    skill = (payload or {}).get("skill")
+    if (not isinstance(skill, dict) or skill.get("state") != "active"
+            or not skill.get("hash") or "wall_ms" not in payload):
+        return None
+    return payload
+
+
+def _record_cli_tool_outcome(span: Span, call: dict[str, Any], runner_path: str) -> None:
+    payload = (_runner_payload(_bash_command(call.get("input")),
+                               _tool_result_text(call.get("output")), runner_path)
+               if call.get("name") == "Bash" else None)
+    execution = _skill_execution(call, runner_path)
+    span.set_attribute("b2e.tool.skill_executed", execution is not None)
+    span.set_attribute("b2e.tool.skill_success", bool(execution and execution.get("ok") is True))
+    telemetry.record_tool_outcome(
+        span, output=call.get("output"),
+        is_error=bool(call.get("is_error") or (payload and payload.get("ok") is False)),
+        permission_denied=bool(call.get("permission_denied")),
+        unfinished=call.get("status") == "unfinished")
 
 
 class ToolSpanRecorder:
@@ -1555,8 +1638,10 @@ class ToolSpanRecorder:
     the end of the turn, so the bookkeeping is under a lock.
     """
 
-    def __init__(self, root: Span, *, started_ns: int | None = None) -> None:
+    def __init__(self, root: Span, *, started_ns: int | None = None,
+                 runner_path: str = "/opt/skills/run") -> None:
         self._root = root
+        self._runner_path = runner_path
         self._lock = threading.Lock()
         self._open: dict[str, _OpenCall] = {}
         self._seen: set[str] = set()
@@ -1668,6 +1753,8 @@ class ToolSpanRecorder:
         call_id = str(block.get("id") or "")
         name = str(block.get("name") or "unknown")
         with self._lock:
+            if call_id and call_id in self._seen:
+                return
             # Under the iteration that asked for it, so the tree finally has the
             # level `docs/span-schema.md` described and this harness lacked.
             # Falls back to the turn when there is no iteration — a tool call
@@ -1700,8 +1787,16 @@ class ToolSpanRecorder:
                 started_ns=call.started_ns, ended_ns=ended_ns))
         # Nested before the parent closes, so the sandbox span is filed under
         # the tool call rather than beside it.
-        _emit_sandbox_span(call, output, ended_ns=ended_ns)
-        telemetry.close_tool_span(call.span, output=output, end_time=ended_ns)
+        outcome = {"name": call.name, "input": {"command": call.command},
+                   "output": output, **tool_outcome(
+                       block.get("content"), is_error=bool(block.get("is_error")),
+                       denied=bool(block.get("permission_denied")))}
+        if not outcome["permission_denied"]:
+            _emit_sandbox_span(call, output, ended_ns=ended_ns,
+                               runner_path=self._runner_path)
+        _record_cli_tool_outcome(call.span, outcome, self._runner_path)
+        telemetry.set_io(call.span, output_value=output)
+        call.span.end(end_time=ended_ns)
 
     def finish(self) -> None:
         """Close whatever the turn left open. Safe to call more than once."""
@@ -1854,6 +1949,8 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     root.set_attribute("b2e.turn.tool_calls", len(result.tool_calls))
     root.set_attribute("b2e.turn.heimdall_calls", result.heimdall_calls)
     root.set_attribute("b2e.turn.skill_runs", result.skill_runs)
+    root.set_attribute("b2e.turn.bash_attempts", result.bash_attempts)
+    root.set_attribute("b2e.turn.skill_successes", result.skill_successes)
     root.set_attribute("b2e.cost.mode", result.cost_mode)
     if result.cost_usd is not None:
         root.set_attribute("b2e.turn.cost_usd", round(result.cost_usd, 6))
@@ -1907,13 +2004,16 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     # `api_duration_ms` can exceed `duration_ms` — 5 732 against 3 898 on the
     # 2026-08-09 probe — so it is not a wall-clock slice of the turn and must
     # not be subtracted from one.
-    if result.api_duration_ms:
+    if result.timing_source:
+        root.set_attribute("b2e.turn.timing_source", result.timing_source)
+        root.set_attribute("b2e.turn.timing_calls", result.timing_calls)
+    if result.api_duration_ms is not None:
         root.set_attribute("b2e.turn.api_duration_ms", result.api_duration_ms)
-    if result.ttft_ms:
+    if result.ttft_ms is not None:
         root.set_attribute("b2e.turn.ttft_ms", result.ttft_ms)
-    if result.ttft_stream_ms:
+    if result.ttft_stream_ms is not None:
         root.set_attribute("b2e.turn.ttft_stream_ms", result.ttft_stream_ms)
-    if result.time_to_request_ms:
+    if result.time_to_request_ms is not None:
         root.set_attribute("b2e.turn.time_to_request_ms", result.time_to_request_ms)
     if recorder is not None:
         # Wall time inside tools, so model time is turn duration minus this.
@@ -1965,3 +2065,4 @@ def emit_spans(result: ClaudeCodeResult, *, root,
             # exactly this.
             if call.get("output") is not None:
                 telemetry.set_io(span, output_value=call["output"])
+            _record_cli_tool_outcome(span, call, result.runner_path)

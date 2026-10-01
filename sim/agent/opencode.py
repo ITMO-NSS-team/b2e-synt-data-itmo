@@ -15,16 +15,18 @@ from typing import Any, Callable
 
 from sim import telemetry
 from sim.agent.claude_code import (
-    DIALOGUE_NOTE,
     HEIMDALL_TOOLS,
     MCP_SERVER_NAME,
-    NON_INTERACTIVE_NOTE,
+    SKILL_CHANNEL_TOOLS,
     ClaudeCodeResult,
     LlmCall,
     _read_bridge_log,
+    harness_policy_note,
 )
 from sim.agent.config import AgentConfig
+from sim.agent.opencode_timing import collect_native_timings
 from sim.agent.provider import is_zai, llm_provider
+from sim.tool_outcomes import tool_outcome
 
 
 API_PRICE_ENV = {
@@ -140,7 +142,7 @@ class OpenCodeHarness:
                 "bash": "allow", "edit": "allow", "read": "allow",
                 "glob": "allow", "grep": "allow",
             })
-        else:
+        elif set(config.tool_subset) & SKILL_CHANNEL_TOOLS:
             permissions["bash"] = {
                 "*": "deny",
                 f"{self.runner_path} *": "allow",
@@ -172,6 +174,7 @@ class OpenCodeHarness:
             "model": model,
             "share": "disabled",
             "autoupdate": False,
+            "experimental": {"openTelemetry": True},
             "provider": provider,
             "mcp": {
                 MCP_SERVER_NAME: {
@@ -196,17 +199,17 @@ class OpenCodeHarness:
             "default_agent": "b2e",
         }
 
-    @staticmethod
-    def harness_note(config: AgentConfig) -> str:
-        """Describe the same turn boundary as the Claude Code harness.
-
-        OpenCode receives MCP schemas directly, so the Claude-specific
-        ToolSearch instructions do not apply. The channel rules do: a
-        stateless benchmark turn cannot defer work to a user who will never
-        answer, while a resumable chat may ask one necessary question.
-        """
-        return (DIALOGUE_NOTE if config.conversation_mode == "resume"
-                else NON_INTERACTIVE_NOTE)
+    def harness_note(self, config: AgentConfig) -> str:
+        """Shared policy with directly available MCP tools, not Claude's ToolSearch."""
+        tools = ", ".join(
+            f"`{name}`" for name, grant in self._permissions(config).items()
+            if name.startswith(f"{MCP_SERVER_NAME}_") and grant == "allow"
+        )
+        return harness_policy_note(
+            config, runner=self.runner_path,
+            tool_discovery=(f"* Инструменты Heimdall доступны напрямую: {tools}. "
+                            "Других инструментов Heimdall у тебя нет."),
+        )
 
     def child_env(self, config_path: Path) -> dict[str, str]:
         home = Path(self.opencode_home or os.environ.get("HOME", "/tmp"))
@@ -274,12 +277,53 @@ class OpenCodeHarness:
         )), encoding="utf-8")
         if config.conversation_mode != "resume":
             resume_session_id = None
+        attempts_started = time.perf_counter()
         result = self._invoke(
             question, config=config, config_path=config_path, workdir=workdir,
             resume_session_id=resume_session_id, keep_stream=keep_stream,
             on_event=on_event,
         )
+        if resume_session_id and result.is_error and not result.answer:
+            failed = result
+            retry_delay_ms = (time.perf_counter() - attempts_started) * 1000
+            result = self._invoke(
+                question, config=config, config_path=config_path, workdir=workdir,
+                resume_session_id=None, keep_stream=keep_stream, on_event=on_event,
+            )
+            result.resumed_failed = True
+            warning = (f"resume of {resume_session_id} failed ({failed.error}); "
+                       "retried in a new session without history")
+            result.error = warning + (f"; {result.error}" if result.error else "")
+            before, after = failed.api_duration_ms, result.api_duration_ms
+            result.api_duration_ms = (before + after
+                                      if before is not None and after is not None else None)
+            if failed.llm_calls:
+                result.ttft_stream_ms = failed.ttft_stream_ms
+                result.time_to_request_ms = failed.time_to_request_ms
+            elif result.time_to_request_ms is not None:
+                result.time_to_request_ms += retry_delay_ms
+            result.timing_calls += failed.timing_calls
+            # Both invocations belong to this turn, not just the successful one.
+            # Do not silently discard paid work from a failed resume.
+            for field in ("num_turns", "input_tokens", "output_tokens",
+                          "cache_read_tokens", "cache_creation_tokens", "duration_ms"):
+                setattr(result, field, getattr(failed, field) + getattr(result, field))
+            if failed.reasoning_tokens is not None:
+                result.reasoning_tokens = (
+                    (result.reasoning_tokens or 0) + failed.reasoning_tokens)
+            for field in ("llm_calls", "tool_calls", "permission_denials"):
+                setattr(result, field, getattr(failed, field) + getattr(result, field))
+            if failed.cost_usd is not None and result.cost_usd is not None:
+                if failed.cost_mode == result.cost_mode:
+                    result.cost_usd += failed.cost_usd
+                else:
+                    result.cost_usd, result.cost_mode = None, "unavailable"
+            elif failed.total_tokens or failed.llm_calls or failed.cost_usd is not None:
+                result.cost_usd = None
+                if failed.cost_mode != result.cost_mode:
+                    result.cost_mode = "unavailable"
         result.system_suffix = system_prompt + "\n" + self.harness_note(config)
+        result.runner_path = self.runner_path
         result.bridge_calls = _read_bridge_log(bridge_log)
         config_path.unlink(missing_ok=True)
         if not keep_stream:
@@ -293,16 +337,24 @@ class OpenCodeHarness:
                 on_event: Callable[[dict[str, Any]], None] | None,
                 ) -> ClaudeCodeResult:
         started = time.perf_counter()
+        started_ns = time.time_ns()
         token_prices = api_token_prices_from_env()
         lines: list[str] = []
         timed_out = False
         err_path = workdir / "opencode.stderr"
-        with open(err_path, "w+", encoding="utf-8") as err:
+        with collect_native_timings() as timings, open(err_path, "w+", encoding="utf-8") as err:
+            env = self.child_env(config_path)
+            env["OTEL_EXPORTER_OTLP_ENDPOINT"] = timings.endpoint
+            # `opencode run` may exit without flushing the SDK's default 5s
+            # batch. Drain locally while it is alive; missing batches remain
+            # explicitly unavailable, never replaced with estimated timings.
+            env["OTEL_BSP_SCHEDULE_DELAY"] = "10"
+            env["NO_PROXY"] = env.get("NO_PROXY", "") + ",127.0.0.1,localhost"
             proc = subprocess.Popen(
                 self.build_argv(question, config=config,
                                 resume_session_id=resume_session_id),
                 stdout=subprocess.PIPE, stderr=err, text=True,
-                env=self.child_env(config_path), cwd=str(workdir), bufsize=1,
+                env=env, cwd=str(workdir), bufsize=1,
             )
 
             def kill() -> None:
@@ -339,6 +391,7 @@ class OpenCodeHarness:
         result = parse_stream(stream, model=self.model_name(config.model_id),
                               duration_ms=duration_ms,
                               token_prices=token_prices)
+        timings.apply(result, started_ns=started_ns)
         if keep_stream:
             path = workdir / f"opencode-{uuid.uuid4().hex[:16]}.stream.jsonl"
             path.write_text(stream, encoding="utf-8")
@@ -366,6 +419,10 @@ def _observe_open_code(line: str,
         return
     part = event.get("part") or {}
     state = part.get("state") or {}
+    if state.get("status") not in ("completed", "error"):
+        return
+    output = state.get("output") if state.get("output") is not None else state.get("error")
+    outcome = tool_outcome(output, is_error=state.get("status") == "error")
     timing = state.get("time") or {}
     call_id = str(part.get("callID") or part.get("id") or "")
     name = _tool_name(str(part.get("tool") or ""))
@@ -382,8 +439,9 @@ def _observe_open_code(line: str,
         "type": "user",
         "message": {"content": [{
             "type": "tool_result", "tool_use_id": call_id,
-            "content": state.get("output") or state.get("error") or "",
-            "is_error": state.get("status") == "error",
+            "content": output,
+            "is_error": outcome["is_error"],
+            "permission_denied": outcome["permission_denied"],
             "_b2e_ended_ns": int(timing.get("end") or
                                   event.get("timestamp") or 0) * 1_000_000,
         }]},
@@ -411,18 +469,23 @@ def parse_stream(stream: str, *, model: str, duration_ms: int = 0,
         (str(e.get("type")), e.get("part") or {})
         for e in events if e.get("type") in ("reasoning", "text")
     ]
-    tool_calls: list[dict[str, Any]] = []
-    for event in events:
+    tool_calls_by_id: dict[str, dict[str, Any]] = {}
+    for index, event in enumerate(events):
         if event.get("type") != "tool_use":
             continue
         part = event.get("part") or {}
         state = part.get("state") or {}
-        tool_calls.append({
-            "id": str(part.get("callID") or part.get("id") or ""),
+        output = state.get("output") if state.get("output") is not None else state.get("error")
+        call_id = str(part.get("callID") or part.get("id") or "")
+        tool_calls_by_id[call_id or f"event-{index}"] = {
+            "id": call_id,
             "name": _tool_name(str(part.get("tool") or "")),
             "input": state.get("input") or {},
-            "output": state.get("output") or state.get("error"),
-        })
+            "output": output,
+            **tool_outcome(output, is_error=state.get("status") == "error",
+                           unfinished=state.get("status") not in ("completed", "error")),
+        }
+    tool_calls = list(tool_calls_by_id.values())
 
     starts = {
         str((e.get("part") or {}).get("messageID") or ""): int(e.get("timestamp") or 0)
@@ -510,6 +573,9 @@ def parse_stream(stream: str, *, model: str, duration_ms: int = 0,
                   else None),
         cost_mode=cost_mode, duration_ms=duration_ms,
         tool_calls=tool_calls, llm_calls=llm_calls,
+        permission_denials=[{"tool_name": call["name"], "tool_use_id": call["id"],
+                            "tool_input": call["input"]}
+                           for call in tool_calls if call["permission_denied"]],
         transcript_status="missing" if not finishes else "",
         is_error=bool(errors), error="\n".join(errors),
     )

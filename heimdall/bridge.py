@@ -35,7 +35,7 @@ import urllib.request
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "heimdall-sandbox"
-SERVER_VERSION = "01.002.00"
+SERVER_VERSION = "01.003.00"
 
 BASE_URL = os.environ.get("HEIMDALL_URL", "http://127.0.0.1:8080").rstrip("/")
 TOKEN = os.environ.get("HEIMDALL_TOKEN", "")
@@ -124,9 +124,17 @@ TOOLS = [
             "columns и metrics — РАЗНЫЕ СПИСКИ, и перепутать их значит получить "
             "отказ: колонку нельзя запросить в metrics, метрику — в columns. "
             "Член с полем parameters вызывается только через param_metrics / "
-            "param_columns."),
+            "param_columns. Ответ постраничный: по умолчанию 50 членов, максимум "
+            "100 и 16000 байт на страницу. Следуй pagination.has_next_page и "
+            "pagination.next_offset (передай как offset); используй section и search "
+            "для сужения поиска. Отсутствие члена на одной странице не означает "
+            "его отсутствия в каталоге. Чтение файлов не требуется."),
         "inputSchema": {"type": "object", "required": ["schema", "logic_model"],
-                        "properties": {"schema": _STR, "logic_model": _STR}},
+                        "properties": {"schema": _STR, "logic_model": _STR,
+                                       "offset": {"type": "integer", "minimum": 0, "default": 0},
+                                       "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+                                       "section": {"type": "string", "enum": ["all", "columns", "metrics", "time_dimensions"], "default": "all"},
+                                       "search": {"type": "string", "description": "Подстрока имени или описания, без учёта регистра"}}},
     },
     {
         "name": "mcp_query",
@@ -289,7 +297,9 @@ def _dispatch(tool: str, args: dict) -> tuple[int, dict]:
     if tool == "describe_model":
         schema = urllib.parse.quote(str(args.get("schema", "")))
         model = urllib.parse.quote(str(args.get("logic_model", "")))
-        return _http("GET", f"/api/v1/mcp/models/{schema}/{model}/")
+        return _http("GET", f"/api/v1/mcp/models/{schema}/{model}/",
+                     params={key: args[key] for key in ("offset", "limit", "section", "search")
+                             if key in args})
     if tool == "mcp_query":
         return _http("POST", "/api/v1/mcp/query/", body=args)
     if tool == "get_overview":

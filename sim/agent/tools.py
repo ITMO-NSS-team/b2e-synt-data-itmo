@@ -68,13 +68,20 @@ def tool_schemas(subset: tuple[str, ...]) -> list[dict[str, Any]]:
                 "витрины. Имена берутся ТОЛЬКО отсюда: сервер сверяет каждое с "
                 "каталогом и отклоняет незнакомое. columns и metrics — разные "
                 "списки: колонку нельзя запросить в metrics, метрику — в "
-                "columns. Дорого по токенам — вызывай точечно."
+                "columns. Ответ постраничный (до 100 членов, 16000 байт): "
+                "следуй pagination.has_next_page и pagination.next_offset, "
+                "сохраняя section/search. section выбирает список, search ищет "
+                "подстроку имени/описания. Файлы для продолжения не нужны."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "schema": {"type": "string"},
                     "logic_model": {"type": "string"},
+                    "offset": {"type": "integer", "minimum": 0, "default": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+                    "section": {"type": "string", "enum": ["all", "columns", "metrics", "time_dimensions"]},
+                    "search": {"type": "string"},
                 },
                 "required": ["schema", "logic_model"],
             },
@@ -313,9 +320,11 @@ class HeimdallTools:
     def list_models(self) -> dict[str, Any]:
         return self._call("GET", "/api/v1/mcp/models/", ENDPOINT_LIST_MODELS)
 
-    def describe_model(self, schema: str, logic_model: str) -> dict[str, Any]:
+    def describe_model(self, schema: str, logic_model: str, *, offset: int = 0,
+                       limit: int = 50, section: str = "all", search: str = "") -> dict[str, Any]:
         return self._call("GET", f"/api/v1/mcp/models/{schema}/{logic_model}/",
-                          ENDPOINT_DESCRIBE)
+                          ENDPOINT_DESCRIBE, params={"offset": offset, "limit": limit,
+                                                    "section": section, "search": search})
 
     def get_docs(self, topic: str) -> dict[str, Any]:
         return self._call("GET", "/api/v1/mcp/docs/", ENDPOINT_DOCS,

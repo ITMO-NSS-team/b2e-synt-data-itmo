@@ -27,10 +27,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at     REAL NOT NULL,
     fingerprint    TEXT NOT NULL,
     metadata       TEXT NOT NULL DEFAULT '{}',
-    -- The headless Claude Code session this B2E session is bound to, once one
-    -- exists. Null under conversation_mode="stateless", where every turn is
-    -- deliberately its own session and there is nothing to bind to.
-    claude_session_id TEXT
+    -- Historical column name: holds either CLI's native session ID.
+    -- session_harness identifies its owner; legacy untagged IDs are not safe
+    -- to resume. Stateless turns never bind a native session.
+    claude_session_id TEXT,
+    session_harness TEXT
 );
 CREATE INDEX IF NOT EXISTS sessions_by_employee ON sessions(employee_id, created_at DESC);
 
@@ -88,6 +89,9 @@ class Store:
         if "claude_session_id" not in have:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN claude_session_id TEXT")
+        if "session_harness" not in have:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN session_harness TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -116,20 +120,29 @@ class Store:
                 "config_ref": row["config_ref"], "created_at": row["created_at"],
                 "fingerprint": json.loads(row["fingerprint"]),
                 "metadata": json.loads(row["metadata"]),
-                "claude_session_id": row["claude_session_id"]}
+                "claude_session_id": row["claude_session_id"],
+                "session_harness": row["session_harness"]}
 
     def bind_claude_session(self, session_id: str, claude_session_id: str) -> None:
+        """Compatibility entry point for callers binding a Claude session."""
+        self.bind_harness_session(session_id, "claude_code", claude_session_id)
+
+    def bind_harness_session(self, session_id: str, harness: str,
+                             native_session_id: str) -> None:
         """Remember the headless session a resumable conversation lives in.
 
-        Written after every turn rather than only the first. Claude Code is free
+        Written after every turn rather than only the first. A CLI is free
         to hand back a different id — a compaction or a fork produces one — and
         binding once would leave later turns resuming a session that has been
         superseded.
         """
+        if harness not in ("claude_code", "open_code"):
+            raise ValueError(f"not a CLI harness: {harness!r}")
         with self._lock:
             self._conn.execute(
-                "UPDATE sessions SET claude_session_id = ? WHERE id = ?",
-                (claude_session_id, session_id))
+                "UPDATE sessions SET claude_session_id = ?, session_harness = ? "
+                "WHERE id = ?",
+                (native_session_id, harness, session_id))
             self._conn.commit()
 
     def list_sessions(self, *, employee_id: str | None = None,

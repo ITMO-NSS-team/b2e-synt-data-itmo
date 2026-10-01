@@ -391,6 +391,7 @@ def create_app(state: AgentState | None = None) -> FastAPI:
 
         fingerprint, config, prompt_template = state.build_fingerprint(
             session["config_ref"])
+        _resume_session_id(session, config)
         system_prompt = render(prompt_template, {
             "employee_id": session["employee_id"],
             "memory_block": _memory_block(state, config, session),
@@ -541,6 +542,20 @@ def create_app(state: AgentState | None = None) -> FastAPI:
     return app
 
 
+def _resume_session_id(session: dict[str, Any], config: AgentConfig) -> str | None:
+    """Never pass an unverified or another harness's native ID to a CLI."""
+    native_id = session.get("claude_session_id")
+    if config.conversation_mode != "resume" or not native_id:
+        return None
+    owner = session.get("session_harness")
+    if owner != config.harness:
+        raise HTTPException(
+            409, f"Cannot resume {owner or 'untagged legacy'} native history "
+            f"with {config.harness}. Create a new B2E session; native history "
+            "is not migrated between harnesses.")
+    return native_id
+
+
 def _run_claude_code(state: "AgentState", session: dict[str, Any],
                      config: AgentConfig, system_prompt: str, question: str,
                      fingerprint: RunFingerprint, session_id: str,
@@ -554,6 +569,7 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
     from sim.agent.claude_code import ToolSpanRecorder, emit_spans
     from sim.agent.loop import TurnResult
 
+    resume_session_id = _resume_session_id(session, config)
     if state.harness is None:
         raise HTTPException(
             status_code=503,
@@ -587,7 +603,8 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         # recorder would start counting at its own construction, which is close
         # enough to be plausible and wrong enough to put the first model call
         # outside its own iteration.
-        recorder = ToolSpanRecorder(root, started_ns=time.time_ns())
+        recorder = ToolSpanRecorder(root, started_ns=time.time_ns(),
+                                    runner_path=getattr(state.harness, "runner_path", "/opt/skills/run"))
 
         def observe(event: dict[str, Any]) -> None:
             """Both consumers of the stream, in the order that matters.
@@ -604,7 +621,7 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
                 employee_id=session["employee_id"],
                 keep_stream=_keeps_raw_stream(metadata),
                 b2e_session_id=session_id,
-                resume_session_id=session.get("claude_session_id"),
+                resume_session_id=resume_session_id,
                 on_event=observe)
         except Exception:
             # A turn that dies without closing its progress leaves every poller
@@ -621,7 +638,8 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
     # Bound after the turn, not before: the id is what the CLI actually used,
     # which is not always the one we asked it to resume.
     if config.conversation_mode == "resume" and outcome.session_id:
-        state.store.bind_claude_session(session_id, outcome.session_id)
+        state.store.bind_harness_session(
+            session_id, config.harness, outcome.session_id)
 
     if guard is not None:
         guard.record(tokens=outcome.total_tokens, usd=outcome.cost_usd or 0.0)

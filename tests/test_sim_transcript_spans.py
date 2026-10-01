@@ -389,6 +389,9 @@ def test_the_prompt_is_the_conversation_before_the_call_not_after(spans, fingerp
         emit_llm_spans(parse_transcript(path, since=0.0), root=root)
 
     first, second = _by_name(spans, "llm.messages.create")
+    for span in (first, second):
+        assert span.attributes["b2e.llm.prompt_reconstruction"] == "conversation_only"
+        assert span.attributes["b2e.llm.prompt_missing"] == "cli_system_prompt,tool_schemas"
     # The first call saw only the question.
     assert first.attributes["llm.input_messages.0.message.role"] == "user"
     assert first.attributes["llm.input_messages.0.message.content"] == "сколько витрин?"

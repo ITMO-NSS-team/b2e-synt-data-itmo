@@ -21,8 +21,9 @@ hint}``. Появляется место для ``POST /api/v2/dev/add_skill_for
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, File, Header, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -141,9 +142,14 @@ def _mcp_v1_router(state: _State) -> APIRouter:
 
     @router.get("/models/{schema}/{logic_model}/")
     def describe_model(schema: str, logic_model: str,
+                       offset: int = Query(0, ge=0),
+                       limit: int = Query(50, ge=1, le=100),
+                       section: Literal["all", "columns", "metrics", "time_dimensions"] = "all",
+                       search: str = "",
                        _: str = Depends(_require_bearer),
                        channel: str = Depends(_channel)) -> dict:
-        return _describe(state.model(schema, logic_model, channel))
+        return _describe(state.model(schema, logic_model, channel), offset=offset,
+                         limit=limit, section=section, search=search)
 
     @router.post("/query/")
     def mcp_query(body: dict, _: str = Depends(_require_bearer),
@@ -169,7 +175,11 @@ def _mcp_v1_router(state: _State) -> APIRouter:
     return router
 
 
-def _describe(model: Model) -> dict:
+DESCRIPTION_MAX_BYTES = 16_000
+
+
+def _describe(model: Model, *, offset: int = 0, limit: int = 50,
+              section: str = "all", search: str = "") -> dict:
     """Ответ describe_model. Только здесь видно поле parameters."""
     def member(m) -> dict:
         out: dict[str, Any] = {"name": m.name, "type": m.type,
@@ -178,7 +188,7 @@ def _describe(model: Model) -> dict:
             out["parameters"] = m.parameters
         return out
 
-    return {
+    result = {
         "schema": model.schema,
         "logic_model": model.logic_model,
         "description": model.summary,
@@ -195,6 +205,41 @@ def _describe(model: Model) -> dict:
             "modes": "Режим выводится из структуры тела, отдельного поля нет.",
         },
     }
+    # Same bounded API response for both CLIs. Do not rely on their different
+    # spill-to-file thresholds: file readers are intentionally forbidden.
+    kinds = ("columns", "metrics", "time_dimensions")
+    members = [(kind, item) for kind in kinds for item in result[kind]
+               if (section == "all" or kind == section)
+               and (not search or search.casefold() in
+                    (item["name"] + " " + item.get("description", "")).casefold())]
+    for kind in kinds:
+        result[kind] = []
+    page = {"offset": offset, "limit": limit, "total_members": len(members),
+            "returned_members": 0, "has_next_page": offset < len(members),
+            "next_offset": offset if offset < len(members) else None,
+            "section": section, "search": search}
+    result["pagination"] = page
+
+    def size() -> int:
+        return len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+
+    if size() > DESCRIPTION_MAX_BYTES:
+        raise fail("request-validation-error", "описание модели превышает бюджет ответа")
+    for kind, item in members[offset:offset + limit]:
+        result[kind].append(item)
+        # Reserve enough bytes for the updated count/cursor metadata below.
+        if size() + 100 > DESCRIPTION_MAX_BYTES:
+            result[kind].pop()
+            if not page["returned_members"]:
+                raise fail("request-validation-error",
+                           "описание одного члена превышает бюджет ответа; "
+                           "нужна корректировка каталога, файлового обхода нет")
+            break
+        page["returned_members"] += 1
+        next_offset = offset + page["returned_members"]
+        page["has_next_page"] = next_offset < len(members)
+        page["next_offset"] = next_offset if page["has_next_page"] else None
+    return result
 
 
 def _run(state: _State, model: Model, body: dict, query_type: str | None) -> dict:

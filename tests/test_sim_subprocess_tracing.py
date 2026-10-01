@@ -344,8 +344,12 @@ def test_a_refused_skill_is_recorded_as_a_refusal_not_a_success(spans, fingerpri
         recorder.observe(_tool_result("call-1", refusal))
         recorder.finish()
 
-    attrs = _by_name(spans, "sandbox.execute")[0].attributes
-    assert attrs["b2e.sandbox.exit_status"] == "not-executable"
+    assert not _by_name(spans, "sandbox.execute")  # Refused before dispatch.
+    tool = _by_name(spans, "tool.Bash")[0]
+    assert tool.attributes["b2e.tool.skill_executed"] is False
+    assert tool.attributes["b2e.tool.is_error"] is True
+    assert tool.attributes["b2e.tool.permission_denied"] is False
+    assert "not-executable" in tool.attributes["output.value"]
 
 
 def test_a_bash_call_that_is_not_a_skill_run_gets_no_sandbox_span(spans, fingerprint):
