@@ -603,7 +603,8 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
         # recorder would start counting at its own construction, which is close
         # enough to be plausible and wrong enough to put the first model call
         # outside its own iteration.
-        recorder = ToolSpanRecorder(root, started_ns=time.time_ns())
+        recorder = ToolSpanRecorder(root, started_ns=time.time_ns(),
+                                    runner_path=getattr(state.harness, "runner_path", "/opt/skills/run"))
 
         def observe(event: dict[str, Any]) -> None:
             """Both consumers of the stream, in the order that matters.

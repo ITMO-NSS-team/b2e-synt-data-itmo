@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol
 
+from sim.tool_outcomes import permission_denied
 from .modes import ModeConfig, catalog_hash
 
 _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
@@ -27,6 +28,7 @@ _TRANSPORT_FAILURE_ANSWER = re.compile(
 OPERATIONAL_METRICS = (
     "iterations", "tool_calls", "heimdall_calls", "mcp_query_calls",
     "failed_tool_calls", "permission_denials", "http_error_count",
+    "bash_attempts", "skill_runs", "skill_successes",
     "mcp_query_rows_total", "heimdall_response_bytes", "prompt_tokens",
     "uncached_prompt_tokens", "cache_read_tokens", "cache_creation_tokens",
     "completion_tokens", "reasoning_tokens", "total_tokens", "cache_hit_ratio",
@@ -347,7 +349,9 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             or _attr(attrs, "tool_parameters")
         )
         output = _decode(_attr(attrs, "output.value"))
-        denied = _permission_denied(output)
+        structured_denial = _attr(attrs, "b2e.tool.permission_denied")
+        denied = (structured_denial is True if structured_denial is not None
+                  else _permission_denied(output))
         status = _attr(attrs, "b2e.http.status")
         if isinstance(status, (int, float)):
             http_statuses.append(int(status))
@@ -358,7 +362,7 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             name == "get_skill"
             and isinstance(arguments, dict)
             and arguments.get("name")
-            and not denied
+            and not denied and not _failed_span(span, attrs)
         ):
             loaded.add(str(arguments["name"]))
         if denied and _is_tool_span(span, attrs):
@@ -374,7 +378,7 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
         response_bytes = _attr(attrs, "b2e.heimdall.response_bytes")
         if isinstance(response_bytes, (int, float)):
             heimdall_response_bytes.append(int(response_bytes))
-        if _failed_span(span, attrs) and _is_tool_span(span, attrs):
+        if (_failed_span(span, attrs) or denied) and _is_tool_span(span, attrs):
             if _attr(attrs, "b2e.heimdall.endpoint"):
                 failed_bridge.append(span)
             else:
@@ -402,7 +406,10 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
         "mcp_query_calls": len(bridge_mcp or tool_mcp),
         "failed_tool_calls": (
             len(failed_bridge)
-            + sum(not _looks_like_heimdall_tool(span, attrs) for span, attrs in failed_tool)
+            + sum(not _looks_like_heimdall_tool(span, attrs)
+                  or _attr(attrs, "b2e.tool.permission_denied") is True
+                  or _permission_denied(_decode(_attr(attrs, "output.value")))
+                  for span, attrs in failed_tool)
             if failed_bridge else len(failed_tool)
         ),
         "http_statuses": http_statuses,
@@ -414,8 +421,20 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             stats.get("iterations"), _attr(root_attrs, "b2e.turn.iterations")
         ),
         "permission_denials": (
-            denial_count if recorded_denials is None else _int(recorded_denials)
+            max(denial_count, _int(recorded_denials))
         ),
+        # Do not trust historical `skill_runs`: it used to count every Bash
+        # attempt. New traces carry explicit execution evidence per tool.
+        "bash_attempts": sum(_tool_name(s, s.get("attributes") or {}) == "Bash"
+                             for s in spans),
+        "skill_runs": (sum(_attr(s.get("attributes") or {}, "b2e.tool.skill_executed") is True
+                           for s in spans)
+                       if any(_attr(s.get("attributes") or {}, "b2e.tool.skill_executed") is not None
+                              for s in spans) else None),
+        "skill_successes": (sum(_attr(s.get("attributes") or {}, "b2e.tool.skill_success") is True
+                                for s in spans)
+                            if any(_attr(s.get("attributes") or {}, "b2e.tool.skill_success") is not None
+                                   for s in spans) else None),
         "http_error_count": sum(status >= 400 for status in http_statuses),
         "prompt_tokens": prompt_tokens,
         "uncached_prompt_tokens": _int(
@@ -497,16 +516,16 @@ def _looks_like_heimdall_tool(span: dict[str, Any], attrs: dict[str, Any]) -> bo
 
 
 def _permission_denied(output: Any) -> bool:
-    """Claude Code don't-ask refusals are plain text on the tool span."""
-    return isinstance(output, str) and "has been denied" in output.lower()
+    return permission_denied(output)
 
 
 def _failed_span(span: dict[str, Any], attrs: dict[str, Any]) -> bool:
     status = _attr(attrs, "b2e.http.status")
-    status_code = (span.get("status") or {}).get("status_code")
+    status_code = span.get("status_code") or (span.get("status") or {}).get("status_code")
     return (
         (isinstance(status, (int, float)) and status >= 400)
         or bool(_attr(attrs, "b2e.heimdall.error_code"))
+        or _attr(attrs, "b2e.tool.is_error") is True
         or str(status_code or "").upper() == "ERROR"
     )
 

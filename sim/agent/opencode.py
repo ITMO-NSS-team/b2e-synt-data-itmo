@@ -15,17 +15,17 @@ from typing import Any, Callable
 
 from sim import telemetry
 from sim.agent.claude_code import (
-    DIALOGUE_NOTE,
     HEIMDALL_TOOLS,
     MCP_SERVER_NAME,
-    NON_INTERACTIVE_NOTE,
     SKILL_CHANNEL_TOOLS,
     ClaudeCodeResult,
     LlmCall,
     _read_bridge_log,
+    harness_policy_note,
 )
 from sim.agent.config import AgentConfig
 from sim.agent.provider import is_zai, llm_provider
+from sim.tool_outcomes import tool_outcome
 
 
 API_PRICE_ENV = {
@@ -197,17 +197,17 @@ class OpenCodeHarness:
             "default_agent": "b2e",
         }
 
-    @staticmethod
-    def harness_note(config: AgentConfig) -> str:
-        """Describe the same turn boundary as the Claude Code harness.
-
-        OpenCode receives MCP schemas directly, so the Claude-specific
-        ToolSearch instructions do not apply. The channel rules do: a
-        stateless benchmark turn cannot defer work to a user who will never
-        answer, while a resumable chat may ask one necessary question.
-        """
-        return (DIALOGUE_NOTE if config.conversation_mode == "resume"
-                else NON_INTERACTIVE_NOTE)
+    def harness_note(self, config: AgentConfig) -> str:
+        """Shared policy with directly available MCP tools, not Claude's ToolSearch."""
+        tools = ", ".join(
+            f"`{name}`" for name, grant in self._permissions(config).items()
+            if name.startswith(f"{MCP_SERVER_NAME}_") and grant == "allow"
+        )
+        return harness_policy_note(
+            config, runner=self.runner_path,
+            tool_discovery=(f"* Инструменты Heimdall доступны напрямую: {tools}. "
+                            "Других инструментов Heimdall у тебя нет."),
+        )
 
     def child_env(self, config_path: Path) -> dict[str, str]:
         home = Path(self.opencode_home or os.environ.get("HOME", "/tmp"))
@@ -310,6 +310,7 @@ class OpenCodeHarness:
                 if failed.cost_mode != result.cost_mode:
                     result.cost_mode = "unavailable"
         result.system_suffix = system_prompt + "\n" + self.harness_note(config)
+        result.runner_path = self.runner_path
         result.bridge_calls = _read_bridge_log(bridge_log)
         config_path.unlink(missing_ok=True)
         if not keep_stream:
@@ -396,6 +397,10 @@ def _observe_open_code(line: str,
         return
     part = event.get("part") or {}
     state = part.get("state") or {}
+    if state.get("status") not in ("completed", "error"):
+        return
+    output = state.get("output") if state.get("output") is not None else state.get("error")
+    outcome = tool_outcome(output, is_error=state.get("status") == "error")
     timing = state.get("time") or {}
     call_id = str(part.get("callID") or part.get("id") or "")
     name = _tool_name(str(part.get("tool") or ""))
@@ -412,8 +417,9 @@ def _observe_open_code(line: str,
         "type": "user",
         "message": {"content": [{
             "type": "tool_result", "tool_use_id": call_id,
-            "content": state.get("output") or state.get("error") or "",
-            "is_error": state.get("status") == "error",
+            "content": output,
+            "is_error": outcome["is_error"],
+            "permission_denied": outcome["permission_denied"],
             "_b2e_ended_ns": int(timing.get("end") or
                                   event.get("timestamp") or 0) * 1_000_000,
         }]},
@@ -441,18 +447,23 @@ def parse_stream(stream: str, *, model: str, duration_ms: int = 0,
         (str(e.get("type")), e.get("part") or {})
         for e in events if e.get("type") in ("reasoning", "text")
     ]
-    tool_calls: list[dict[str, Any]] = []
-    for event in events:
+    tool_calls_by_id: dict[str, dict[str, Any]] = {}
+    for index, event in enumerate(events):
         if event.get("type") != "tool_use":
             continue
         part = event.get("part") or {}
         state = part.get("state") or {}
-        tool_calls.append({
-            "id": str(part.get("callID") or part.get("id") or ""),
+        output = state.get("output") if state.get("output") is not None else state.get("error")
+        call_id = str(part.get("callID") or part.get("id") or "")
+        tool_calls_by_id[call_id or f"event-{index}"] = {
+            "id": call_id,
             "name": _tool_name(str(part.get("tool") or "")),
             "input": state.get("input") or {},
-            "output": state.get("output") or state.get("error"),
-        })
+            "output": output,
+            **tool_outcome(output, is_error=state.get("status") == "error",
+                           unfinished=state.get("status") not in ("completed", "error")),
+        }
+    tool_calls = list(tool_calls_by_id.values())
 
     starts = {
         str((e.get("part") or {}).get("messageID") or ""): int(e.get("timestamp") or 0)
@@ -540,6 +551,9 @@ def parse_stream(stream: str, *, model: str, duration_ms: int = 0,
                   else None),
         cost_mode=cost_mode, duration_ms=duration_ms,
         tool_calls=tool_calls, llm_calls=llm_calls,
+        permission_denials=[{"tool_name": call["name"], "tool_use_id": call["id"],
+                            "tool_input": call["input"]}
+                           for call in tool_calls if call["permission_denied"]],
         transcript_status="missing" if not finishes else "",
         is_error=bool(errors), error="\n".join(errors),
     )
