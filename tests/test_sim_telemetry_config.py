@@ -68,3 +68,59 @@ def test_benchmark_metrics_are_exported_as_a_correlated_evaluator_span(spans) ->
     assert span.attributes["b2e.metric.exact_match"] == 1
     assert span.attributes["b2e.metric.latency_ms"] == 1250.5
     assert "b2e.metric.cost_usd" not in span.attributes
+
+
+def test_benchmark_run_contains_summary_and_owns_score_spans(spans) -> None:
+    from sim import telemetry
+
+    summary = {
+        "n_runs": 2,
+        "n_completed": 2,
+        "review": [],
+        "by_mode": {
+            "existing_skills": {
+                "n_runs": 1,
+                "answer_accuracy": 1.0,
+            },
+            "skills_disabled": {
+                "n_runs": 1,
+                "answer_accuracy": 0.0,
+            },
+        },
+    }
+    with telemetry.benchmark_run(
+        eval_id="eval-1",
+        modes=("skills_disabled", "existing_skills"),
+        repetitions=1,
+        case_count=1,
+    ) as run_span:
+        telemetry.emit_benchmark_metrics(
+            {"answer_accuracy": 1},
+            eval_id="eval-1", run_id="run-1", case_id="case-1",
+            mode="existing_skills", repetition=1, status="completed",
+            scorer_version="benchmark-scorer@1",
+            trace_id="1" * 32, parent_span_id="2" * 16,
+        )
+        telemetry.set_benchmark_summary(run_span, summary, eval_id="eval-1")
+
+    finished = {span.name: span for span in spans.get_finished_spans()}
+    run = finished["b2e.benchmark.run"]
+    score = finished["b2e.benchmark.score"]
+    existing = finished["b2e.benchmark.summary.existing_skills"]
+    disabled = finished["b2e.benchmark.summary.skills_disabled"]
+    assert score.parent.span_id == run.context.span_id
+    assert score.links[0].context.trace_id == int("1" * 32, 16)
+    assert run.attributes["b2e.benchmark.eval_id"] == "eval-1"
+    assert run.attributes["b2e.benchmark.case_count"] == 1
+    assert run.attributes["b2e.summary.n_runs"] == 2
+    assert not any(
+        key.startswith("b2e.summary.by_mode") for key in run.attributes
+    )
+    assert existing.parent.span_id == run.context.span_id
+    assert existing.attributes["b2e.benchmark.mode"] == "existing_skills"
+    assert existing.attributes["b2e.summary.n_runs"] == 1
+    assert existing.attributes["b2e.summary.answer_accuracy"] == 1.0
+    assert disabled.parent.span_id == run.context.span_id
+    assert disabled.attributes["b2e.benchmark.mode"] == "skills_disabled"
+    assert disabled.attributes["b2e.summary.n_runs"] == 1
+    assert disabled.attributes["b2e.summary.answer_accuracy"] == 0.0

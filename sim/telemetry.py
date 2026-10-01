@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
 from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
@@ -132,9 +132,9 @@ def emit_benchmark_metrics(
     same metric map searchable in every configured OTLP backend. The JSONL
     score remains the reproducible record; this span is its observability copy.
     """
-    context = _remote_parent(trace_id, parent_span_id)
+    context, links = _benchmark_score_context(trace_id, parent_span_id)
     with get_tracer().start_as_current_span(
-        "b2e.benchmark.score", context=context,
+        "b2e.benchmark.score", context=context, links=links,
     ) as span:
         span.set_attribute(SPAN_KIND, OpenInferenceSpanKindValues.EVALUATOR.value)
         span.set_attribute("b2e.run.kind", "benchmark_evaluation")
@@ -153,8 +153,124 @@ def emit_benchmark_metrics(
             set_attr(span, f"b2e.metric.{name}", value)
 
 
-def _remote_parent(trace_id: str | None, span_id: str | None):
-    """Build a parent for an already-ended exported span, when ids are valid."""
+@contextmanager
+def benchmark_run(
+    *,
+    eval_id: str,
+    modes: Sequence[str],
+    repetitions: int,
+    case_count: int,
+) -> Iterator[Span]:
+    """Open the single OpenLIT/Phoenix span for one benchmark invocation.
+
+    The benchmark already calculates its aggregate output in
+    :func:`sim.benchmark.results.summarize_results`.  This span does not
+    aggregate again: :func:`set_benchmark_summary` copies that finished
+    ``summary.json`` payload into telemetry after the matrix completes.
+    """
+    with get_tracer().start_as_current_span("b2e.benchmark.run") as span:
+        span.set_attribute(SPAN_KIND, OpenInferenceSpanKindValues.CHAIN.value)
+        span.set_attribute("b2e.run.id", eval_id)
+        span.set_attribute("b2e.run.kind", "benchmark")
+        span.set_attribute("b2e.benchmark.eval_id", eval_id)
+        span.set_attribute("b2e.benchmark.case_count", case_count)
+        span.set_attribute("b2e.benchmark.repetitions", repetitions)
+        set_attr(span, "b2e.benchmark.modes", list(modes))
+        set_io(span, input_value={
+            "eval_id": eval_id,
+            "case_count": case_count,
+            "modes": list(modes),
+            "repetitions": repetitions,
+        })
+        yield span
+
+
+def set_benchmark_summary(
+    span: Span, summary: Mapping[str, Any], *, eval_id: str,
+) -> None:
+    """Publish the calculated summary without unreadable ``by_mode`` keys.
+
+    The complete payload stays on the run span.  Overall scalar counters also
+    stay there, while each mode gets one child span with short metric names.
+    Nothing is recalculated: mode spans copy ``summary["by_mode"]`` verbatim.
+    """
+    set_io(span, output_value=dict(summary))
+    _set_scalar_attributes(span, "b2e.summary", summary)
+    by_mode = summary.get("by_mode") or {}
+    if not isinstance(by_mode, Mapping):
+        return
+    parent = trace.set_span_in_context(span)
+    for mode, metrics in sorted(by_mode.items()):
+        if not isinstance(metrics, Mapping):
+            continue
+        with get_tracer().start_as_current_span(
+            f"b2e.benchmark.summary.{mode}", context=parent,
+        ) as mode_span:
+            mode_span.set_attribute(
+                SPAN_KIND, OpenInferenceSpanKindValues.EVALUATOR.value,
+            )
+            mode_span.set_attribute("b2e.run.id", eval_id)
+            mode_span.set_attribute("b2e.run.kind", "benchmark_mode_summary")
+            mode_span.set_attribute("b2e.benchmark.eval_id", eval_id)
+            mode_span.set_attribute("b2e.benchmark.mode", str(mode))
+            set_io(
+                mode_span,
+                input_value={"eval_id": eval_id, "mode": mode},
+                output_value=dict(metrics),
+            )
+            _set_summary_attributes(mode_span, "b2e.summary", metrics)
+
+
+def _set_scalar_attributes(
+    span: Span, prefix: str, value: Mapping[str, Any],
+) -> None:
+    """Copy only top-level scalar fields; structured data stays in output."""
+    for name, item in value.items():
+        if not isinstance(item, (Mapping, list, tuple, set)):
+            set_attr(span, f"{prefix}.{name}", item)
+
+
+def _set_summary_attributes(
+    span: Span, prefix: str, value: Mapping[str, Any],
+) -> None:
+    """Flatten scalar summary fields for OpenLIT filters and charts.
+
+    Lists such as the manual-review details stay in ``output.value`` so a
+    large suite does not create an unbounded number of attribute names.
+    """
+    for name, item in value.items():
+        key = f"{prefix}.{name}"
+        if isinstance(item, Mapping):
+            _set_summary_attributes(span, key, item)
+        elif not isinstance(item, (list, tuple, set)):
+            set_attr(span, key, item)
+
+
+def _benchmark_score_context(
+    trace_id: str | None, span_id: str | None,
+) -> tuple[Any, list[trace.Link]]:
+    """Parent scores to the active benchmark run and link their agent turn.
+
+    Direct calls without an active run retain the old behaviour and become a
+    child of the source agent span.  During a benchmark invocation this makes
+    all score spans visible under ``b2e.benchmark.run`` while preserving the
+    cross-trace relation to the answer that was scored.
+    """
+    source = _remote_span_context(trace_id, span_id)
+    current = trace.get_current_span().get_span_context()
+    if current.is_valid:
+        return None, [trace.Link(source)] if source is not None else []
+    return (
+        trace.set_span_in_context(trace.NonRecordingSpan(source))
+        if source is not None else None,
+        [],
+    )
+
+
+def _remote_span_context(
+    trace_id: str | None, span_id: str | None,
+) -> trace.SpanContext | None:
+    """Build the context of an already-ended exported span, if ids are valid."""
     if not trace_id or not span_id or len(trace_id) != 32 or len(span_id) != 16:
         return None
     try:
@@ -163,14 +279,13 @@ def _remote_parent(trace_id: str | None, span_id: str | None):
         return None
     if not trace_value or not span_value:
         return None
-    parent = trace.NonRecordingSpan(trace.SpanContext(
+    return trace.SpanContext(
         trace_id=trace_value,
         span_id=span_value,
         is_remote=True,
         trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
         trace_state=trace.TraceState(),
-    ))
-    return trace.set_span_in_context(parent)
+    )
 
 
 # ------------------------------------------------------------------ helpers

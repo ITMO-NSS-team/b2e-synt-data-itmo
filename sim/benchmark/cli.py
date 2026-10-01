@@ -361,9 +361,21 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
         ),
         writer=writer,
     )
-    return runner.run(
-        prepared.cases, prepared.selected_modes, repetitions=args.repetitions,
-    ), writer
+    with telemetry.benchmark_run(
+        eval_id=eval_id,
+        modes=tuple(prepared.selected_modes),
+        repetitions=args.repetitions,
+        case_count=len(prepared.cases),
+    ) as run_span:
+        results = runner.run(
+            prepared.cases, prepared.selected_modes, repetitions=args.repetitions,
+        )
+        # ResultWriter has already persisted this same deterministic summary.
+        # OpenLIT receives an observability copy, not another scoring pipeline.
+        telemetry.set_benchmark_summary(
+            run_span, summarize_results(results), eval_id=eval_id,
+        )
+    return results, writer
 
 
 def parser() -> argparse.ArgumentParser:
