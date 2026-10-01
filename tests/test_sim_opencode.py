@@ -20,6 +20,34 @@ def harness() -> OpenCodeHarness:
     return OpenCodeHarness(heimdall_url="http://heimdall:8081", heimdall_token="t")
 
 
+@pytest.mark.parametrize("tool_subset,skill_enabled", [
+    pytest.param((), False, id="general_knowledge"),
+    pytest.param(("list_models", "describe_model", "mcp_query"), False,
+                 id="skills_disabled"),
+    pytest.param(("get_overview",), True, id="overview"),
+    pytest.param(("get_docs",), True, id="docs"),
+    pytest.param(("find_skills",), True, id="find_skills"),
+    pytest.param(("get_skill",), True, id="get_skill"),
+])
+@pytest.mark.parametrize("code_execution", ["forbidden", "allowed"])
+def test_bash_permission_respects_skill_channel(
+    tool_subset, skill_enabled, code_execution,
+):
+    runner = harness()
+    permissions = runner._permissions(AgentConfig(
+        harness="open_code", tool_subset=tool_subset,
+        code_execution=code_execution,
+    ))
+
+    assert permissions["*"] == "deny"
+    if code_execution == "allowed":
+        assert permissions["bash"] == "allow"
+    elif skill_enabled:
+        assert permissions["bash"] == {"*": "deny", f"{runner.runner_path} *": "allow"}
+    else:
+        assert "bash" not in permissions
+
+
 def test_environment_is_the_runtime_source_of_model_and_harness(monkeypatch):
     monkeypatch.setenv("B2E_MODEL", "glm-env")
     monkeypatch.setenv("B2E_HARNESS", "open_code")

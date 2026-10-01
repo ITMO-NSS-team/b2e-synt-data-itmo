@@ -19,6 +19,7 @@ from sim.agent.claude_code import (
     HEIMDALL_TOOLS,
     MCP_SERVER_NAME,
     NON_INTERACTIVE_NOTE,
+    SKILL_CHANNEL_TOOLS,
     ClaudeCodeResult,
     LlmCall,
     _read_bridge_log,
@@ -140,7 +141,7 @@ class OpenCodeHarness:
                 "bash": "allow", "edit": "allow", "read": "allow",
                 "glob": "allow", "grep": "allow",
             })
-        else:
+        elif set(config.tool_subset) & SKILL_CHANNEL_TOOLS:
             permissions["bash"] = {
                 "*": "deny",
                 f"{self.runner_path} *": "allow",
