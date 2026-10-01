@@ -262,15 +262,21 @@ did not.
 
 ### `EVALUATOR` (post-run score)
 
-`b2e.benchmark.score` is emitted only after the answer and its trace have been
-collected, because gold comparison must never enter the model path. During a
-benchmark invocation it is a child of `b2e.benchmark.run` and carries an
+One score span is emitted only after the answer and its trace have been
+collected, because gold comparison must never enter the model path. Its
+human-readable name is
+`score/<case_id>/<mode>/r<repeat> @ <eval_id>`, for example
+`score/case-0006/existing_skills/r01 @ smoke-20261001T120000Z`. The stable
+attribute `b2e.benchmark.span_type=score` is used when all score spans need to
+be filtered together. During a benchmark invocation the score is a child of
+`b2e.benchmark.run` and carries an
 OpenTelemetry link to the ended `AGENT` span. Direct emission without an active
 benchmark run retains the agent span as its parent. In both cases
 `b2e.benchmark.source_trace_id` and `.source_span_id` preserve an explicit
 correlation. The score is exported through the same dual OTLP provider as the
 agent trace, so Phoenix and OpenLIT receive the same values.
 
+- `b2e.benchmark.span_type=score`
 - `b2e.benchmark.eval_id`, `.run_id`, `.case_id`, `.mode`, `.repetition`
 - `b2e.benchmark.status`, `.scorer_version`
 - `b2e.metric.answer_accuracy`, `.exact_match`, `.outcome_accuracy`,
@@ -280,7 +286,7 @@ agent trace, so Phoenix and OpenLIT receive the same values.
 ### `CHAIN` (`b2e.benchmark.run`)
 
 One span covers the complete case × mode × repetition matrix. Its
-`b2e.benchmark.eval_id` is shared by every `b2e.benchmark.score` span produced
+`b2e.benchmark.eval_id` is shared by every score span produced
 by that invocation. The score spans are children of this run span and link back
 to the agent traces whose answers they evaluate.
 

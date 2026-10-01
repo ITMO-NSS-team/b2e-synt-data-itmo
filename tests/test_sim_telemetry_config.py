@@ -61,10 +61,11 @@ def test_benchmark_metrics_are_exported_as_a_correlated_evaluator_span(spans) ->
     )
 
     span = spans.get_finished_spans()[0]
-    assert span.name == "b2e.benchmark.score"
+    assert span.name == "score/case-1/existing_skills/r01 @ eval-1"
     assert span.context.trace_id == int("1" * 32, 16)
     assert span.parent.span_id == int("2" * 16, 16)
     assert span.attributes["openinference.span.kind"] == "EVALUATOR"
+    assert span.attributes["b2e.benchmark.span_type"] == "score"
     assert span.attributes["b2e.metric.exact_match"] == 1
     assert span.attributes["b2e.metric.latency_ms"] == 1250.5
     assert "b2e.metric.cost_usd" not in span.attributes
@@ -105,7 +106,7 @@ def test_benchmark_run_contains_summary_and_owns_score_spans(spans) -> None:
 
     finished = {span.name: span for span in spans.get_finished_spans()}
     run = finished["b2e.benchmark.run"]
-    score = finished["b2e.benchmark.score"]
+    score = finished["score/case-1/existing_skills/r01 @ eval-1"]
     existing = finished["b2e.benchmark.summary.existing_skills"]
     disabled = finished["b2e.benchmark.summary.skills_disabled"]
     assert score.parent.span_id == run.context.span_id

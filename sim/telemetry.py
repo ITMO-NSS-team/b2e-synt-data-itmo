@@ -133,11 +133,15 @@ def emit_benchmark_metrics(
     score remains the reproducible record; this span is its observability copy.
     """
     context, links = _benchmark_score_context(trace_id, parent_span_id)
+    span_name = (
+        f"score/{case_id}/{mode}/r{repetition:02d} @ {eval_id}"
+    )
     with get_tracer().start_as_current_span(
-        "b2e.benchmark.score", context=context, links=links,
+        span_name, context=context, links=links,
     ) as span:
         span.set_attribute(SPAN_KIND, OpenInferenceSpanKindValues.EVALUATOR.value)
         span.set_attribute("b2e.run.kind", "benchmark_evaluation")
+        span.set_attribute("b2e.benchmark.span_type", "score")
         span.set_attribute("b2e.benchmark.eval_id", eval_id)
         span.set_attribute("b2e.benchmark.run_id", run_id)
         span.set_attribute("b2e.benchmark.case_id", case_id)
