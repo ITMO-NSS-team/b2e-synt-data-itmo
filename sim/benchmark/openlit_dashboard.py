@@ -128,61 +128,55 @@ WITH
             argMax(mcp_queries, Timestamp) AS mcp_queries,
             argMax(tokens, Timestamp) AS tokens,
             argMax(latency_s, Timestamp) AS latency_s,
-            1 AS present
-        FROM summaries
-        GROUP BY eval_id, mode
-    ),
-    evaluations AS (
-        SELECT
-            eval_id,
-            max(Timestamp) AS finished_at,
             argMax(span_id, Timestamp) AS span_id
         FROM summaries
-        GROUP BY eval_id
-    ),
-    expected_modes AS (
-        SELECT arrayJoin([
-            'general_knowledge',
-            'skills_disabled',
-            'existing_skills',
-            'generated_skills'
-        ]) AS mode
+        GROUP BY eval_id, mode
     ),
     baseline AS (
         SELECT
             eval_id,
-            countIf(mode = 'skills_disabled') AS baseline_present,
-            anyIf(accuracy, mode = 'skills_disabled') AS baseline_accuracy
+            countIf(mode = 'general_knowledge') AS general_present,
+            anyIf(accuracy, mode = 'general_knowledge') AS general_accuracy,
+            countIf(mode = 'skills_disabled') AS disabled_present,
+            anyIf(accuracy, mode = 'skills_disabled') AS disabled_accuracy,
+            countIf(mode = 'existing_skills') AS existing_present,
+            anyIf(accuracy, mode = 'existing_skills') AS existing_accuracy
         FROM latest
         GROUP BY eval_id
     )
 SELECT
-    formatDateTime(e.finished_at, '%Y-%m-%d %H:%i:%S') AS finished_at,
-    e.eval_id AS eval_id,
-    m.mode AS mode,
-    if(l.present = 1, 'completed', 'not_run') AS state,
-    if(l.present = 1, l.runs, NULL) AS runs,
-    if(l.present = 1, round(l.accuracy * 100, 1), NULL)
-        AS answer_accuracy_pct,
+    formatDateTime(l.finished_at, '%Y-%m-%d %H:%i:%S') AS finished_at,
+    l.eval_id AS eval_id,
+    l.mode AS mode,
+    l.runs AS runs,
+    round(l.accuracy * 100, 1) AS answer_accuracy_pct,
     if(
-        l.present = 1 AND b.baseline_present > 0,
-        round((l.accuracy - b.baseline_accuracy) * 100, 1),
+        l.mode != 'generated_skills' AND b.general_present > 0,
+        round((l.accuracy - b.general_accuracy) * 100, 1),
+        NULL
+    ) AS accuracy_delta_vs_general_knowledge_pct,
+    if(
+        l.mode != 'generated_skills' AND b.disabled_present > 0,
+        round((l.accuracy - b.disabled_accuracy) * 100, 1),
         NULL
     ) AS accuracy_delta_vs_skills_disabled_pct,
-    if(l.present = 1, round(l.mcp_queries, 1), NULL) AS mcp_queries,
-    if(l.present = 1, round(l.tokens, 0), NULL) AS tokens,
-    if(l.present = 1, round(l.latency_s, 1), NULL) AS latency_s,
-    concat(__OPENLIT_UI_URL__, '/telemetry/traces/', e.span_id) AS trace_url
-FROM evaluations AS e
-CROSS JOIN expected_modes AS m
-LEFT JOIN latest AS l ON l.eval_id = e.eval_id AND l.mode = m.mode
-LEFT JOIN baseline AS b ON b.eval_id = e.eval_id
-ORDER BY e.finished_at DESC, e.eval_id, indexOf([
+    if(
+        l.mode != 'generated_skills' AND b.existing_present > 0,
+        round((l.accuracy - b.existing_accuracy) * 100, 1),
+        NULL
+    ) AS accuracy_delta_vs_existing_skills_pct,
+    round(l.mcp_queries, 1) AS mcp_queries,
+    round(l.tokens, 0) AS tokens,
+    round(l.latency_s, 1) AS latency_s,
+    concat(__OPENLIT_UI_URL__, '/telemetry/traces/', l.span_id) AS trace_url
+FROM latest AS l
+LEFT JOIN baseline AS b ON b.eval_id = l.eval_id
+ORDER BY l.finished_at DESC, l.eval_id, indexOf([
     'general_knowledge',
     'skills_disabled',
     'existing_skills',
     'generated_skills'
-], m.mode)
+], l.mode)
 LIMIT 400
 """.strip()
 
@@ -223,8 +217,9 @@ WIDGETS = (
         title="Mode comparison",
         description=(
             "Сопоставление режимов по доле правильно решённых задач и "
-            "приросту в процентных пунктах относительно skills_disabled. "
-            "Не запущенные режимы показаны как not_run."
+            "дельтам в процентных пунктах относительно general_knowledge, "
+            "skills_disabled и existing_skills. Строки создаются только для "
+            "запущенных режимов; generated_skills не участвует в дельтах."
         ),
         query=MODE_COMPARISON_QUERY,
         position={"x": 0, "y": 5, "w": 4, "h": 3},
