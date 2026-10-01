@@ -309,16 +309,24 @@ JSON string is stored as a string and stays opaque, so the shape matters:
 `reasoning` is the convention's own word for it; Anthropic's `thinking` is
 translated at the parser and appears nowhere downstream.
 
-`llm.input_messages` is present too and is **a reconstruction, not the
-request** — it always travels with the flags that say so:
+When captured, `llm.input_messages` is **a reconstruction, not the request**.
+Claude Code reconstructs it from its transcript. OpenCode currently has no
+per-call input conversation and explicitly reports it as unavailable; a known
+harness system prompt alone does not make the conversation available. With
+content capture enabled, the flags distinguish these cases:
 
 | Key | Meaning |
 |---|---|
-| `b2e.llm.prompt_reconstruction` | `conversation_only` |
-| `b2e.llm.prompt_missing` | `cli_system_prompt,tool_schemas` |
-| `llm.system` + `b2e.llm.system_partial` | the suffix this harness appended; Claude Code's own base prompt sits in front of it and is not exposed |
+| `b2e.llm.prompt_reconstruction` | `conversation_only` when captured, including an empty prefix; `unavailable` when not captured |
+| `b2e.llm.prompt_missing` | `cli_system_prompt,tool_schemas`; additionally `conversation` when reconstruction is unavailable |
+| `llm.system` + `b2e.llm.system_partial` | the known harness instructions, not the complete native CLI system prompt |
 | `b2e.llm.input_messages_elided` | messages dropped from a long prefix, when any were |
 | `b2e.trace.llm_content` | `transcript`, or `disabled` when capture is switched off |
+
+When content capture is disabled, input/output messages, system text and
+reconstruction flags are omitted; token accounting remains available. Neither
+harness captures the complete native CLI request, including internal
+instructions and tool schemas. These labels do not backfill archived traces.
 
 The size of the hole is not small and is worth stating: on a real turn the first
 call reported `input_tokens=10, cache_read=6526, cache_creation=5690` — about

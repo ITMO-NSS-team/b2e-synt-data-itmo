@@ -1001,7 +1001,8 @@ function modelTurnHTML(s, {heading = true} = {}){
 function llmCaveatHTML(s){
   if (!s || !s._lm) return "";
   const m = s._lm, bits = [];
-  if (m.prompt_reconstruction) bits.push(`the input side is a reconstruction (<span class="mono">${esc(m.prompt_reconstruction)}</span>), not the request that was sent`);
+  if (m.prompt_reconstruction === "unavailable") bits.push("the input conversation is unavailable; no request reconstruction was captured");
+  else if (m.prompt_reconstruction) bits.push(`the input side is a reconstruction (<span class="mono">${esc(m.prompt_reconstruction)}</span>), not the request that was sent`);
   if (m.prompt_missing) bits.push(`missing from it: <span class="mono">${esc(m.prompt_missing)}</span>`);
   if (m.system_partial) bits.push("the system prompt shown is partial");
   if (m.timing === "derived") bits.push("the span window is derived from two transcript timestamps — only ttft was measured");
