@@ -891,8 +891,9 @@ class LlmCall:
     #: The tool calls this response asked for.
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     #: The conversation as it stood *before* this call. A reconstruction, not
-    #: the request — see ``PROMPT_RECONSTRUCTION``.
-    input_messages: list[dict[str, Any]] = field(default_factory=list)
+    #: the request — see ``PROMPT_RECONSTRUCTION``. None means unavailable;
+    #: an explicit empty list means the captured conversation prefix was empty.
+    input_messages: list[dict[str, Any]] | None = None
 
     @property
     def prompt_tokens(self) -> int:
@@ -1156,7 +1157,7 @@ def parse_transcript(path: Path, *, since: float) -> list[LlmCall]:
 
 def _prompt_messages(call: LlmCall) -> tuple[list[dict[str, Any]], int]:
     """The prefix to record, and how many messages were elided to get there."""
-    messages = call.input_messages
+    messages = call.input_messages or []
     if len(messages) <= MAX_PROMPT_MESSAGES:
         return messages, 0
     # The question is what the whole turn is about and the tail is what this
@@ -1181,8 +1182,9 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
     response, not an interpretation of it.
 
     The *prompt* is a different kind of thing and is labelled as one. What goes
-    into ``llm.input_messages`` is the conversation, which is real; what is
-    missing from it is Claude Code's own system prompt and the tool schemas,
+    into ``llm.input_messages``, when available, is the captured conversation;
+    otherwise reconstruction is labelled unavailable. Missing even from a
+    captured conversation are the CLI's own system prompt and the tool schemas,
     which are most of the request. ``system`` is the suffix this harness
     appended — genuinely known, and genuinely not the whole system prompt, which
     is why it travels with ``b2e.llm.system_partial``.
@@ -1265,9 +1267,13 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
                 # The reconstruction flags. Not optional, and not in a doc:
                 # anyone reading these messages as "the prompt" has to meet
                 # them first.
+                conversation_available = call.input_messages is not None
                 span.set_attribute("b2e.llm.prompt_reconstruction",
-                                   PROMPT_RECONSTRUCTION)
-                span.set_attribute("b2e.llm.prompt_missing", PROMPT_MISSING)
+                                   PROMPT_RECONSTRUCTION if conversation_available
+                                   else "unavailable")
+                span.set_attribute("b2e.llm.prompt_missing", PROMPT_MISSING
+                                   if conversation_available else
+                                   f"conversation,{PROMPT_MISSING}")
                 if elided:
                     span.set_attribute("b2e.llm.input_messages_elided", elided)
                 if system:

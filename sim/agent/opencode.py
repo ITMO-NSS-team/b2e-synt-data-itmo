@@ -280,6 +280,35 @@ class OpenCodeHarness:
             resume_session_id=resume_session_id, keep_stream=keep_stream,
             on_event=on_event,
         )
+        if resume_session_id and result.is_error and not result.answer:
+            failed = result
+            result = self._invoke(
+                question, config=config, config_path=config_path, workdir=workdir,
+                resume_session_id=None, keep_stream=keep_stream, on_event=on_event,
+            )
+            result.resumed_failed = True
+            warning = (f"resume of {resume_session_id} failed ({failed.error}); "
+                       "retried in a new session without history")
+            result.error = warning + (f"; {result.error}" if result.error else "")
+            # Both invocations belong to this turn, not just the successful one.
+            # Do not silently discard paid work from a failed resume.
+            for field in ("num_turns", "input_tokens", "output_tokens",
+                          "cache_read_tokens", "cache_creation_tokens", "duration_ms"):
+                setattr(result, field, getattr(failed, field) + getattr(result, field))
+            if failed.reasoning_tokens is not None:
+                result.reasoning_tokens = (
+                    (result.reasoning_tokens or 0) + failed.reasoning_tokens)
+            for field in ("llm_calls", "tool_calls", "permission_denials"):
+                setattr(result, field, getattr(failed, field) + getattr(result, field))
+            if failed.cost_usd is not None and result.cost_usd is not None:
+                if failed.cost_mode == result.cost_mode:
+                    result.cost_usd += failed.cost_usd
+                else:
+                    result.cost_usd, result.cost_mode = None, "unavailable"
+            elif failed.total_tokens or failed.llm_calls or failed.cost_usd is not None:
+                result.cost_usd = None
+                if failed.cost_mode != result.cost_mode:
+                    result.cost_mode = "unavailable"
         result.system_suffix = system_prompt + "\n" + self.harness_note(config)
         result.bridge_calls = _read_bridge_log(bridge_log)
         config_path.unlink(missing_ok=True)
