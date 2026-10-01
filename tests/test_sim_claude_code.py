@@ -346,7 +346,8 @@ def test_parse_counts_heimdall_calls_separately_from_skill_runs():
     out = parse_stream(stream)
     assert len(out.tool_calls) == 3
     assert out.heimdall_calls == 1
-    assert out.skill_runs == 1
+    assert out.bash_attempts == 1
+    assert out.skill_runs == 0  # No runner result: an attempt is not execution.
 
 
 def test_permission_denials_surface_attempted_tools():
