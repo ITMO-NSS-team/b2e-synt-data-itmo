@@ -24,6 +24,7 @@ from sim.agent.claude_code import (
     harness_policy_note,
 )
 from sim.agent.config import AgentConfig
+from sim.agent.opencode_timing import collect_native_timings
 from sim.agent.provider import is_zai, llm_provider
 from sim.tool_outcomes import tool_outcome
 
@@ -173,6 +174,7 @@ class OpenCodeHarness:
             "model": model,
             "share": "disabled",
             "autoupdate": False,
+            "experimental": {"openTelemetry": True},
             "provider": provider,
             "mcp": {
                 MCP_SERVER_NAME: {
@@ -275,6 +277,7 @@ class OpenCodeHarness:
         )), encoding="utf-8")
         if config.conversation_mode != "resume":
             resume_session_id = None
+        attempts_started = time.perf_counter()
         result = self._invoke(
             question, config=config, config_path=config_path, workdir=workdir,
             resume_session_id=resume_session_id, keep_stream=keep_stream,
@@ -282,6 +285,7 @@ class OpenCodeHarness:
         )
         if resume_session_id and result.is_error and not result.answer:
             failed = result
+            retry_delay_ms = (time.perf_counter() - attempts_started) * 1000
             result = self._invoke(
                 question, config=config, config_path=config_path, workdir=workdir,
                 resume_session_id=None, keep_stream=keep_stream, on_event=on_event,
@@ -290,6 +294,15 @@ class OpenCodeHarness:
             warning = (f"resume of {resume_session_id} failed ({failed.error}); "
                        "retried in a new session without history")
             result.error = warning + (f"; {result.error}" if result.error else "")
+            before, after = failed.api_duration_ms, result.api_duration_ms
+            result.api_duration_ms = (before + after
+                                      if before is not None and after is not None else None)
+            if failed.llm_calls:
+                result.ttft_stream_ms = failed.ttft_stream_ms
+                result.time_to_request_ms = failed.time_to_request_ms
+            elif result.time_to_request_ms is not None:
+                result.time_to_request_ms += retry_delay_ms
+            result.timing_calls += failed.timing_calls
             # Both invocations belong to this turn, not just the successful one.
             # Do not silently discard paid work from a failed resume.
             for field in ("num_turns", "input_tokens", "output_tokens",
@@ -324,16 +337,24 @@ class OpenCodeHarness:
                 on_event: Callable[[dict[str, Any]], None] | None,
                 ) -> ClaudeCodeResult:
         started = time.perf_counter()
+        started_ns = time.time_ns()
         token_prices = api_token_prices_from_env()
         lines: list[str] = []
         timed_out = False
         err_path = workdir / "opencode.stderr"
-        with open(err_path, "w+", encoding="utf-8") as err:
+        with collect_native_timings() as timings, open(err_path, "w+", encoding="utf-8") as err:
+            env = self.child_env(config_path)
+            env["OTEL_EXPORTER_OTLP_ENDPOINT"] = timings.endpoint
+            # `opencode run` may exit without flushing the SDK's default 5s
+            # batch. Drain locally while it is alive; missing batches remain
+            # explicitly unavailable, never replaced with estimated timings.
+            env["OTEL_BSP_SCHEDULE_DELAY"] = "10"
+            env["NO_PROXY"] = env.get("NO_PROXY", "") + ",127.0.0.1,localhost"
             proc = subprocess.Popen(
                 self.build_argv(question, config=config,
                                 resume_session_id=resume_session_id),
                 stdout=subprocess.PIPE, stderr=err, text=True,
-                env=self.child_env(config_path), cwd=str(workdir), bufsize=1,
+                env=env, cwd=str(workdir), bufsize=1,
             )
 
             def kill() -> None:
@@ -370,6 +391,7 @@ class OpenCodeHarness:
         result = parse_stream(stream, model=self.model_name(config.model_id),
                               duration_ms=duration_ms,
                               token_prices=token_prices)
+        timings.apply(result, started_ns=started_ns)
         if keep_stream:
             path = workdir / f"opencode-{uuid.uuid4().hex[:16]}.stream.jsonl"
             path.write_text(stream, encoding="utf-8")

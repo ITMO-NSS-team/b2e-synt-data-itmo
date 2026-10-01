@@ -372,10 +372,12 @@ class ClaudeCodeResult:
     #: are the CLI's numbers, and `api_duration_ms` can exceed `duration_ms`
     #: (5 732 against 3 898 on the probe of 2026-08-09), so it is plainly not a
     #: wall-clock slice of the turn.
-    api_duration_ms: int = 0
-    ttft_ms: int = 0
-    ttft_stream_ms: int = 0
-    time_to_request_ms: int = 0
+    api_duration_ms: float | None = None
+    ttft_ms: float | None = None
+    ttft_stream_ms: float | None = None
+    time_to_request_ms: float | None = None
+    timing_source: str = ""
+    timing_calls: int = 0
     runner_path: str = "/opt/skills/run"
 
     @property
@@ -911,6 +913,9 @@ class LlmCall:
     #: the request — see ``PROMPT_RECONSTRUCTION``. None means unavailable;
     #: an explicit empty list means the captured conversation prefix was empty.
     input_messages: list[dict[str, Any]] | None = None
+    api_duration_ms: float | None = None
+    ttft_stream_ms: float | None = None
+    timing_source: str = ""
 
     @property
     def prompt_tokens(self) -> int:
@@ -1262,6 +1267,12 @@ def emit_llm_spans(calls: list[LlmCall], *, root: Span,
             # this window is the gap between two recorded timestamps, not a
             # timed request.
             span.set_attribute("b2e.llm.timing", "derived")
+            if call.timing_source:
+                span.set_attribute("b2e.llm.timing_source", call.timing_source)
+            for name in ("api_duration_ms", "ttft_stream_ms"):
+                value = getattr(call, name)
+                if value is not None:
+                    span.set_attribute(f"b2e.llm.{name}", value)
             # …but the first token *was* timed, by the CLI, and reported on the
             # `message_start` row. One measured number beside a derived one, and
             # each says which it is.
@@ -1452,10 +1463,10 @@ def parse_stream(stdout: str) -> ClaudeCodeResult:
         max_output_tokens=first_model.get("maxOutputTokens"),
         is_error=bool(final.get("is_error")),
         error=str(final.get("api_error_status") or ""),
-        api_duration_ms=int(final.get("duration_api_ms") or 0),
-        ttft_ms=int(final.get("ttft_ms") or 0),
-        ttft_stream_ms=int(final.get("ttft_stream_ms") or 0),
-        time_to_request_ms=int(final.get("time_to_request_ms") or 0),
+        api_duration_ms=final.get("duration_api_ms"),
+        ttft_ms=final.get("ttft_ms"),
+        ttft_stream_ms=final.get("ttft_stream_ms"),
+        time_to_request_ms=final.get("time_to_request_ms"),
     )
 
 
@@ -1993,13 +2004,16 @@ def emit_spans(result: ClaudeCodeResult, *, root,
     # `api_duration_ms` can exceed `duration_ms` — 5 732 against 3 898 on the
     # 2026-08-09 probe — so it is not a wall-clock slice of the turn and must
     # not be subtracted from one.
-    if result.api_duration_ms:
+    if result.timing_source:
+        root.set_attribute("b2e.turn.timing_source", result.timing_source)
+        root.set_attribute("b2e.turn.timing_calls", result.timing_calls)
+    if result.api_duration_ms is not None:
         root.set_attribute("b2e.turn.api_duration_ms", result.api_duration_ms)
-    if result.ttft_ms:
+    if result.ttft_ms is not None:
         root.set_attribute("b2e.turn.ttft_ms", result.ttft_ms)
-    if result.ttft_stream_ms:
+    if result.ttft_stream_ms is not None:
         root.set_attribute("b2e.turn.ttft_stream_ms", result.ttft_stream_ms)
-    if result.time_to_request_ms:
+    if result.time_to_request_ms is not None:
         root.set_attribute("b2e.turn.time_to_request_ms", result.time_to_request_ms)
     if recorder is not None:
         # Wall time inside tools, so model time is turn duration minus this.

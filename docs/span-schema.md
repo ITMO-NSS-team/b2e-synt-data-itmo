@@ -276,6 +276,51 @@ Phoenix and OpenLIT receive the same values.
 The immutable `scores.jsonl` remains the reproducible source of truth. The
 evaluator span is an observability copy for filtering and dashboards.
 
+### OpenCode native timings
+
+OpenCode 1.18.32 can emit AI SDK timings via `experimental.openTelemetry`.
+The harness receives those OTLP/HTTP JSON batches on a temporary loopback-only
+listener in the **agent's network namespace**. It works unchanged on a remote
+Docker host because the CLI is a subprocess inside the same agent container.
+No published port or `host.docker.internal` mapping is needed. A separately
+hosted CLI would require a different, secured collection/correlation design;
+do not expose this private receiver on `0.0.0.0`.
+
+Only numeric timings and correlation IDs are retained; native prompts, outputs,
+and logs are discarded. Native spans are not forwarded as duplicate LLM spans.
+The existing harness spans and evaluator metrics still use the configured
+Phoenix/OpenLIT exporters, whose endpoints may be remote.
+
+| Metric | OpenCode meaning |
+|---|---|
+| `api_duration_ms` | Sum of matched foreground requests' native `ai.response.msToFinish`: request to stream finish, excluding subsequent tool execution. |
+| `ttft_stream_ms` | First foreground request's native `ai.response.msToFirstChunk`. This is the first non-start SDK chunk, potentially metadata, not necessarily a text token. |
+| `time_to_request_ms` | Harness invocation start to first matched native request-span start, including CLI startup. |
+| `ttft_ms` | Unavailable: the native export does not establish an exact first text-token timestamp. |
+
+Per-call measurements use `b2e.llm.api_duration_ms` and
+`b2e.llm.ttft_stream_ms`. Source is `opencode_ai_sdk_otlp` on
+`b2e.llm.timing_source` / `b2e.turn.timing_source`; the root's
+`b2e.turn.timing_calls` reports matched-call coverage. Stream-derived LLM span
+boundaries remain labelled `b2e.llm.timing=derived`.
+
+Requests are matched by session and their native span's overlap with the CLI
+step-start timestamp. Ambiguous/background/unmatched spans are not counted.
+Incomplete coverage leaves turn totals unavailable, rather than reporting a
+partial sum as a complete measurement. Failed-resume request durations are
+included only when both attempts have complete timing evidence. Zero is a
+valid measurement for both harnesses and is not treated as missing.
+
+The CLI can exit without flushing its default five-second OTLP batch. A 10 ms
+local batch interval reduces that loss; missing final batches still yield null,
+not a guessed duration. Instrumentation adds overhead, so comparisons with
+historical runs must record the harness revision. Claude's native closing
+envelope remains unchanged in meaning: its reported API duration/TTFT are not
+assumed semantically identical to these SDK timings.
+
+Sources: [pinned OpenCode exporter](https://github.com/anomalyco/opencode/blob/v1.18.32/packages/core/src/observability/otlp.ts),
+[pinned SDK stream measurements](https://github.com/vercel/ai/blob/ai%406.0.168/packages/ai/src/generate-text/stream-text.ts).
+
 ### `LLM`
 `llm.model_name`, `llm.provider`, `llm.system`, `llm.invocation_parameters`,
 `llm.input_messages`, `llm.output_messages`, `llm.token_count.prompt`,
