@@ -201,6 +201,33 @@ MCP-мост публикует ему ровно три инструмента 
 
 Каждая команда проверяет `manifest.json` и состояние `admin-ui`, `b2e-agent`, `phoenix`, `heimdall-emulator`. Если сервисы уже работают, они не перезапускаются. Иначе выполняется `make up`. Затем из `admin-ui` снимается live-config и запускается `benchmark-runner`.
 
+Если в `deploy/.env` задан `OPENLIT_CLICKHOUSE_URL`, перед живым прогоном
+идемпотентно создаётся или обновляется dashboard `B2E Benchmark`. В нём три
+постоянных табличных виджета: список запусков со ссылкой на trace,
+агрегированные метрики по режимам и попарные дельты accuracy относительно
+`general_knowledge`, `skills_disabled` и `existing_skills`. Абсолютные метрики
+предусматривают также `generated_skills`, но этот mock-режим пока не участвует
+в попарном сравнении. Колонки сравнения постоянны, а строки создаются только
+для режимов, фактически выбранных в конкретном запуске. Виджеты читают
+`b2e.benchmark.run` и
+`b2e.benchmark.summary.<mode>` из `otel_traces`, поэтому последующие прогоны
+появляются после обычного обновления dashboard; создавать его повторно руками
+не нужно. `benchmarking-check` не изменяет OpenLIT.
+
+Для локального OpenLIT compose достаточно:
+
+```dotenv
+OPENLIT_CLICKHOUSE_URL=http://127.0.0.1:8123
+OPENLIT_UI_URL=http://localhost:3000
+OPENLIT_DB_USER=default
+OPENLIT_DB_PASSWORD=OPENLIT
+OPENLIT_DB_NAME=openlit
+```
+
+Provisioner можно проверить отдельно командой `make openlit-dashboard`. Если
+URL не задан или OpenLIT недоступен, живой benchmark продолжает работу, а в
+консоли печатается причина пропуска.
+
 `CASES` может указывать на каталог JSON-файлов, один JSON-файл или JSONL-suite.
 
 ### Проверка без LLM

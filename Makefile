@@ -27,7 +27,8 @@ SMOKE_DATA ?= $(STAND_DATA_PATH)
 
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
-        rebuild sim-test demo benchmarking benchmarking-check benchmarking-smoke
+        rebuild sim-test demo benchmarking benchmarking-check benchmarking-smoke \
+        openlit-dashboard
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -146,8 +147,12 @@ define BENCHMARK_PREPARE
 		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
 endef
 
+openlit-dashboard:  ## создать/обновить dashboard результатов в OpenLIT; без URL безопасно пропускается
+	$(PY) -m sim.benchmark.openlit_dashboard --env-file deploy/.env
+
 benchmarking:  ## полный прогон verified-кейсов внутри сети стенда; BENCH_REPETITIONS=N
 	$(BENCHMARK_PREPARE)
+	$(if $(BENCH_CHECK_ONLY),@true,$(MAKE) --no-print-directory openlit-dashboard)
 	$(COMPOSE) --profile benchmark run --rm --no-deps \
 		--user "$$(id -u):$$(id -g)" benchmark-runner \
 		python3.12 -m sim.benchmark.cli \

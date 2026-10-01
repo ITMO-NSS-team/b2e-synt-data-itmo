@@ -26,6 +26,7 @@ def test_benchmarking_uses_internal_agent_and_phoenix() -> None:
     assert "--no-auth" in output
     assert "ps --status running --services" in output
     assert "make up" in output
+    assert "openlit-dashboard" in output
     assert '--modes "general_knowledge,skills_disabled,existing_skills"' in output
     assert "ssh" not in output
 
@@ -44,6 +45,7 @@ def test_benchmarking_check_is_preflight_only() -> None:
     assert "--check-only" in output
     assert '--eval-prefix "check"' in output
     assert "benchmark-runner" in output
+    assert "openlit-dashboard" not in output
 
 
 def test_data_dir_override_is_used_by_preflight() -> None:

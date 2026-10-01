@@ -15,7 +15,7 @@ installed enum (`openinference-semantic-conventions` 0.1.31) offers: `AGENT`,
 `CHAIN`, `LLM`, `TOOL`, `RETRIEVER`, `EMBEDDING`, `RERANKER`, `GUARDRAIL`,
 `EVALUATOR`, `PROMPT`, `UNKNOWN`.
 
-This environment uses six:
+This environment uses these span roles:
 
 | Kind | Emitted for | One per |
 |---|---|---|
@@ -24,7 +24,9 @@ This environment uses six:
 | `LLM` | one model call | request to Anthropic |
 | `TOOL` | one tool invocation by the agent | tool call |
 | `CHAIN` | one Heimdall HTTP call, nested under its `TOOL` | HTTP request |
+| `CHAIN` | one complete benchmark invocation | benchmark CLI run |
 | `EVALUATOR` | deterministic benchmark result | executed case × mode × repetition |
+| `EVALUATOR` | aggregate benchmark summary | selected mode × benchmark invocation |
 
 Heimdall calls are `CHAIN` rather than `TOOL` on purpose: the *tool* is what the
 agent chose to do, the HTTP call is how it was carried out. One tool call can
@@ -260,18 +262,56 @@ did not.
 
 ### `EVALUATOR` (post-run score)
 
-`b2e.benchmark.score` is emitted only after the answer and its trace have been
-collected, because gold comparison must never enter the model path. When the
-source ids are available it is a late child of the ended `AGENT` span; otherwise
-`b2e.benchmark.source_trace_id` and `.source_span_id` retain the correlation.
-The score is exported through the same dual OTLP provider as the agent trace, so
-Phoenix and OpenLIT receive the same values.
+One score span is emitted only after the answer and its trace have been
+collected, because gold comparison must never enter the model path. Its
+human-readable name is
+`score/<case_id>/<mode>/r<repeat> @ <eval_id>`, for example
+`score/case-0006/existing_skills/r01 @ smoke-20261001T120000Z`. The stable
+attribute `b2e.benchmark.span_type=score` is used when all score spans need to
+be filtered together. During a benchmark invocation the score is a child of
+`b2e.benchmark.run` and carries an
+OpenTelemetry link to the ended `AGENT` span. Direct emission without an active
+benchmark run retains the agent span as its parent. In both cases
+`b2e.benchmark.source_trace_id` and `.source_span_id` preserve an explicit
+correlation. The score is exported through the same dual OTLP provider as the
+agent trace, so Phoenix and OpenLIT receive the same values.
 
+- `b2e.benchmark.span_type=score`
 - `b2e.benchmark.eval_id`, `.run_id`, `.case_id`, `.mode`, `.repetition`
 - `b2e.benchmark.status`, `.scorer_version`
 - `b2e.metric.answer_accuracy`, `.exact_match`, `.outcome_accuracy`,
   `.correct_refusal`, `.generated_skill_loaded`
 - every operational metric named by `sim.benchmark.execution.OPERATIONAL_METRICS`
+
+### `CHAIN` (`b2e.benchmark.run`)
+
+One span covers the complete case × mode × repetition matrix. Its
+`b2e.benchmark.eval_id` is shared by every score span produced
+by that invocation. The score spans are children of this run span and link back
+to the agent traces whose answers they evaluate.
+
+The run span receives the already computed contents of `summary.json`; OpenLIT
+does not recalculate benchmark metrics. The complete JSON is stored in
+`output.value`, while top-level scalar counters are also copied for filtering:
+
+- `b2e.benchmark.eval_id`, `.case_count`, `.repetitions`, `.modes`
+- `b2e.summary.n_runs`, `.n_completed`, `.n_scored`, `.n_skipped`
+- `b2e.summary.n_normalization_pending`, `.n_condition_invalid`, `.n_unscored`
+
+Review rows, comparisons and the structured `by_mode` object remain in
+`output.value` so suite size cannot create an unbounded number of OpenTelemetry
+attribute names.
+
+### `EVALUATOR` (`b2e.benchmark.summary.<mode>`)
+
+Each selected mode gets one readable child of `b2e.benchmark.run`. Values are
+copied directly from `summary["by_mode"][mode]`; no additional aggregation is
+performed. The mode is visible both in the span name and in
+`b2e.benchmark.mode`. Its metrics use short keys such as:
+
+- `b2e.summary.n_runs`, `.n_completed`, `.n_scored`, `.n_review`
+- `b2e.summary.answer_accuracy`, `.exact_match`, `.outcome_accuracy`
+- `b2e.summary.correct_refusal`, `.latency_ms`, `.total_tokens`
 
 The immutable `scores.jsonl` remains the reproducible source of truth. The
 evaluator span is an observability copy for filtering and dashboards.
