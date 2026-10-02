@@ -20,7 +20,7 @@ from sim.fingerprint import RunFingerprint
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE
 
 
-def ready_case(case_id: str = "case-9999") -> BenchmarkCase:
+def ready_case(case_id: str = "case-9999-00") -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
         "case_id": case_id, "status": "verified", "employee_id": 123,

@@ -266,7 +266,7 @@ One score span is emitted only after the answer and its trace have been
 collected, because gold comparison must never enter the model path. Its
 human-readable name is
 `score/<case_id>/<mode>/r<repeat> @ <eval_id>`, for example
-`score/case-0006/existing_skills/r01 @ smoke-20261001T120000Z`. The stable
+`score/case-0006-00/existing_skills/r01 @ smoke-20261001T120000Z`. The stable
 attribute `b2e.benchmark.span_type=score` is used when all score spans need to
 be filtered together. During a benchmark invocation the score is a child of
 `b2e.benchmark.run` and carries an

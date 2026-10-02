@@ -39,14 +39,14 @@ def common(snapshot_id: str = "heimdall-sandbox@test") -> CommonConditions:
 def ready_case(snapshot_id: str = "heimdall-sandbox@test") -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
-        "case_id": "case-9999",
+        "case_id": "case-9999-00",
         "status": "verified",
         "employee_id": 123,
         "employee_role": "manager",
         "snapshot_id": snapshot_id,
         "skill_registry_hash": EMPTY_HASH,
     })
-    return BenchmarkCase(Path("/authorial/case-9999.json"), raw)
+    return BenchmarkCase(Path("/authorial/case-9999-00.json"), raw)
 
 
 class FakeIdentity:
