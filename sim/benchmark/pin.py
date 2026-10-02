@@ -31,6 +31,9 @@ def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
     )
     return {
         "existing_skills": on_version.ref,
+        # generated_skills has the same tool surface. Its only experimental
+        # difference is the Heimdall catalog mounted before the run.
+        "generated_skills": on_version.ref,
         "skills_disabled": disabled_version.ref,
         "general_knowledge": general_version.ref,
     }

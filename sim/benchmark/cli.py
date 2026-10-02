@@ -242,6 +242,7 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
     modes = build_modes(
         common,
         args.catalog,
+        generated_skills_path=args.generated_skills,
         snapshots_root=args.catalog_snapshots,
     )
     selected = select_modes(modes, args.modes)
@@ -249,6 +250,7 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
     activator = PinnedConfigActivator(
         {name: refs[name] for name in selected},
         config_reader=lambda ref: live["configs"][ref],
+        generated_catalog_preloaded=args.generated_skills is not None,
     )
 
     # Validate every case x mode before the first model call.  Runner reuses
@@ -394,6 +396,10 @@ def parser() -> argparse.ArgumentParser:
         help="Path to the data snapshot mounted from DATA_DIR",
     )
     result.add_argument("--catalog", default="heimdall-skills")
+    result.add_argument(
+        "--generated-skills",
+        help="Directory with generated .md/.yaml skills already mounted in Heimdall",
+    )
     result.add_argument("--catalog-snapshots", default="var/benchmark-catalog-snapshots")
     result.add_argument("--model-catalog", default="catalog/snapshot.json")
     result.add_argument("--schema", default=SCHEMA_RELATIVE)

@@ -53,6 +53,15 @@ def test_cli_uses_the_snapshot_mounted_from_data_dir_by_default() -> None:
     args = parser().parse_args(["--cases", "cases"])
 
     assert args.data == "/data/snapshot"
+    assert args.generated_skills is None
+
+
+def test_cli_accepts_generated_skills_directory() -> None:
+    args = parser().parse_args([
+        "--cases", "cases", "--generated-skills", "/generated",
+    ])
+
+    assert args.generated_skills == "/generated"
 
 
 def test_cases_path_accepts_directory_json_and_jsonl_and_skips_draft(tmp_path) -> None:

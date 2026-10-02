@@ -13,7 +13,11 @@
 - расчёт accuracy, инструментальных и ресурсных метрик;
 - агрегирование результатов и сравнение режимов.
 
-Режим `generated_skills` описан в модели данных, но пока не подключён к CLI: без каталога сгенерированных навыков он считается mock и не запускается. LLM-as-judge также пока не выполняется — в результатах для него сохраняется только пустая структура.
+Режим `generated_skills` запускается с внешним каталогом, указанным через
+`GENERATED_SKILLS_DIR`. Каталог монтируется в Heimdall рядом со стандартными
+skills и не копируется в репозиторий стенда. Без указанного каталога режим
+остаётся mock и не запускается. LLM-as-judge пока не выполняется — в результатах
+для него сохраняется только пустая структура.
 
 ## Компоненты
 
@@ -121,7 +125,7 @@
 | `general_knowledge` | нет | отсутствует | реализован |
 | `skills_disabled` | `list_models`, `describe_model`, `mcp_query` | отсутствует | реализован |
 | `existing_skills` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | уже существующий каталог навыков информационного сервиса | реализован |
-| `generated_skills` | инструменты режима `existing_skills` | стандартный каталог плюс generated overlay | описан; CLI пока создаёт mock-конфигурацию и отклоняет её выбор |
+| `generated_skills` | инструменты режима `existing_skills` | стандартный каталог плюс каталог из `GENERATED_SKILLS_DIR` | реализован; без внешнего каталога считается mock |
 
 `general_knowledge` служит отрицательным baseline: агент не получает инструменты стенда, включая `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills` и `get_skill`. Он не видит перечень витрин, не читает данные, не узнаёт поля и метрики и не получает приёмы и рецепты. Режим проверяет, решается ли задача из общих знаний модели без информации со стенда.
 
@@ -353,9 +357,24 @@ make benchmarking-check CASES=b2e-skill-benchmark/gold_dataset
 make benchmarking \
   CASES=b2e-skill-benchmark/gold_dataset \
   BENCH_REPETITIONS=3
+
+# Generated skill из отдельной директории
+make benchmarking-generated \
+  GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills \
+  CASES=b2e-skill-benchmark/gold_dataset
 ```
 
-`benchmarking` фиксирует live-конфигурацию и **append-only** пинит benchmark-конфиги от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Уже работающие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются.
+`benchmarking` фиксирует live-конфигурацию и **append-only** пинит benchmark-конфиги от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Остальные работающие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются. `heimdall-emulator` пересоздаётся только при изменении подключённой директории skills.
+
+Перед каждым benchmark-запуском Compose применяет выбранное значение
+`GENERATED_SKILLS_DIR` к `heimdall-emulator`. Контейнер пересоздаётся только
+если его конфигурация монтирования изменилась. Поэтому следующий обычный прогон
+без этой переменной снова использует только стандартный каталог.
+
+`existing_skills` и `generated_skills` запускаются отдельно: первый использует
+только стандартный каталог, второй — стандартный каталог вместе с generated
+overlay. Их объединение в одной команде отклоняется, чтобы generated skill не
+попал в baseline.
 
 Runner обращается напрямую к `http://b2e-agent:8082` и `http://phoenix:6006`. Публичный proxy, HTTP Basic и SSH-транспорт не используются. Результаты сохраняются на той же машине в `benchmarking/results/<eval_id>/`.
 
@@ -365,15 +384,15 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 - `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — параметры запуска и результатов;
 - `BENCH_MODES` — по умолчанию `general_knowledge,skills_disabled,existing_skills`;
 - `BENCH_MODEL` — модель для pinned benchmark-конфигураций без изменения provider или harness.
+- `GENERATED_SKILLS_DIR` — абсолютный или относительный от корня репозитория
+  путь к `.md`/`.yaml` skills, созданным генератором.
 
 Если стенд находится на другой машине, сначала нужно войти на неё обычным способом, а затем вызвать одну из трёх команд в серверном checkout.
 
 ## Текущие ограничения
 
-- CLI запускает `general_knowledge`, `skills_disabled` и `existing_skills`; `generated_skills` запускается после подключения generated overlay.
-- `generated_skills` требует отдельного механизма подключения combined-каталога.
 - LLM-as-judge не реализован; поле `llm_judge` в score остаётся незаполненным.
 - Порядок режимов детерминированный и пока не перемешивается.
 - Создание кейсов, получение gold и перевод `draft → verified` выполняются вне runner.
 - Серверный прогон требует, чтобы актуальная версия benchmark-кода находилась в checkout стенда.
-- `generated_skills` остаётся mock до подключения combined-каталога к server runner.
+- `generated_skills` без `GENERATED_SKILLS_DIR` остаётся mock и не выбирается.

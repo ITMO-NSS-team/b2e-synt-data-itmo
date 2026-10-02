@@ -61,9 +61,11 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
     disabled = payload["refs"]["general_knowledge"]
     data_only = payload["refs"]["skills_disabled"]
     enabled = payload["refs"]["existing_skills"]
+    generated = payload["refs"]["generated_skills"]
     assert tuple(payload["configs"][disabled]["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
     assert tuple(payload["configs"][data_only]["tool_subset"]) == DATA_TOOLS
     assert tuple(payload["configs"][enabled]["tool_subset"]) == SKILL_TOOLS
+    assert generated == enabled
     assert payload["configs"][enabled]["model_id"] == "env-model"
     assert payload["configs"][enabled]["harness"] == "open_code"
     assert payload["prompt_versions"][disabled].startswith("system_prompt@")
@@ -128,9 +130,11 @@ def test_real_pinner_separates_general_data_only_and_skill_tools(
     general = registry.load(refs["general_knowledge"])[1]
     disabled = registry.load(refs["skills_disabled"])[1]
     existing = registry.load(refs["existing_skills"])[1]
+    generated = registry.load(refs["generated_skills"])[1]
     assert tuple(general["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
     assert tuple(disabled["tool_subset"]) == DATA_TOOLS
     assert tuple(existing["tool_subset"]) == SKILL_TOOLS
+    assert tuple(generated["tool_subset"]) == SKILL_TOOLS
     registry.close()
 
 

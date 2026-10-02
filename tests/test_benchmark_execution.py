@@ -58,6 +58,16 @@ def test_pinned_activator_rejects_floating_refs_and_real_generated_mode() -> Non
         ).activate(mode("generated_skills"))
 
 
+def test_pinned_activator_accepts_preloaded_generated_catalog() -> None:
+    activated = PinnedConfigActivator(
+        {"generated_skills": "agent@1"},
+        config_reader=lambda _ref: _agent_config(SKILL_TOOLS),
+        generated_catalog_preloaded=True,
+    ).activate(mode("generated_skills"))
+
+    assert activated.config_ref == "agent@1"
+
+
 def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     trace = {"tree": [{
         "name": "agent.turn",

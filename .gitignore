@@ -74,3 +74,4 @@ b2e-skill-benchmark/
 benchmarking/results/
 var/benchmark-live-config.json
 var/benchmark-catalog-snapshots/
+var/empty-generated-skills/

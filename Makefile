@@ -28,7 +28,7 @@ SMOKE_DATA ?= $(STAND_DATA_PATH)
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
         rebuild sim-test demo benchmarking benchmarking-check benchmarking-smoke \
-        openlit-dashboard
+        benchmarking-generated openlit-dashboard
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -70,6 +70,8 @@ clean:
 
 up:  ## поднять весь стек одной командой; PROFILE=telegram добавит бота
 	@test -f deploy/.env || { echo "нет deploy/.env — скопируйте deploy/.env.example"; exit 1; }
+	@mkdir -p var/empty-generated-skills
+	@test -d "$(GENERATED_SKILLS_DIR)" || { echo "нет каталога skills: $(GENERATED_SKILLS_DIR)"; exit 1; }
 	@printf 'nameserver 127.0.0.11\noptions ndots:0\n' > /tmp/b2e-resolv.conf
 	@chmod 644 /tmp/b2e-resolv.conf
 	$(COMPOSE) $(if $(PROFILE),--profile $(PROFILE),) up -d --build
@@ -114,6 +116,11 @@ rebuild:  ## пересобрать образы без кэша
 
 DEPLOY_CASES := $(shell awk -F= '/^CASES=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
 CASES ?= $(DEPLOY_CASES)
+MAKE_GENERATED_SKILLS_DIR := $(GENERATED_SKILLS_DIR)
+DEPLOY_GENERATED_SKILLS_DIR := $(shell awk -F= '/^GENERATED_SKILLS_DIR=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
+GENERATED_SKILLS_INPUT := $(or $(MAKE_GENERATED_SKILLS_DIR),$(DEPLOY_GENERATED_SKILLS_DIR))
+override GENERATED_SKILLS_DIR := $(abspath $(or $(GENERATED_SKILLS_INPUT),var/empty-generated-skills))
+export GENERATED_SKILLS_DIR
 BENCH_MODES ?= general_knowledge,skills_disabled,existing_skills
 BENCH_REPETITIONS ?= 1
 BENCH_RESULTS ?= benchmarking/results
@@ -127,6 +134,24 @@ BENCH_EVAL_PREFIX ?= benchmark
 BENCH_CHECK_ONLY ?=
 
 define BENCHMARK_PREPARE
+	@mkdir -p var/empty-generated-skills
+	@if test -n "$(GENERATED_SKILLS_INPUT)" && \
+	   ! printf ',%s,' "$(BENCH_MODES)" | grep -q ',generated_skills,'; then \
+		echo "GENERATED_SKILLS_DIR задан, но режим generated_skills не выбран"; \
+		exit 1; \
+	fi
+	@if printf ',%s,' "$(BENCH_MODES)" | grep -q ',generated_skills,' && \
+	   printf ',%s,' "$(BENCH_MODES)" | grep -q ',existing_skills,'; then \
+		echo "existing_skills и generated_skills используют разные каталоги; запустите их отдельно"; \
+		exit 1; \
+	fi
+	@if printf ',%s,' "$(BENCH_MODES)" | grep -q ',generated_skills,'; then \
+		test -n "$(GENERATED_SKILLS_INPUT)" || { echo "для generated_skills задайте GENERATED_SKILLS_DIR"; exit 1; }; \
+		test -d "$(GENERATED_SKILLS_DIR)" || { echo "нет каталога generated skills: $(GENERATED_SKILLS_DIR)"; exit 1; }; \
+		find "$(GENERATED_SKILLS_DIR)" -type f \( -name '*.md' -o -name '*.yaml' -o -name '*.yml' \) -print -quit | grep -q . || { \
+			echo "в $(GENERATED_SKILLS_DIR) нет .md/.yaml skills"; exit 1; \
+		}; \
+	fi
 	@test -f "$(STAND_DATA_PATH)/manifest.json" || { \
 		echo "нет $(STAND_DATA_PATH)/manifest.json — создайте/скопируйте снимок или задайте DATA_DIR в deploy/.env"; \
 		exit 1; \
@@ -138,9 +163,10 @@ define BENCHMARK_PREPARE
 	done; \
 	if [ -n "$$missing" ]; then \
 		echo "стенд не готов; запускаю make up (не запущены:$$missing)"; \
-		make up; \
+		$(MAKE) up GENERATED_SKILLS_DIR="$(GENERATED_SKILLS_DIR)"; \
 	else \
-		echo "стенд уже поднят; сервисы не перезапускаются"; \
+		echo "стенд поднят; применяю выбранный каталог skills"; \
+		$(COMPOSE) up -d --wait --no-deps heimdall-emulator; \
 	fi
 	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" var/benchmark-catalog-snapshots
 	$(COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
@@ -158,6 +184,7 @@ benchmarking:  ## полный прогон verified-кейсов внутри �
 		python3.12 -m sim.benchmark.cli \
 			--cases "/app/$(CASES)" --data /data/snapshot \
 			--catalog /app/heimdall-skills \
+			$(if $(GENERATED_SKILLS_INPUT),--generated-skills /app/generated-skills,) \
 			--catalog-snapshots /app/var/benchmark-catalog-snapshots \
 			--model-catalog /app/catalog/snapshot.json \
 			--live-config "/app/$(BENCH_LIVE_CONFIG)" \
@@ -179,3 +206,7 @@ benchmarking-smoke: BENCH_LIMIT := 1
 benchmarking-smoke: BENCH_REPETITIONS := 1
 benchmarking-smoke: BENCH_EVAL_PREFIX := smoke
 benchmarking-smoke: benchmarking  ## первый verified-кейс, один повтор, живой агент
+
+benchmarking-generated: BENCH_MODES := generated_skills
+benchmarking-generated: BENCH_EVAL_PREFIX := generated
+benchmarking-generated: benchmarking  ## прогон с каталогом из GENERATED_SKILLS_DIR
