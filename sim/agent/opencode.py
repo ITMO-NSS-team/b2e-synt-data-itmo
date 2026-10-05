@@ -197,6 +197,9 @@ class OpenCodeHarness:
                 }
             },
             "default_agent": "b2e",
+            # Model descriptions can exceed 100 KB on one line. The default
+            # 50 KB cap spills them to files the isolated agent cannot read.
+            "tool_output": {"max_bytes": 512 * 1024, "max_lines": 10_000},
         }
 
     def harness_note(self, config: AgentConfig) -> str:

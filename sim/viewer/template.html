@@ -340,8 +340,8 @@ function readMessage(m){
   if (typeof msg.content === "string" && msg.content) r.text.push(msg.content);
   (msg.contents || []).forEach(c => {
     const mc = (c && c.message_content) || {};
-    if (mc.type === "reasoning") { if (mc.text) r.think.push(mc.text); }
-    else if (mc.text) r.text.push(mc.text);
+    if (mc.type === "reasoning") { if (mc.text) r.think.push(pretty(mc.text)); }
+    else if (mc.text) r.text.push(pretty(mc.text));
   });
   (msg.tool_calls || []).forEach(tc => {
     const call = (tc && tc.tool_call) || {}, fn = call.function || {};
@@ -394,8 +394,8 @@ function prepare(db){
       const b = at.b2e || {};
       s._tool = (at.tool && at.tool.name) || shortTool(s.name);
       s._err = s.status_code === "ERROR";
-      s._out = (at.output && at.output.value) || "";
-      s._in  = (at.input && at.input.value) || "";
+      s._out = pretty(at.output && at.output.value);
+      s._in  = pretty(at.input && at.input.value);
       s._outErr = /^\s*(Error|Traceback|<tool_use_error>|\{"error"|\{"code")/i.test(s._out);
       s._hd = b.heimdall || null;                       // heimdall CHAIN
       s._http = b.http || null;
@@ -475,9 +475,9 @@ function prepare(db){
       _hdErrors: pick(hdErrors, t.heimdall_error_codes),
       _hdEndpoints: pick(hdEndpoints, t.heimdall_endpoint_counts),
       _toolCounts: pick(toolCounts, t.tool_call_counts),
-      _prompt: t.user_prompt || (rootAttr.input && rootAttr.input.value) || "",
-      _answer: t.final_answer != null ? t.final_answer
-               : ((rootAttr.output && rootAttr.output.value) || ""),
+      _prompt: pretty(t.user_prompt || (rootAttr.input && rootAttr.input.value)),
+      _answer: pretty(t.final_answer != null ? t.final_answer
+               : (rootAttr.output && rootAttr.output.value)),
     };
     // Count failures once per tool call: a failed Heimdall request shows up both on the
     // CHAIN span and, relayed, in its parent TOOL span's output.
