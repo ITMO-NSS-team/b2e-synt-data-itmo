@@ -10,8 +10,8 @@ from sim.benchmark.execution import (
     fatal_turn_error, trace_observations,
 )
 from sim.benchmark.modes import (
-    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
-    ModeConfig,
+    GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
+    BenchmarkMode, CommonConditions, ModeConfig,
 )
 
 
@@ -24,8 +24,13 @@ def mode(name: str = "existing_skills", *, mock: bool = False) -> ModeConfig:
         ("generated_headcount",)
         if not mock and name == BenchmarkMode.GENERATED_SKILLS else ()
     )
+    tools = (
+        GENERATED_SKILL_TOOLS
+        if name == BenchmarkMode.GENERATED_SKILLS
+        else SKILL_TOOLS
+    )
     return ModeConfig(
-        name, SKILL_TOOLS if enabled else GENERAL_KNOWLEDGE_TOOLS,
+        name, tools if enabled else GENERAL_KNOWLEDGE_TOOLS,
         None, None, None, None,
         generated_names, common, skills_enabled=enabled, is_mock=mock,
     )
@@ -49,19 +54,19 @@ def test_pinned_activator_rejects_floating_refs_and_real_generated_mode() -> Non
     with pytest.raises(ValueError, match="tool_subset differs"):
         PinnedConfigActivator(
             {"general_knowledge": "agent@1"},
-            config_reader=lambda _ref: _agent_config(SKILL_TOOLS),
+            config_reader=lambda _ref: _agent_config(GENERATED_SKILL_TOOLS),
         ).activate(mode("general_knowledge"))
     with pytest.raises(ValueError, match="catalog-mounting"):
         PinnedConfigActivator(
             {"generated_skills": "agent@1"},
-            config_reader=lambda _ref: _agent_config(SKILL_TOOLS),
+            config_reader=lambda _ref: _agent_config(GENERATED_SKILL_TOOLS),
         ).activate(mode("generated_skills"))
 
 
 def test_pinned_activator_accepts_preloaded_generated_catalog() -> None:
     activated = PinnedConfigActivator(
         {"generated_skills": "agent@1"},
-        config_reader=lambda _ref: _agent_config(SKILL_TOOLS),
+        config_reader=lambda _ref: _agent_config(GENERATED_SKILL_TOOLS),
         generated_catalog_preloaded=True,
     ).activate(mode("generated_skills"))
 

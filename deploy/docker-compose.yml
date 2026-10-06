@@ -149,9 +149,9 @@ services:
       HEIMDALL_SNAPSHOT_ON: /data/snapshot
       HEIMDALL_SNAPSHOT_OFF: /data/snapshot-notraps
       HEIMDALL_CATALOG: /app/catalog/snapshot.json
-      # Registry.load() scans recursively, so the base catalog and a generated
-      # experiment overlay can be mounted without copying either directory.
-      HEIMDALL_SKILLS: /app/heimdall-skill-catalog
+      # Benchmark Make targets select exactly one catalog root. The generated
+      # arm points to /generated and cannot discover skills under /existing.
+      HEIMDALL_SKILLS: ${HEIMDALL_SKILLS_ROOT:-/app/heimdall-skill-catalog/existing}
       HEIMDALL_TRAPS_ENABLED: ${TRAPS_ENABLED:-true}
       HEIMDALL_LATENCY_PROFILE: ${LATENCY_PROFILE:-realistic}
       HEIMDALL_ENABLE_DEV_ROUTER: "false"   # see docs/skill-execution-threat-model.md §1.1

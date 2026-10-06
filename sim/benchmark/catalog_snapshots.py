@@ -1,4 +1,4 @@
-"""Content-addressed, additive snapshots of skill catalogs."""
+"""Content-addressed snapshots of isolated skill catalogs."""
 from __future__ import annotations
 
 import json
@@ -75,39 +75,4 @@ def snapshot_catalog(source: str | Path, snapshots_root: str | Path) -> Path:
     source = Path(source).resolve()
     _loaded_registry(source)
     files = {p.relative_to(source): p for p in _skill_files(source)}
-    return _install(files, snapshots_root)
-
-
-def compose_catalog(
-    standard_snapshot: str | Path,
-    generated_source: str | Path,
-    snapshots_root: str | Path,
-) -> Path:
-    """Copy the standard snapshot and add generated files atomically.
-
-    Args:
-        standard_snapshot: Already pinned standard catalog snapshot.
-        generated_source: Overlay catalog of generated skills.
-        snapshots_root: Parent directory for the combined snapshot.
-
-    Returns:
-        Combined snapshot directory.
-
-    Raises:
-        ValueError: If skill names or relative paths collide.
-    """
-    standard = Path(standard_snapshot).resolve()
-    generated = Path(generated_source).resolve()
-    verify_snapshot(standard)
-    base_registry = _loaded_registry(standard)
-    overlay_registry = _loaded_registry(generated)
-    collisions = set(base_registry.all_names()) & set(overlay_registry.all_names())
-    if collisions:
-        raise ValueError(f"generated skill names collide with existing catalog: {sorted(collisions)}")
-    files = {p.relative_to(standard): p for p in _skill_files(standard)}
-    for path in _skill_files(generated):
-        relative = path.relative_to(generated)
-        if relative in files:
-            raise ValueError(f"generated skill path collides with existing catalog: {relative}")
-        files[relative] = path
     return _install(files, snapshots_root)

@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from sim.benchmark.modes import (
-    DATA_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode,
-    CommonConditions, build_modes, catalog_hash, comparison_pairs,
-    mode_strategy, write_mode_config,
+    DATA_TOOLS, GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
+    BenchmarkMode, CommonConditions, build_modes, catalog_hash,
+    comparison_pairs, mode_strategy, write_mode_config,
 )
 
 
@@ -63,9 +63,13 @@ def test_modes_pin_same_common_conditions(
     assert modes.skills_disabled.catalog_path is None
     assert modes.skills_disabled.skills_enabled is False
     assert modes.existing_skills.tool_subset == SKILL_TOOLS
-    assert modes.generated_skills.tool_subset == SKILL_TOOLS
+    assert modes.generated_skills.tool_subset == GENERATED_SKILL_TOOLS
+    assert "get_docs" not in modes.generated_skills.tool_subset
     assert modes.existing_skills.catalog_hash == catalog_hash(base)
-    assert modes.generated_skills.catalog_hash != modes.existing_skills.catalog_hash
+    assert modes.generated_skills.catalog_hash == catalog_hash(generated)
+    assert {path.stem for path in Path(modes.generated_skills.catalog_path).rglob("*.yaml")} == {
+        "generated",
+    }
     assert modes.generated_skills.generated_skill_names == ("generated",)
 
 
@@ -80,6 +84,7 @@ def test_mode_behavior_comes_from_registered_strategies() -> None:
     assert disabled.requires_catalog is False
     assert generated.requires_catalog is True
     assert generated.requires_catalog_activator is True
+    assert generated.catalog_source == "generated"
     assert ("generated_skills", "existing_skills") in comparison_pairs()
     assert ("existing_skills", "skills_disabled") in comparison_pairs()
 
@@ -114,14 +119,11 @@ def test_hash_changes_only_when_skill_files_change(catalogs: tuple[Path, Path]) 
     assert catalog_hash(base) != original
 
 
-def test_collision_and_invalid_catalog_are_refused(
+def test_invalid_generated_catalog_is_refused(
     catalogs: tuple[Path, Path], common: CommonConditions,
 ) -> None:
     base, generated = catalogs
     skill = generated / "org" / "generated.yaml"
-    skill.write_text(skill_yaml("standard"), encoding="utf-8")
-    with pytest.raises(ValueError, match="collide"):
-        build_modes(common, base, generated, snapshots_root=base.parent / "snapshots")
     skill.write_text("name: bad\nkind: recipe\n", encoding="utf-8")
     with pytest.raises(ValueError, match="invalid skill catalog"):
         build_modes(common, base, generated, snapshots_root=base.parent / "snapshots")
@@ -175,18 +177,25 @@ def test_general_knowledge_and_mock_generated_modes_are_explicit(
     assert modes.generated_skills.generated_skill_names == ()
 
 
-def test_generated_mode_builds_combined_snapshot_and_rejects_duplicates(
+def test_generated_mode_builds_generated_only_snapshot_and_allows_standard_name(
     tmp_path: Path, catalogs: tuple[Path, Path], common: CommonConditions,
 ) -> None:
     base, generated = catalogs
     modes = build_modes(common, base, generated, snapshots_root=tmp_path / "snapshots")
     mode = modes.generated_skills
     assert mode.is_mock is False
-    assert {path.stem for path in Path(mode.catalog_path).rglob("*.yaml")} == {
-        "standard", "generated",
+    assert {path.stem for path in Path(mode.catalog_path).rglob("*.yaml")} == {"generated"}
+
+    replacement = tmp_path / "replacement"
+    (replacement / "org").mkdir(parents=True)
+    (replacement / "org" / "standard.yaml").write_text(
+        skill_yaml("standard"), encoding="utf-8"
+    )
+    replacement_modes = build_modes(
+        common, base, replacement, snapshots_root=tmp_path / "other"
+    )
+    replacement_mode = replacement_modes.generated_skills
+    assert replacement_mode.generated_skill_names == ("standard",)
+    assert {path.stem for path in Path(replacement_mode.catalog_path).rglob("*.yaml")} == {
+        "standard",
     }
-    duplicate = tmp_path / "duplicate"
-    (duplicate / "org").mkdir(parents=True)
-    (duplicate / "org" / "standard.yaml").write_text(skill_yaml("standard"), encoding="utf-8")
-    with pytest.raises(ValueError, match="collide"):
-        build_modes(common, base, duplicate, snapshots_root=tmp_path / "other")

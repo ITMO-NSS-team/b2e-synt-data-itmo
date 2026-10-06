@@ -179,8 +179,8 @@ class PinnedConfigActivator:
     This is sufficient for general_knowledge, skills_disabled and
     existing_skills. The first has no Heimdall access, the second exposes only
     data tools, and the third uses the mounted standard catalog. A future
-    non-mock generated mode needs a
-    deployment-specific activator that mounts its combined catalog first.
+    non-mock generated mode needs a deployment-specific activator that mounts
+    its generated-only catalog first.
     """
 
     def __init__(
@@ -196,8 +196,8 @@ class PinnedConfigActivator:
             config_refs: Mapping from mode name to pinned ``name@N`` ref.
             config_reader: Loads the live agent body for a ref; required on
                 ``activate`` so tool subset and model can be verified.
-            generated_catalog_preloaded: The caller has mounted the generated
-                overlay in Heimdall before starting the benchmark.
+            generated_catalog_preloaded: The caller has mounted the generated-only
+                catalog in Heimdall before starting the benchmark.
         """
         self._refs = dict(config_refs)
         self._config_reader = config_reader

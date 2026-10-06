@@ -27,10 +27,10 @@ def pin_live_configs(
     Args:
         registry: Writable agent/prompt/skill registry.
         model_id: If set, rewrite ``model_id`` on each pinned arm.
-        base_pinner: Creates general/data-only/existing configs.
+        base_pinner: Creates pinned configs for all benchmark modes.
 
     Returns:
-        Mapping of general, data-only and existing-skill modes to pinned refs.
+        Mapping of all benchmark modes to pinned refs.
     """
     return base_pinner(registry)
 
@@ -60,9 +60,7 @@ def capture_live_config(
         BenchmarkMode.GENERAL_KNOWLEDGE.value: pinned["general_knowledge"],
         BenchmarkMode.SKILLS_DISABLED.value: pinned["skills_disabled"],
         BenchmarkMode.EXISTING_SKILLS.value: pinned["existing_skills"],
-        BenchmarkMode.GENERATED_SKILLS.value: pinned.get(
-            "generated_skills", pinned["existing_skills"]
-        ),
+        BenchmarkMode.GENERATED_SKILLS.value: pinned["generated_skills"],
     }
     configs: dict[str, dict[str, Any]] = {}
     prompt_versions: dict[str, str] = {}

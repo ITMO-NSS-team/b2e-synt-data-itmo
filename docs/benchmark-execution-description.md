@@ -14,8 +14,9 @@
 - агрегирование результатов и сравнение режимов.
 
 Режим `generated_skills` запускается с внешним каталогом, указанным через
-`GENERATED_SKILLS_DIR`. Каталог монтируется в Heimdall рядом со стандартными
-skills и не копируется в репозиторий стенда. Без указанного каталога режим
+`GENERATED_SKILLS_DIR`. Этот каталог становится единственным каталогом skills,
+видимым Heimdall в данном режиме, и не копируется в репозиторий стенда. Стандартные
+Heimdall skills в `generated_skills` недоступны. Без указанного каталога режим
 остаётся mock и не запускается. LLM-as-judge пока не выполняется — в результатах
 для него сохраняется только пустая структура.
 
@@ -125,7 +126,11 @@ skills и не копируется в репозиторий стенда. Бе
 | `general_knowledge` | нет | отсутствует | реализован |
 | `skills_disabled` | `list_models`, `describe_model`, `mcp_query` | отсутствует | реализован |
 | `existing_skills` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | уже существующий каталог навыков информационного сервиса | реализован |
-| `generated_skills` | инструменты режима `existing_skills` | стандартный каталог плюс каталог из `GENERATED_SKILLS_DIR` | реализован; без внешнего каталога считается mock |
+| `generated_skills` | `list_models`, `describe_model`, `mcp_query`, `find_skills`, `get_skill` | только каталог из `GENERATED_SKILLS_DIR` | реализован; без внешнего каталога считается mock |
+
+В `generated_skills` отсутствует `get_docs`: встроенные процедурные приёмы Heimdall
+не должны подменять или дополнять проверяемый сгенерированный skill. Через
+`find_skills/get_skill` агент видит только содержимое `GENERATED_SKILLS_DIR`.
 
 `general_knowledge` служит отрицательным baseline: агент не получает инструменты стенда, включая `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills` и `get_skill`. Он не видит перечень витрин, не читает данные, не узнаёт поля и метрики и не получает приёмы и рецепты. Режим проверяет, решается ли задача из общих знаний модели без информации со стенда.
 
@@ -210,8 +215,8 @@ MCP-мост публикует ему ровно три инструмента 
 постоянных табличных виджета: список запусков со ссылкой на trace,
 агрегированные метрики по режимам и попарные дельты accuracy относительно
 `general_knowledge`, `skills_disabled` и `existing_skills`. Абсолютные метрики
-предусматривают также `generated_skills`, но этот mock-режим пока не участвует
-в попарном сравнении. Колонки сравнения постоянны, а строки создаются только
+предусматривают также `generated_skills`, когда передан внешний каталог.
+Колонки сравнения постоянны, а строки создаются только
 для режимов, фактически выбранных в конкретном запуске. Виджеты читают
 `b2e.benchmark.run` и
 `b2e.benchmark.summary.<mode>` из `otel_traces`, поэтому последующие прогоны
@@ -362,6 +367,12 @@ make benchmarking \
 make benchmarking-generated \
   GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills \
   CASES=b2e-skill-benchmark/gold_dataset
+
+# Все четыре режима и один общий отчёт
+make benchmarking \
+  CASES=b2e-skill-benchmark/gold_dataset \
+  BENCH_MODES=general_knowledge,skills_disabled,existing_skills,generated_skills \
+  GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills
 ```
 
 `benchmarking` фиксирует live-конфигурацию и **append-only** пинит benchmark-конфиги от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Остальные работающие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются. `heimdall-emulator` пересоздаётся только при изменении подключённой директории skills.
@@ -371,10 +382,14 @@ make benchmarking-generated \
 если его конфигурация монтирования изменилась. Поэтому следующий обычный прогон
 без этой переменной снова использует только стандартный каталог.
 
-`existing_skills` и `generated_skills` запускаются отдельно: первый использует
-только стандартный каталог, второй — стандартный каталог вместе с generated
-overlay. Их объединение в одной команде отклоняется, чтобы generated skill не
-попал в baseline.
+Если вместе выбраны `existing_skills` и `generated_skills`, команда автоматически
+делит эксперимент на две последовательные фазы. Первая выполняет baseline-режимы
+со стандартным каталогом Heimdall, вторая — `generated_skills` только с каталогом
+из `GENERATED_SKILLS_DIR`. Вторая фаза рекурсивно загружает все валидные skills из
+этой директории; стандартные skills в ней недоступны. Обе фазы используют один
+логический `eval_id`, а затем объединяются в общие `responses.jsonl`,
+`scores.jsonl`, `traces/` и `summary.json`. Промежуточные артефакты сохраняются в
+`benchmarking/results/.phases/<eval_id>/` для диагностики.
 
 Runner обращается напрямую к `http://b2e-agent:8082` и `http://phoenix:6006`. Публичный proxy, HTTP Basic и SSH-транспорт не используются. Результаты сохраняются на той же машине в `benchmarking/results/<eval_id>/`.
 

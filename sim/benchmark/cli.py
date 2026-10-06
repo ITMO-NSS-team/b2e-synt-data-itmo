@@ -398,7 +398,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--catalog", default="heimdall-skills")
     result.add_argument(
         "--generated-skills",
-        help="Directory with generated .md/.yaml skills already mounted in Heimdall",
+        help=(
+            "Directory with generated .md/.yaml skills mounted as the complete "
+            "skill catalog for generated_skills"
+        ),
     )
     result.add_argument("--catalog-snapshots", default="var/benchmark-catalog-snapshots")
     result.add_argument("--model-catalog", default="catalog/snapshot.json")

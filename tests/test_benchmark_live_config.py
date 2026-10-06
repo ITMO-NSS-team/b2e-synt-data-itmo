@@ -9,7 +9,9 @@ import pytest
 
 from sim.benchmark.env import load_env, require_env
 from sim.benchmark.live_config import capture_live_config, pin_live_configs
-from sim.benchmark.modes import DATA_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS
+from sim.benchmark.modes import (
+    DATA_TOOLS, GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
+)
 from sim.registry import Registry
 from sim.benchmark.pin import pin
 
@@ -26,7 +28,7 @@ def runtime_provider(monkeypatch):
     monkeypatch.setenv("B2E_HARNESS", "open_code")
 
 
-def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None:
+def test_capture_pins_mode_configs_and_records_actual_condition(tmp_path) -> None:
     registry = Registry(tmp_path / "registry.db")
     registry.commit(
         "system_prompt", "prompt", {"template": "test"}, actor="test",
@@ -45,8 +47,12 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
         disabled_body = dict(base)
         disabled_body["tool_subset"] = list(DATA_TOOLS)
         disabled = target.commit("disabled", "agent", disabled_body, actor="test")
+        generated_body = dict(base)
+        generated_body["tool_subset"] = list(GENERATED_SKILL_TOOLS)
+        generated = target.commit("generated", "agent", generated_body, actor="test")
         return {
             "existing_skills": enabled.ref,
+            "generated_skills": generated.ref,
             "skills_disabled": disabled.ref,
             "general_knowledge": general.ref,
         }
@@ -65,7 +71,8 @@ def test_capture_pins_two_configs_and_records_actual_condition(tmp_path) -> None
     assert tuple(payload["configs"][disabled]["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
     assert tuple(payload["configs"][data_only]["tool_subset"]) == DATA_TOOLS
     assert tuple(payload["configs"][enabled]["tool_subset"]) == SKILL_TOOLS
-    assert generated == enabled
+    assert generated != enabled
+    assert tuple(payload["configs"][generated]["tool_subset"]) == GENERATED_SKILL_TOOLS
     assert payload["configs"][enabled]["model_id"] == "env-model"
     assert payload["configs"][enabled]["harness"] == "open_code"
     assert payload["prompt_versions"][disabled].startswith("system_prompt@")
@@ -96,8 +103,12 @@ def test_pin_does_not_duplicate_model_configuration(tmp_path) -> None:
         disabled_body = dict(raw)
         disabled_body["tool_subset"] = list(DATA_TOOLS)
         disabled = target.commit("disabled", "agent", disabled_body, actor="test")
+        generated_body = dict(raw)
+        generated_body["tool_subset"] = list(GENERATED_SKILL_TOOLS)
+        generated = target.commit("generated", "agent", generated_body, actor="test")
         return {
             "existing_skills": on.ref,
+            "generated_skills": generated.ref,
             "skills_disabled": disabled.ref,
             "general_knowledge": general.ref,
         }
@@ -134,7 +145,7 @@ def test_real_pinner_separates_general_data_only_and_skill_tools(
     assert tuple(general["tool_subset"]) == GENERAL_KNOWLEDGE_TOOLS
     assert tuple(disabled["tool_subset"]) == DATA_TOOLS
     assert tuple(existing["tool_subset"]) == SKILL_TOOLS
-    assert tuple(generated["tool_subset"]) == SKILL_TOOLS
+    assert tuple(generated["tool_subset"]) == GENERATED_SKILL_TOOLS
     registry.close()
 
 

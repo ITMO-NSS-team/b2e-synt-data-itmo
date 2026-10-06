@@ -6,8 +6,8 @@ from pathlib import Path
 
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import (
-    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
-    ModeConfig,
+    GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
+    BenchmarkMode, CommonConditions, ModeConfig,
 )
 from sim.benchmark.scoring import NormalizedAnswer, calculate_metrics, normalize_answer
 from tests.fixtures.constants import EXAMPLE
@@ -35,8 +35,13 @@ def mode(name: str = "existing_skills") -> ModeConfig:
     )
     enabled = name != BenchmarkMode.GENERAL_KNOWLEDGE
     generated_names = ("generated_headcount",) if name == BenchmarkMode.GENERATED_SKILLS else ()
+    tools = (
+        GENERATED_SKILL_TOOLS
+        if name == BenchmarkMode.GENERATED_SKILLS
+        else SKILL_TOOLS
+    )
     return ModeConfig(
-        name, SKILL_TOOLS if enabled else GENERAL_KNOWLEDGE_TOOLS,
+        name, tools if enabled else GENERAL_KNOWLEDGE_TOOLS,
         None, None, None, None,
         generated_names, common, skills_enabled=enabled,
     )

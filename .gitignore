@@ -75,3 +75,4 @@ benchmarking/results/
 var/benchmark-live-config.json
 var/benchmark-catalog-snapshots/
 var/empty-generated-skills/
+var/benchmark-subsets/*
