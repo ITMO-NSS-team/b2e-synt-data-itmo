@@ -10,8 +10,8 @@ from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.contracts import PROMPT_RENDERER_VERSION, gold_contract_hash
 from sim.benchmark.execution import ActivatedMode, AgentRequest, AgentTurn
 from sim.benchmark.modes import (
-    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
-    ModeConfig,
+    GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
+    BenchmarkMode, CommonConditions, ModeConfig,
 )
 from sim.benchmark.preflight import PreflightResult
 from sim.benchmark.results import ResultWriter, summarize_results
@@ -20,7 +20,7 @@ from sim.fingerprint import RunFingerprint
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE
 
 
-def ready_case(case_id: str = "case-9999") -> BenchmarkCase:
+def ready_case(case_id: str = "case-9999-00") -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
         "case_id": case_id, "status": "verified", "employee_id": 123,
@@ -45,8 +45,13 @@ def mode(name: str = "existing_skills", *, mock: bool = False) -> ModeConfig:
         ("generated_headcount",)
         if not mock and name == BenchmarkMode.GENERATED_SKILLS else ()
     )
+    tools = (
+        GENERATED_SKILL_TOOLS
+        if name == BenchmarkMode.GENERATED_SKILLS
+        else SKILL_TOOLS
+    )
     return ModeConfig(
-        name, SKILL_TOOLS if enabled else GENERAL_KNOWLEDGE_TOOLS,
+        name, tools if enabled else GENERAL_KNOWLEDGE_TOOLS,
         None, None, None, None,
         generated_names, common, skills_enabled=enabled, is_mock=mock,
     )
@@ -148,6 +153,27 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
     assert activator.activated == ["existing_skills", "existing_skills"]
     assert activator.deactivated == activator.activated
     assert all(result.score["metrics"]["answer_accuracy"] == 1 for result in results)
+
+
+def test_generated_variant_has_distinct_result_arm_but_shared_comparison_group() -> None:
+    executor = FakeExecutor()
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=executor,
+        mode_labels={"generated_skills": "generated_skills@headcount_1"},
+    )
+
+    results = runner.run(
+        [ready_case()], {"generated_skills": mode("generated_skills")},
+    )
+
+    assert results[0].mode == "generated_skills@headcount_1"
+    assert results[0].run_id.endswith("-generated_skills@headcount_1-01")
+    assert executor.requests[0].metadata["mode"] == "generated_skills@headcount_1"
+    assert executor.requests[0].metadata["canonical_mode"] == "generated_skills"
 
 
 def test_runner_marks_tool_free_arm_for_trace_collection() -> None:

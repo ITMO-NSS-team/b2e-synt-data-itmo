@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -242,13 +243,20 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
     modes = build_modes(
         common,
         args.catalog,
+        generated_skills_path=args.generated_skills,
         snapshots_root=args.catalog_snapshots,
     )
     selected = select_modes(modes, args.modes)
+    variant_id = getattr(args, "generated_variant_id", None)
+    if variant_id and BenchmarkMode.GENERATED_SKILLS.value not in selected:
+        raise ValueError("--generated-variant-id requires generated_skills mode")
+    if variant_id and not re.fullmatch(r"[A-Za-z0-9_.-]+", variant_id):
+        raise ValueError("generated variant id contains unsupported characters")
     refs = live["refs"]
     activator = PinnedConfigActivator(
         {name: refs[name] for name in selected},
         config_reader=lambda ref: live["configs"][ref],
+        generated_catalog_preloaded=args.generated_skills is not None,
     )
 
     # Validate every case x mode before the first model call.  Runner reuses
@@ -292,10 +300,29 @@ def _manifest(
         "check_only": check_only,
         "cases_path": str(Path(args.cases).resolve()),
         "case_ids": [case.case_id for case in prepared.cases],
-        "modes": [asdict(mode) for mode in prepared.selected_modes.values()],
+        "modes": [
+            _serialized_mode(mode, getattr(args, "generated_variant_id", None))
+            for mode in prepared.selected_modes.values()
+        ],
         "repetitions": 0 if check_only else args.repetitions,
         "live_stand": prepared.live,
     }
+
+
+def _result_mode_name(mode_name: str, generated_variant_id: str | None) -> str:
+    if mode_name == BenchmarkMode.GENERATED_SKILLS.value and generated_variant_id:
+        return f"{mode_name}@{generated_variant_id}"
+    return mode_name
+
+
+def _serialized_mode(mode: ModeConfig, generated_variant_id: str | None) -> dict[str, Any]:
+    payload = asdict(mode)
+    result_name = _result_mode_name(mode.name, generated_variant_id)
+    if result_name != mode.name:
+        payload["canonical_name"] = mode.name
+        payload["name"] = result_name
+        payload["variant_id"] = generated_variant_id
+    return payload
 
 
 def check(args: argparse.Namespace) -> ResultWriter:
@@ -314,7 +341,9 @@ def check(args: argparse.Namespace) -> ResultWriter:
     report = [
         {
             "case_id": result.case_id,
-            "mode": result.mode,
+            "mode": _result_mode_name(
+                result.mode, getattr(args, "generated_variant_id", None),
+            ),
             "status": result.status,
             "fingerprint": (
                 result.fingerprint.as_dict() if result.fingerprint else None
@@ -360,12 +389,20 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
             require_auth=not getattr(args, "no_auth", False),
         ),
         writer=writer,
+        mode_labels={
+            name: _result_mode_name(name, getattr(args, "generated_variant_id", None))
+            for name in prepared.selected_modes
+        },
     )
     with telemetry.benchmark_run(
         eval_id=eval_id,
-        modes=tuple(prepared.selected_modes),
+        modes=tuple(
+            _result_mode_name(name, getattr(args, "generated_variant_id", None))
+            for name in prepared.selected_modes
+        ),
         repetitions=args.repetitions,
         case_count=len(prepared.cases),
+        final=not getattr(args, "phase_telemetry", False),
     ) as run_span:
         results = runner.run(
             prepared.cases, prepared.selected_modes, repetitions=args.repetitions,
@@ -374,6 +411,7 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
         # OpenLIT receives an observability copy, not another scoring pipeline.
         telemetry.set_benchmark_summary(
             run_span, summarize_results(results), eval_id=eval_id,
+            final=not getattr(args, "phase_telemetry", False),
         )
     return results, writer
 
@@ -394,6 +432,17 @@ def parser() -> argparse.ArgumentParser:
         help="Path to the data snapshot mounted from DATA_DIR",
     )
     result.add_argument("--catalog", default="heimdall-skills")
+    result.add_argument(
+        "--generated-skills",
+        help=(
+            "Directory with generated .md/.yaml skills mounted as the complete "
+            "skill catalog for generated_skills"
+        ),
+    )
+    result.add_argument(
+        "--generated-variant-id",
+        help="physical generated artifact id used to distinguish result arms",
+    )
     result.add_argument("--catalog-snapshots", default="var/benchmark-catalog-snapshots")
     result.add_argument("--model-catalog", default="catalog/snapshot.json")
     result.add_argument("--schema", default=SCHEMA_RELATIVE)
@@ -405,6 +454,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--eval-id")
     result.add_argument("--eval-prefix")
     result.add_argument("--check-only", action="store_true")
+    result.add_argument(
+        "--phase-telemetry",
+        action="store_true",
+        help="mark this invocation as an internal phase; a merged final summary follows",
+    )
     result.add_argument("--env-file", default=ENV_RELATIVE)
     result.add_argument("--agent-url", help="Agent base URL; defaults to PUBLIC_URL")
     result.add_argument("--agent-prefix", default="/agent")
@@ -449,7 +503,7 @@ def main(argv: list[str] | None = None) -> int:
                 "agent_calls": 0,
             }, ensure_ascii=False, indent=2))
             return 0
-        provider = _configure_metric_export()
+        provider = configure_metric_export()
         try:
             results, writer = run(args)
         finally:
@@ -463,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
-def _configure_metric_export():
+def configure_metric_export():
     """Send post-run evaluator spans to the same two stores as agent spans."""
     endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "").strip()
     if not endpoint:

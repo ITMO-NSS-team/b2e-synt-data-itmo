@@ -28,12 +28,12 @@ class PreflightResult:
     Attributes:
         case_id: Authorial case id.
         mode: Benchmark arm name.
-        status: ``ready``, ``draft_skipped`` or ``mock_skipped``.
+        status: ``ready`` or a documented non-error skip status.
         fingerprint: Experiment fingerprint when status is ``ready``.
     """
     case_id: str
     mode: str
-    status: str  # ready | draft_skipped | mock_skipped
+    status: str
     fingerprint: RunFingerprint | None = None
 
 
@@ -134,6 +134,20 @@ def preflight_case(
     strategy.validate(mode)
     if skip_status := strategy.skip_status(mode):
         return PreflightResult(case.case_id, mode.name, skip_status)
+    if strategy.generated:
+        expected = tuple(case.raw["expected_skills"])
+        if not expected:
+            return PreflightResult(
+                case.case_id, mode.name, "generated_no_expected_skill_skipped",
+            )
+        if len(expected) > 1:
+            return PreflightResult(
+                case.case_id, mode.name, "generated_multiple_skills_skipped",
+            )
+        if expected[0] not in mode.generated_skill_names:
+            return PreflightResult(
+                case.case_id, mode.name, "generated_skill_unavailable_skipped",
+            )
     if not _PINNED_VERSION.fullmatch(agent_config_version):
         raise ValueError("agent_config_version must be pinned, e.g. benchmark_agent@1")
     if case.raw["snapshot_id"] != mode.common.snapshot_id:

@@ -6,8 +6,8 @@ from pathlib import Path
 
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import (
-    GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS, BenchmarkMode, CommonConditions,
-    ModeConfig,
+    GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
+    BenchmarkMode, CommonConditions, ModeConfig,
 )
 from sim.benchmark.scoring import NormalizedAnswer, calculate_metrics, normalize_answer
 from tests.fixtures.constants import EXAMPLE
@@ -16,7 +16,7 @@ from tests.fixtures.constants import EXAMPLE
 def ready_case() -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
-        "case_id": "case-9999", "status": "verified", "employee_id": 123,
+        "case_id": "case-9999-00", "status": "verified", "employee_id": 123,
         "employee_role": "manager", "snapshot_id": "heimdall-sandbox@test",
         "gold_answer": {
             "outcome": "answer",
@@ -26,7 +26,7 @@ def ready_case() -> BenchmarkCase:
             ],
         },
     })
-    return BenchmarkCase(Path("/authorial/case-9999.json"), raw)
+    return BenchmarkCase(Path("/authorial/case-9999-00.json"), raw)
 
 
 def mode(name: str = "existing_skills") -> ModeConfig:
@@ -35,8 +35,13 @@ def mode(name: str = "existing_skills") -> ModeConfig:
     )
     enabled = name != BenchmarkMode.GENERAL_KNOWLEDGE
     generated_names = ("generated_headcount",) if name == BenchmarkMode.GENERATED_SKILLS else ()
+    tools = (
+        GENERATED_SKILL_TOOLS
+        if name == BenchmarkMode.GENERATED_SKILLS
+        else SKILL_TOOLS
+    )
     return ModeConfig(
-        name, SKILL_TOOLS if enabled else GENERAL_KNOWLEDGE_TOOLS,
+        name, tools if enabled else GENERAL_KNOWLEDGE_TOOLS,
         None, None, None, None,
         generated_names, common, skills_enabled=enabled,
     )

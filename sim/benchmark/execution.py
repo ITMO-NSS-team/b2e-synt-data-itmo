@@ -179,14 +179,16 @@ class PinnedConfigActivator:
     This is sufficient for general_knowledge, skills_disabled and
     existing_skills. The first has no Heimdall access, the second exposes only
     data tools, and the third uses the mounted standard catalog. A future
-    non-mock generated mode needs a
-    deployment-specific activator that mounts its combined catalog first.
+    non-mock generated mode needs a deployment-specific activator that mounts
+    its generated-only catalog first.
     """
 
     def __init__(
         self,
         config_refs: Mapping[str, str],
         config_reader: Callable[[str], dict[str, Any]] | None = None,
+        *,
+        generated_catalog_preloaded: bool = False,
     ) -> None:
         """Bind mode names to already-pinned registry refs.
 
@@ -194,9 +196,12 @@ class PinnedConfigActivator:
             config_refs: Mapping from mode name to pinned ``name@N`` ref.
             config_reader: Loads the live agent body for a ref; required on
                 ``activate`` so tool subset and model can be verified.
+            generated_catalog_preloaded: The caller has mounted the generated-only
+                catalog in Heimdall before starting the benchmark.
         """
         self._refs = dict(config_refs)
         self._config_reader = config_reader
+        self._generated_catalog_preloaded = generated_catalog_preloaded
 
     def activate(self, mode: ModeConfig) -> ActivatedMode:
         """Verify the pinned live config matches ``mode``.
@@ -227,7 +232,11 @@ class PinnedConfigActivator:
             or config.get("conversation_mode") != "stateless"
         ):
             raise ValueError(f"{mode.name}: live agent behavior differs from mode")
-        if mode.strategy.requires_catalog_activator and not mode.is_mock:
+        if (
+            mode.strategy.requires_catalog_activator
+            and not mode.is_mock
+            and not self._generated_catalog_preloaded
+        ):
             raise ValueError(
                 f"{mode.name} requires a catalog-mounting ModeActivator"
             )

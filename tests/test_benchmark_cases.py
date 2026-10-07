@@ -11,7 +11,7 @@ from sim.benchmark.cases import load_case, load_suite, validate_case, write_suit
 from tests.fixtures.constants import EXAMPLE, SCHEMA
 
 
-def ready_case(case_id: str = "case-9999") -> dict:
+def ready_case(case_id: str = "case-9999-00") -> dict:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw["case_id"] = case_id
     raw["status"] = "verified"
@@ -23,7 +23,7 @@ def test_supplied_example_matches_published_contract_and_is_ready() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     assert set(schema["required"]) == set(schema["properties"])
     case = load_case(EXAMPLE, schema_path=SCHEMA)
-    assert case.case_id == "case-0000"
+    assert case.case_id == "case-0000-00"
     assert case.status == "verified"
     assert case.raw["employee_id"] == 123456
     assert case.raw["gold_answer"]["outcome"] == "answer"
@@ -67,7 +67,7 @@ def test_v2_loader_resolves_local_contract_and_comparison_template(tmp_path: Pat
         "template": "simple_comparison",
         "row_key": ["grade"],
     }
-    path = tmp_path / "case-0000.json"
+    path = tmp_path / "case-0000-00.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     case = load_case(path, schema_path=SCHEMA)
@@ -128,7 +128,7 @@ def test_suite_skips_draft_and_preserves_source_json(tmp_path: Path) -> None:
     cases_dir = tmp_path / "cases"
     cases_dir.mkdir()
     draft_path = cases_dir / "case-fixture.json"
-    ready_path = cases_dir / "case-9999.json"
+    ready_path = cases_dir / "case-9999-00.json"
     draft = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     draft["status"] = "draft"
     draft["employee_id"] = None
@@ -137,12 +137,12 @@ def test_suite_skips_draft_and_preserves_source_json(tmp_path: Path) -> None:
     ready_path.write_text(json.dumps(ready_case()), encoding="utf-8")
     source_before = {path: path.read_bytes() for path in (draft_path, ready_path)}
     suite = load_suite(cases_dir, schema_path=SCHEMA)
-    assert [case.case_id for case in suite] == ["case-9999"]
+    assert [case.case_id for case in suite] == ["case-9999-00"]
     output = write_suite_jsonl(suite, tmp_path / "suite.jsonl", schema_path=SCHEMA)
     lines = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
-    assert [item["case_id"] for item in lines] == ["case-9999"]
+    assert [item["case_id"] for item in lines] == ["case-9999-00"]
     assert {path: path.read_bytes() for path in source_before} == source_before
-    assert load_suite(cases_dir, ["case-0000"], schema_path=SCHEMA) == []
+    assert load_suite(cases_dir, ["case-0000-00"], schema_path=SCHEMA) == []
     with pytest.raises(ValueError, match="draft case"):
         load_suite(cases_dir, on_draft="error", schema_path=SCHEMA)
     with pytest.raises(ValueError, match="unknown case_ids"):

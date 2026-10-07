@@ -39,14 +39,14 @@ def common(snapshot_id: str = "heimdall-sandbox@test") -> CommonConditions:
 def ready_case(snapshot_id: str = "heimdall-sandbox@test") -> BenchmarkCase:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw.update({
-        "case_id": "case-9999",
+        "case_id": "case-9999-00",
         "status": "verified",
         "employee_id": 123,
         "employee_role": "manager",
         "snapshot_id": snapshot_id,
         "skill_registry_hash": EMPTY_HASH,
     })
-    return BenchmarkCase(Path("/authorial/case-9999.json"), raw)
+    return BenchmarkCase(Path("/authorial/case-9999-00.json"), raw)
 
 
 class FakeIdentity:
@@ -103,6 +103,39 @@ def test_ready_preflight_validates_all_inputs_and_builds_fingerprint(tmp_path: P
     assert result.status == "ready"
     assert result.fingerprint is not None
     assert result.fingerprint.data_snapshot_hash == "heimdall-sandbox@test"
+
+
+@pytest.mark.parametrize(
+    ("expected", "status"),
+    [
+        ([], "generated_no_expected_skill_skipped"),
+        (["one", "two"], "generated_multiple_skills_skipped"),
+        (["missing"], "generated_skill_unavailable_skipped"),
+    ],
+)
+def test_generated_preflight_skips_non_runnable_case_without_validating_stand(
+    tmp_path: Path, expected: list[str], status: str,
+) -> None:
+    standard = make_catalog(tmp_path / "standard")
+    generated = make_catalog(tmp_path / "generated", name="available")
+    modes = build_modes(
+        common(), standard, generated,
+        snapshots_root=tmp_path / "snapshots",
+    )
+    case = ready_case()
+    case.raw["expected_skills"] = expected
+
+    result = preflight_case(
+        case, modes.generated_skills,
+        snapshot_root=tmp_path / "not-needed",
+        standard_catalog_path=modes.existing_skills.catalog_path,
+        model_catalog_path=MODEL_CATALOG,
+        agent_config_version="benchmark_agent@1",
+        identity_factory=FakeIdentity,
+        schema_path=SCHEMA,
+    )
+
+    assert result.status == status
 
 
 def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:

@@ -112,6 +112,7 @@ def test_benchmark_run_contains_summary_and_owns_score_spans(spans) -> None:
     assert score.parent.span_id == run.context.span_id
     assert score.links[0].context.trace_id == int("1" * 32, 16)
     assert run.attributes["b2e.benchmark.eval_id"] == "eval-1"
+    assert run.attributes["b2e.benchmark.final"] is True
     assert run.attributes["b2e.benchmark.case_count"] == 1
     assert run.attributes["b2e.summary.n_runs"] == 2
     assert not any(
@@ -119,9 +120,30 @@ def test_benchmark_run_contains_summary_and_owns_score_spans(spans) -> None:
     )
     assert existing.parent.span_id == run.context.span_id
     assert existing.attributes["b2e.benchmark.mode"] == "existing_skills"
+    assert existing.attributes["b2e.benchmark.final"] is True
     assert existing.attributes["b2e.summary.n_runs"] == 1
     assert existing.attributes["b2e.summary.answer_accuracy"] == 1.0
     assert disabled.parent.span_id == run.context.span_id
     assert disabled.attributes["b2e.benchmark.mode"] == "skills_disabled"
     assert disabled.attributes["b2e.summary.n_runs"] == 1
     assert disabled.attributes["b2e.summary.answer_accuracy"] == 0.0
+
+
+def test_internal_phase_summary_is_marked_non_final(spans) -> None:
+    from sim import telemetry
+
+    with telemetry.benchmark_run(
+        eval_id="eval-phase", modes=("generated_skills",),
+        repetitions=1, case_count=1, final=False,
+    ) as run_span:
+        telemetry.set_benchmark_summary(
+            run_span,
+            {"n_runs": 1, "by_mode": {"generated_skills": {"n_runs": 1}}},
+            eval_id="eval-phase", final=False,
+        )
+
+    finished = {span.name: span for span in spans.get_finished_spans()}
+    assert finished["b2e.benchmark.run"].attributes["b2e.benchmark.final"] is False
+    assert finished[
+        "b2e.benchmark.summary.generated_skills"
+    ].attributes["b2e.benchmark.final"] is False

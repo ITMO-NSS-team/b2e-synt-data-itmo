@@ -26,9 +26,27 @@ def test_benchmarking_uses_internal_agent_and_phoenix() -> None:
     assert "--no-auth" in output
     assert "ps --status running --services" in output
     assert "make up" in output
+    assert "prepare-resolv" in output
     assert "openlit-dashboard" in output
     assert '--modes "general_knowledge,skills_disabled,existing_skills"' in output
+    assert 'HEIMDALL_SKILLS_ROOT="/app/heimdall-skill-catalog/existing"' in output
     assert "ssh" not in output
+
+
+def test_prepare_resolv_repairs_docker_created_directory() -> None:
+    output = _make("prepare-resolv")
+
+    assert "rmdir" in output
+    assert ".resolv-recreate-required" in output
+    assert "nameserver 127.0.0.11" in output
+    assert "chmod 644" in output
+
+
+def test_up_force_recreates_services_after_resolv_repair() -> None:
+    output = _make("up")
+
+    assert ".resolv-recreate-required" in output
+    assert '--force-recreate' in output
 
 
 def test_benchmarking_smoke_runs_one_case_and_one_repetition() -> None:
@@ -46,6 +64,45 @@ def test_benchmarking_check_is_preflight_only() -> None:
     assert '--eval-prefix "check"' in output
     assert "benchmark-runner" in output
     assert "openlit-dashboard" not in output
+
+
+def test_generated_benchmark_mounts_only_generated_catalog() -> None:
+    # A generated run now has a planning step and recursive Make invocations;
+    # GNU make executes those recursive calls even under -n.  Assert the
+    # dispatch contract structurally and test the planner separately.
+    root = Path(__file__).resolve().parents[1]
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+    compose = (root / "deploy/docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "sim.benchmark.generated_plan" in makefile
+    assert 'GENERATED_SKILLS_DIR="$$catalog"' in makefile
+    assert 'BENCH_MODES="generated_skills"' in makefile
+    assert (
+        "${GENERATED_SKILLS_DIR:-../var/empty-generated-skills}:"
+        "/app/generated-skills:ro"
+    ) in compose
+
+
+def test_mixed_benchmark_splits_catalogs_and_merges_results() -> None:
+    # GNU make executes recursive $(MAKE) calls even under -n, so this dispatch
+    # recipe is asserted structurally; its merge behavior has dedicated tests.
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "Makefile").read_text(encoding="utf-8")
+
+    assert "Baseline-фаза:" in source
+    assert "Generated-фаза:" in source
+    assert 'BENCH_MODES="$(BENCH_BASELINE_MODES)"' in source
+    assert 'CASES="$$covered_cases"' in source
+    assert 'BENCH_MODES="generated_skills"' in source
+    assert 'BENCH_GENERATED_VARIANT_ID="$$variant"' in source
+    assert 'read -r slug cases catalog skill variant <&3' in source
+    assert 'done 3< "$$group_list"' in source
+    assert 'CASES="$$cases" GENERATED_SKILLS_DIR="$$catalog"' in source
+    assert "sim.benchmark.generated_plan" in source
+    assert "--generated-plan" in source
+    assert "sim.benchmark.merge" in source
+    assert "--phase-telemetry" in source
+    assert "sim.benchmark.publish" in source
 
 
 def test_data_dir_override_is_used_by_preflight() -> None:

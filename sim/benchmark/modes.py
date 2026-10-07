@@ -20,6 +20,9 @@ SKILL_TOOLS = (
     "list_models", "describe_model", "get_docs", "mcp_query",
     "find_skills", "get_skill",
 )
+GENERATED_SKILL_TOOLS = (
+    "list_models", "describe_model", "mcp_query", "find_skills", "get_skill",
+)
 _PINNED_REF = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
 
 
@@ -30,7 +33,7 @@ class BenchmarkMode(str, Enum):
         GENERAL_KNOWLEDGE: Model knowledge only; no Heimdall tools or catalog.
         SKILLS_DISABLED: Data discovery and query tools, without skill guidance.
         EXISTING_SKILLS: Catalog of already-deployed skills plus ``find_skills``/``get_skill``.
-        GENERATED_SKILLS: Combined catalog with generated skills; may still be a mock.
+        GENERATED_SKILLS: Generated-only catalog; may still be a mock.
     """
     GENERAL_KNOWLEDGE = "general_knowledge"
     SKILLS_DISABLED = "skills_disabled"
@@ -100,8 +103,8 @@ class ModeConfig:
         tool_subset: Tools the agent may call in this arm.
         catalog_path: Snapshot path, or ``None`` when skills are disabled.
         catalog_hash: Content hash of that snapshot, or ``None``.
-        generated_skills_path: Overlay catalog for generated skills, if any.
-        generated_skills_hash: Content hash of the overlay, if any.
+        generated_skills_path: Source catalog containing generated skills only.
+        generated_skills_hash: Content hash of the generated-only source catalog.
         generated_skill_names: Active generated skill names.
         common: Shared conditions copied into every arm.
         skills_enabled: Whether ``find_skills``/``get_skill`` are in the subset.
@@ -135,7 +138,7 @@ class ModeStrategy:
     mode: BenchmarkMode
     tool_subset: tuple[str, ...]
     skills_enabled: bool
-    catalog_source: str  # none | base | combined
+    catalog_source: str  # none | base | generated
     generated: bool = False
     comparison_baselines: tuple[BenchmarkMode, ...] = ()
 
@@ -227,9 +230,9 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
         ),
         ModeStrategy(
             BenchmarkMode.GENERATED_SKILLS,
-            SKILL_TOOLS,
+            GENERATED_SKILL_TOOLS,
             True,
-            "combined",
+            "generated",
             generated=True,
             comparison_baselines=(
                 BenchmarkMode.GENERAL_KNOWLEDGE,
@@ -272,7 +275,7 @@ class ModeConfigs:
         general_knowledge: Baseline with no Heimdall tools, catalog, docs or data access.
         skills_disabled: Data tools without skill discovery, recipes or procedural docs.
         existing_skills: Catalog of already-deployed skills.
-        generated_skills: Combined catalog, possibly still a mock.
+        generated_skills: Generated-only catalog, possibly still a mock.
     """
     by_name: Mapping[str, ModeConfig]
 
@@ -361,7 +364,7 @@ def build_modes(
     Args:
         common: Shared model, prompt, snapshot and emulator conditions.
         base_catalog_path: Live existing-skill catalog to snapshot.
-        generated_skills_path: Optional overlay of generated skills.
+        generated_skills_path: Optional catalog containing generated skills only.
         snapshots_root: Directory for content-addressed catalog copies.
             Required when ``generated_skills_path`` is set.
 
@@ -369,45 +372,42 @@ def build_modes(
         Three mode configs sharing ``common``.
 
     Raises:
-        ValueError: If a catalog is empty, invalid, or name-collides.
+        ValueError: If a catalog is empty or invalid.
     """
     base = Path(base_catalog_path).resolve()
     if snapshots_root is not None:
         from .catalog_snapshots import snapshot_catalog
         base = snapshot_catalog(base, snapshots_root)
-    standard = _loaded_registry(base)
+    _loaded_registry(base)
     if not _skill_files(base):
         raise ValueError("standard catalog is empty")
     base_hash = catalog_hash(base)
     generated_path: str | None = None
     generated_hash: str | None = None
-    combined_path = str(base)
-    combined_hash = base_hash
+    generated_catalog_path: str | None = None
+    generated_catalog_hash: str | None = None
     names: tuple[str, ...] = ()
     is_mock = generated_skills_path is None
     if generated_skills_path is not None:
         if snapshots_root is None:
-            raise ValueError("generated skills require snapshots_root for a combined catalog")
+            raise ValueError("generated skills require snapshots_root")
         generated = Path(generated_skills_path).resolve()
-        overlay = _loaded_registry(generated)
+        generated_registry = _loaded_registry(generated)
         if not _skill_files(generated):
             raise ValueError("generated_skills mode requires at least one generated skill")
-        names = tuple(overlay.active())
-        if len(names) != len(overlay.all_names()):
+        names = tuple(generated_registry.active())
+        if len(names) != len(generated_registry.all_names()):
             raise ValueError("generated skills must be active")
-        collisions = set(standard.all_names()) & set(overlay.all_names())
-        if collisions:
-            raise ValueError(f"generated skill names collide with existing catalog: {sorted(collisions)}")
         generated_path = str(generated)
         generated_hash = catalog_hash(generated)
-        from .catalog_snapshots import compose_catalog
-        combined = compose_catalog(base, generated, snapshots_root)
-        combined_path = str(combined)
-        combined_hash = catalog_hash(combined)
+        from .catalog_snapshots import snapshot_catalog
+        generated_snapshot = snapshot_catalog(generated, snapshots_root)
+        generated_catalog_path = str(generated_snapshot)
+        generated_catalog_hash = catalog_hash(generated_snapshot)
     catalog_values = {
         "none": (None, None),
         "base": (str(base), base_hash),
-        "combined": (combined_path, combined_hash),
+        "generated": (generated_catalog_path, generated_catalog_hash),
     }
     configs = {}
     for strategy in mode_strategies():

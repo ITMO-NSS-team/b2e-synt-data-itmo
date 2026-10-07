@@ -165,6 +165,7 @@ def benchmark_run(
     modes: Sequence[str],
     repetitions: int,
     case_count: int,
+    final: bool = True,
 ) -> Iterator[Span]:
     """Open the single OpenLIT/Phoenix span for one benchmark invocation.
 
@@ -178,6 +179,7 @@ def benchmark_run(
         span.set_attribute("b2e.run.id", eval_id)
         span.set_attribute("b2e.run.kind", "benchmark")
         span.set_attribute("b2e.benchmark.eval_id", eval_id)
+        span.set_attribute("b2e.benchmark.final", final)
         span.set_attribute("b2e.benchmark.case_count", case_count)
         span.set_attribute("b2e.benchmark.repetitions", repetitions)
         set_attr(span, "b2e.benchmark.modes", list(modes))
@@ -192,6 +194,7 @@ def benchmark_run(
 
 def set_benchmark_summary(
     span: Span, summary: Mapping[str, Any], *, eval_id: str,
+    final: bool = True,
 ) -> None:
     """Publish the calculated summary without unreadable ``by_mode`` keys.
 
@@ -218,6 +221,7 @@ def set_benchmark_summary(
             mode_span.set_attribute("b2e.run.kind", "benchmark_mode_summary")
             mode_span.set_attribute("b2e.benchmark.eval_id", eval_id)
             mode_span.set_attribute("b2e.benchmark.mode", str(mode))
+            mode_span.set_attribute("b2e.benchmark.final", final)
             set_io(
                 mode_span,
                 input_value={"eval_id": eval_id, "mode": mode},
