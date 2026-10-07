@@ -54,7 +54,8 @@
     "expected_skills": {
       "type": "array",
       "items": {"type": "string", "minLength": 1},
-      "uniqueItems": true
+      "uniqueItems": true,
+      "description": "Ожидаемые предметные скиллы. Изолированный generated baseline запускается только для одного имени, если одноимённый artifact доступен; остальные случаи фиксируются как skipped без вызова модели."
     },
     "gold_answer": {},
     "gold_comparison": {

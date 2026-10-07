@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from sim.benchmark.openlit_dashboard import (
     BOARD_TITLE,
     MODE_COMPARISON_QUERY,
+    MODE_SUMMARY_QUERY,
     RUNS_QUERY,
     WIDGETS,
     _render_query,
@@ -102,6 +103,10 @@ def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
     assert "accuracy_delta_vs_existing_skills_pct" in MODE_COMPARISON_QUERY
     assert "l.mode != 'generated_skills'" in MODE_COMPARISON_QUERY
     assert "expected_modes" not in MODE_COMPARISON_QUERY
+    assert all(
+        "b2e.benchmark.final" in query
+        for query in (RUNS_QUERY, MODE_SUMMARY_QUERY, MODE_COMPARISON_QUERY)
+    )
 
 
 def test_provision_rejects_incomplete_openlit_schema() -> None:

@@ -155,6 +155,27 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
     assert all(result.score["metrics"]["answer_accuracy"] == 1 for result in results)
 
 
+def test_generated_variant_has_distinct_result_arm_but_shared_comparison_group() -> None:
+    executor = FakeExecutor()
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=executor,
+        mode_labels={"generated_skills": "generated_skills@headcount_1"},
+    )
+
+    results = runner.run(
+        [ready_case()], {"generated_skills": mode("generated_skills")},
+    )
+
+    assert results[0].mode == "generated_skills@headcount_1"
+    assert results[0].run_id.endswith("-generated_skills@headcount_1-01")
+    assert executor.requests[0].metadata["mode"] == "generated_skills@headcount_1"
+    assert executor.requests[0].metadata["canonical_mode"] == "generated_skills"
+
+
 def test_runner_marks_tool_free_arm_for_trace_collection() -> None:
     executor, activator = FakeExecutor(), FakeActivator()
     runner = BenchmarkRunner(

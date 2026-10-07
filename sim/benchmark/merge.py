@@ -14,22 +14,27 @@ def merge_phases(
     *,
     results_root: str | Path,
     eval_id: str,
+    generated_plan: str | Path | None = None,
 ) -> tuple[list[RunResult], ResultWriter, bool]:
     """Combine disjoint mode phases that share one logical evaluation id."""
     phases = [Path(path).resolve() for path in phase_dirs]
-    if len(phases) < 2:
-        raise ValueError("at least two benchmark phase directories are required")
+    if not phases:
+        raise ValueError("at least one benchmark phase directory is required")
     manifests = [_read_json(path / "run-manifest.json") for path in phases]
     _validate_manifests(manifests, eval_id)
+    plan = _read_json(Path(generated_plan)) if generated_plan else None
+    _validate_generated_plan_execution(manifests, plan)
 
     writer = ResultWriter(results_root, eval_id)
     combined_manifest = dict(manifests[0])
     combined_manifest["schema_version"] = "1.1"
-    combined_manifest["modes"] = [
-        mode
-        for manifest in manifests
-        for mode in manifest["modes"]
-    ]
+    combined_manifest["modes"] = _unique_modes(manifests)
+    combined_manifest["case_ids"] = sorted({
+        case_id for manifest in manifests for case_id in manifest["case_ids"]
+    })
+    if plan:
+        combined_manifest["cases_path"] = plan["cases_source"]
+        combined_manifest["generated_plan"] = plan
     combined_manifest["catalog_phases"] = [
         {
             "modes": [mode["name"] for mode in manifest["modes"]],
@@ -91,25 +96,91 @@ def merge_phases(
     results.sort(key=lambda row: (row.case_id, row.repetition, row.mode))
     for result in results:
         writer.write(result)
-    writer.write_summary(results)
+    writer.write_summary(results, extra=_selection_summary(plan))
     return results, writer, False
 
 
 def _validate_manifests(manifests: list[dict[str, Any]], eval_id: str) -> None:
     first = manifests[0]
-    stable = ("eval_id", "check_only", "cases_path", "case_ids", "repetitions")
+    stable = ("eval_id", "check_only", "repetitions")
     if first.get("eval_id") != eval_id:
         raise ValueError("benchmark phase eval_id does not match merge eval_id")
-    seen_modes: set[str] = set()
+    seen_cells: set[tuple[str, str]] = set()
     for manifest in manifests:
         for field in stable:
             if manifest.get(field) != first.get(field):
                 raise ValueError(f"benchmark phases differ by {field}")
         for mode in manifest.get("modes", []):
             name = mode.get("name")
-            if not name or name in seen_modes:
-                raise ValueError(f"duplicate or empty mode across benchmark phases: {name}")
-            seen_modes.add(name)
+            if not name:
+                raise ValueError("empty mode across benchmark phases")
+            for case_id in manifest.get("case_ids", []):
+                cell = (case_id, name)
+                if cell in seen_cells:
+                    raise ValueError(
+                        "duplicate case/mode across benchmark phases: "
+                        f"{case_id}/{name}"
+                    )
+                seen_cells.add(cell)
+
+
+def _unique_modes(manifests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one top-level entry per mode; phase-specific catalogs stay below."""
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for manifest in manifests:
+        for mode in manifest["modes"]:
+            if mode["name"] not in seen:
+                result.append(mode)
+                seen.add(mode["name"])
+    return result
+
+
+def _validate_generated_plan_execution(
+    manifests: list[dict[str, Any]], plan: dict[str, Any] | None,
+) -> None:
+    """Refuse a partial merge when a planned generated variant is absent."""
+    if not plan:
+        return
+    actual = {
+        mode["name"]
+        for manifest in manifests
+        for mode in manifest.get("modes", [])
+    }
+    expected = {
+        f"generated_skills@{group['variant_id']}"
+        for group in plan.get("groups", [])
+    }
+    missing = sorted(expected - actual)
+    if missing:
+        raise ValueError(
+            "generated benchmark phases are incomplete; missing variants: "
+            + ", ".join(missing)
+        )
+
+
+def _selection_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
+    """Expose dataset coverage without turning excluded cases into run cells."""
+    if not plan:
+        return {}
+    source = plan.get("source_case_ids", [])
+    eligible = plan.get("eligible_case_ids", [])
+    selected = plan.get("selected_case_ids", [])
+    excluded = plan.get("excluded", [])
+    reasons = {
+        status: sum(row.get("status") == status for row in excluded)
+        for status in sorted({row.get("status") for row in excluded})
+    }
+    return {
+        "selection": {
+            "n_source_cases": len(source),
+            "n_eligible_cases": len(eligible),
+            "n_selected_cases": len(selected),
+            "n_excluded_cases": len(excluded),
+            "coverage_rate": len(eligible) / len(source) if source else None,
+            "excluded_by_reason": reasons,
+        }
+    }
 
 
 def _read_json(path: Path) -> Any:
@@ -129,6 +200,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--phase", action="append", required=True)
     result.add_argument("--results", required=True)
     result.add_argument("--eval-id", required=True)
+    result.add_argument("--generated-plan")
     return result
 
 
@@ -137,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
         args = parser().parse_args(argv)
         results, writer, check_only = merge_phases(
             args.phase, results_root=args.results, eval_id=args.eval_id,
+            generated_plan=args.generated_plan,
         )
         if check_only:
             report = {
@@ -145,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
                 "agent_calls": 0,
             }
         else:
-            summary = summarize_results(results)
+            summary = json.loads((writer.root / "summary.json").read_text(encoding="utf-8"))
             report = {
                 "results_dir": str(writer.root),
                 "runs": len(results),
@@ -155,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
                 "n_normalization_pending": summary["n_normalization_pending"],
                 "n_condition_invalid": summary["n_condition_invalid"],
                 "n_unscored": summary["n_unscored"],
+                "selection": summary.get("selection"),
                 "summary": str(writer.root / "summary.json"),
             }
         print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -40,6 +40,7 @@ class BenchmarkRunner:
     executor: SessionExecutor
     writer: ResultWriter | None = None
     scorer_version: str = "benchmark-scorer@1"
+    mode_labels: Mapping[str, str] | None = None
 
     def run(
         self,
@@ -90,13 +91,22 @@ class BenchmarkRunner:
             Result with a preflight skip status, ``completed``,
             ``normalization_pending``, ``condition_invalid`` or ``unscored``.
         """
-        run_id = f"{self.eval_id}-{case.case_id}-{mode.name}-{repetition:02d}"
+        mode_label = (self.mode_labels or {}).get(mode.name, mode.name)
+        run_id = f"{self.eval_id}-{case.case_id}-{mode_label}-{repetition:02d}"
         group_id = f"{self.eval_id}-{case.case_id}-{repetition:02d}"
         checked = self.preflight(case, mode)
         if checked.status != "ready":
             return RunResult(
-                run_id, group_id, case.case_id, mode.name, repetition,
-                checked.status, None, None, None,
+                run_id, group_id, case.case_id, mode_label, repetition,
+                checked.status,
+                {
+                    "case_snapshot": {
+                        "expected_skills": case.raw["expected_skills"],
+                    },
+                    "skip_reason": _skip_reason(checked.status),
+                },
+                None,
+                None,
             )
 
         activated = self.activator.activate(mode)
@@ -111,7 +121,8 @@ class BenchmarkRunner:
                 metadata={
                     "eval_id": self.eval_id,
                     "case_id": case.case_id,
-                    "mode": mode.name,
+                    "mode": mode_label,
+                    "canonical_mode": mode.name,
                     # Denied MCP attempts are reported by the harness, but they
                     # never reach Heimdall and therefore produce no bridge span.
                     # Trace completeness follows the selected arm's tool surface.
@@ -185,7 +196,7 @@ class BenchmarkRunner:
             "reasons": reasons,
         }
         result = RunResult(
-            run_id, group_id, case.case_id, mode.name, repetition,
+            run_id, group_id, case.case_id, mode_label, repetition,
             status, response, score, turn.trace,
         )
         telemetry.emit_benchmark_metrics(
@@ -193,7 +204,7 @@ class BenchmarkRunner:
             eval_id=self.eval_id,
             run_id=run_id,
             case_id=case.case_id,
-            mode=mode.name,
+            mode=mode_label,
             repetition=repetition,
             status=status,
             scorer_version=self.scorer_version,
@@ -211,6 +222,21 @@ def _mode_list(
     if len(names) != len(set(names)):
         raise ValueError("benchmark modes contain duplicate names")
     return sorted(values, key=lambda mode: mode.name)
+
+
+def _skip_reason(status: str) -> str:
+    """Human-readable reason persisted for a non-error matrix skip."""
+    return {
+        "draft_skipped": "case status is draft",
+        "mock_skipped": "generated-skills mode has no supplied catalog",
+        "generated_no_expected_skill_skipped": "case has no expected skill",
+        "generated_multiple_skills_skipped": (
+            "multiple expected skills are not supported by the isolated baseline yet"
+        ),
+        "generated_skill_unavailable_skipped": (
+            "the expected generated skill is unavailable in this catalog"
+        ),
+    }.get(status, status)
 
 
 def _classify_turn(

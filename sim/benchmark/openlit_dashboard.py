@@ -48,6 +48,7 @@ FROM otel_traces
 WHERE
     ServiceName = 'b2e-benchmark-runner'
     AND SpanName = 'b2e.benchmark.run'
+    AND SpanAttributes['b2e.benchmark.final'] != 'false'
     AND Timestamp >= start_time AND Timestamp <= end_time
 ORDER BY Timestamp DESC
 LIMIT 100
@@ -88,6 +89,7 @@ FROM otel_traces
 WHERE
     ServiceName = 'b2e-benchmark-runner'
     AND startsWith(SpanName, 'b2e.benchmark.summary.')
+    AND SpanAttributes['b2e.benchmark.final'] != 'false'
     AND Timestamp >= start_time AND Timestamp <= end_time
 ORDER BY Timestamp DESC, eval_id, mode
 LIMIT 300
@@ -116,6 +118,7 @@ WITH
         WHERE
             ServiceName = 'b2e-benchmark-runner'
             AND startsWith(SpanName, 'b2e.benchmark.summary.')
+            AND SpanAttributes['b2e.benchmark.final'] != 'false'
             AND Timestamp >= start_time AND Timestamp <= end_time
     ),
     latest AS (
@@ -176,7 +179,7 @@ ORDER BY l.finished_at DESC, l.eval_id, indexOf([
     'skills_disabled',
     'existing_skills',
     'generated_skills'
-], l.mode)
+], splitByChar('@', l.mode)[1])
 LIMIT 400
 """.strip()
 
@@ -219,7 +222,7 @@ WIDGETS = (
             "Сопоставление режимов по доле правильно решённых задач и "
             "дельтам в процентных пунктах относительно general_knowledge, "
             "skills_disabled и existing_skills. Строки создаются только для "
-            "запущенных режимов; generated_skills не участвует в дельтах."
+            "запущенных режимов; каждая generated-вариация показана отдельно."
         ),
         query=MODE_COMPARISON_QUERY,
         position={"x": 0, "y": 5, "w": 4, "h": 3},

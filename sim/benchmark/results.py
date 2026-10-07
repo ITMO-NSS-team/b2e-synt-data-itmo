@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .execution import OPERATIONAL_METRICS
-from .modes import comparison_pairs
+from .modes import mode_strategy
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +100,12 @@ class ResultWriter:
         path.write_text(_pretty_json(manifest) + "\n", encoding="utf-8")
         return path
 
-    def write_summary(self, results: Iterable[RunResult]) -> Path:
+    def write_summary(
+        self,
+        results: Iterable[RunResult],
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> Path:
         """Write aggregate per-mode metrics and pairwise deltas.
 
         Args:
@@ -110,6 +115,8 @@ class ResultWriter:
             Path of ``summary.json``.
         """
         summary = summarize_results(results)
+        if extra:
+            summary.update(extra)
         path = self.root / "summary.json"
         path.write_text(_pretty_json(summary) + "\n", encoding="utf-8")
         return path
@@ -118,7 +125,13 @@ class ResultWriter:
 _REVIEW_STATUSES = frozenset({
     "normalization_pending", "condition_invalid", "unscored",
 })
-_SKIP_STATUSES = frozenset({"draft_skipped", "mock_skipped"})
+_SKIP_STATUSES = frozenset({
+    "draft_skipped",
+    "mock_skipped",
+    "generated_no_expected_skill_skipped",
+    "generated_multiple_skills_skipped",
+    "generated_skill_unavailable_skipped",
+})
 _SCORED_STATUSES = frozenset({"completed", "normalization_pending"})
 
 
@@ -156,11 +169,21 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
         completed = [row for row in complete if row.mode == mode]
         skipped = [row for row in mode_rows if row.status in _SKIP_STATUSES]
         metrics = [row.score["metrics"] for row in group]
+        skip_statuses = {
+            status: sum(row.status == status for row in skipped)
+            for status in sorted({row.status for row in skipped})
+        }
         by_mode[mode] = {
             "n_runs": len(mode_rows),
             "n_completed": len(completed),
             "n_scored": len(group),
             "n_skipped": len(skipped),
+            "skip_statuses": skip_statuses,
+            "execution_rate": (
+                (len(mode_rows) - len(skipped)) / len(mode_rows)
+                if mode_rows else None
+            ),
+            "score_coverage": len(group) / len(mode_rows) if mode_rows else None,
             "n_review": sum(
                 row.status in _REVIEW_STATUSES for row in mode_rows
             ),
@@ -174,11 +197,18 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             },
         }
     comparisons = {}
-    for target, baseline in comparison_pairs():
-        if target not in by_mode or baseline not in by_mode:
+    for target in modes:
+        canonical = target.split("@", 1)[0]
+        try:
+            baselines = mode_strategy(canonical).comparison_baselines
+        except ValueError:
             continue
-        key = f"{target}_vs_{baseline}"
-        comparisons[key] = _compare(by_mode[target], by_mode[baseline])
+        for baseline_mode in baselines:
+            baseline = baseline_mode.value
+            if baseline not in by_mode:
+                continue
+            key = f"{target}_vs_{baseline}"
+            comparisons[key] = _paired_compare(scored, target, baseline)
     return {
         "n_runs": len(rows),
         "n_completed": len(complete),
@@ -221,6 +251,42 @@ def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
                 ((1.0 - b) - (1.0 - a)) / (1.0 - b) if b != 1.0 else None
             )
     return output
+
+
+def _paired_compare(
+    rows: list[RunResult], target_mode: str, baseline_mode: str,
+) -> dict[str, Any]:
+    """Compare only case/repetition cells scored in both modes.
+
+    Generated-skill availability may leave legitimate skipped cells. Comparing
+    its mean against a baseline calculated over a larger case set would make a
+    missing artifact look like a quality change.
+    """
+    by_cell = {(row.comparison_group_id, row.mode): row for row in rows}
+    groups = sorted({row.comparison_group_id for row in rows})
+    pairs = [
+        (
+            by_cell[(group, target_mode)].score["metrics"],
+            by_cell[(group, baseline_mode)].score["metrics"],
+        )
+        for group in groups
+        if (group, target_mode) in by_cell and (group, baseline_mode) in by_cell
+    ]
+    target = _metric_means(item[0] for item in pairs)
+    baseline = _metric_means(item[1] for item in pairs)
+    return {"n_pairs": len(pairs), **_compare(target, baseline)}
+
+
+def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    rows = list(metrics)
+    names = (
+        "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
+        "generated_skill_loaded", *OPERATIONAL_METRICS,
+    )
+    return {
+        name: _mean(row.get(name) for row in rows)
+        for name in names
+    }
 
 
 def _mean(values: Iterable[Any]) -> float | None:
