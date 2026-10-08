@@ -167,6 +167,7 @@ def _selection_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
     eligible = plan.get("eligible_case_ids", [])
     selected = plan.get("selected_case_ids", [])
     excluded = plan.get("excluded", [])
+    partially_covered = plan.get("partially_covered", [])
     reasons = {
         status: sum(row.get("status") == status for row in excluded)
         for status in sorted({row.get("status") for row in excluded})
@@ -177,6 +178,7 @@ def _selection_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
             "n_eligible_cases": len(eligible),
             "n_selected_cases": len(selected),
             "n_excluded_cases": len(excluded),
+            "n_partially_covered_cases": len(partially_covered),
             "coverage_rate": len(eligible) / len(source) if source else None,
             "excluded_by_reason": reasons,
         }

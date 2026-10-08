@@ -193,13 +193,13 @@ class ModeStrategy:
         expected_skills: Iterable[str],
         loaded_skills: Iterable[str],
     ) -> int | None:
-        """Score loading of a generated skill expected by this case."""
+        """Score whether every generated skill expected by this case was loaded."""
         if not self.generated or config.is_mock:
             return None
         targets = set(expected_skills) & set(config.generated_skill_names)
         if not targets:
             return None
-        return int(bool(targets & set(loaded_skills)))
+        return int(targets <= set(loaded_skills))
 
 
 _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({

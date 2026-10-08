@@ -109,7 +109,7 @@ def test_ready_preflight_validates_all_inputs_and_builds_fingerprint(tmp_path: P
     ("expected", "status"),
     [
         ([], "generated_no_expected_skill_skipped"),
-        (["one", "two"], "generated_multiple_skills_skipped"),
+        (["available", "missing"], "generated_skill_unavailable_skipped"),
         (["missing"], "generated_skill_unavailable_skipped"),
     ],
 )
@@ -136,6 +136,30 @@ def test_generated_preflight_skips_non_runnable_case_without_validating_stand(
     )
 
     assert result.status == status
+
+
+def test_generated_preflight_accepts_complete_multi_skill_bundle(tmp_path: Path) -> None:
+    standard = make_catalog(tmp_path / "standard")
+    generated = make_catalog(tmp_path / "generated", name="one")
+    (generated / "org" / "two.yaml").write_text(skill_yaml("two"), encoding="utf-8")
+    modes = build_modes(
+        common(), standard, generated,
+        snapshots_root=tmp_path / "snapshots",
+    )
+    case = ready_case()
+    case.raw["expected_skills"] = ["one", "two"]
+
+    result = preflight_case(
+        case, modes.generated_skills,
+        snapshot_root=data_snapshot(tmp_path / "data"),
+        standard_catalog_path=modes.existing_skills.catalog_path,
+        model_catalog_path=MODEL_CATALOG,
+        agent_config_version="benchmark_agent@1",
+        identity_factory=FakeIdentity,
+        schema_path=SCHEMA,
+    )
+
+    assert result.status == "ready"
 
 
 def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:

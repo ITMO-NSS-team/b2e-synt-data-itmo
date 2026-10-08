@@ -231,10 +231,10 @@ def _skip_reason(status: str) -> str:
         "mock_skipped": "generated-skills mode has no supplied catalog",
         "generated_no_expected_skill_skipped": "case has no expected skill",
         "generated_multiple_skills_skipped": (
-            "multiple expected skills are not supported by the isolated baseline yet"
+            "legacy result: multiple expected skills were not supported"
         ),
         "generated_skill_unavailable_skipped": (
-            "the expected generated skill is unavailable in this catalog"
+            "one or more expected generated skills are unavailable in this catalog"
         ),
     }.get(status, status)
 

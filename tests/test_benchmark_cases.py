@@ -21,7 +21,7 @@ def ready_case(case_id: str = "case-9999-00") -> dict:
 
 def test_supplied_example_matches_published_contract_and_is_ready() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["required"]) <= set(schema["properties"])
     case = load_case(EXAMPLE, schema_path=SCHEMA)
     assert case.case_id == "case-0000-00"
     assert case.status == "verified"
@@ -34,6 +34,16 @@ def test_supplied_example_matches_published_contract_and_is_ready() -> None:
     incomplete["gold_answer"] = None
     incomplete["employee_id"] = None
     validate_case(incomplete, schema_path=SCHEMA)
+
+
+def test_joint_skill_run_is_an_optional_boolean() -> None:
+    raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    raw["include_joint_skill_run"] = True
+    validate_case(raw, schema_path=SCHEMA)
+
+    raw["include_joint_skill_run"] = "true"
+    with pytest.raises(ValueError, match="include_joint_skill_run must be boolean"):
+        validate_case(raw, schema_path=SCHEMA)
 
 
 def test_validation_follows_supplied_schema_path(tmp_path: Path) -> None:

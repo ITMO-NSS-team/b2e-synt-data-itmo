@@ -2,15 +2,17 @@
 
 The planner never calls an LLM and never mutates authorial cases or generated
 artifacts. It creates one case suite shared by all requested baseline modes
-and one isolated catalog/suite per generated artifact variant.
+and one isolated catalog/suite per generated artifact or multi-skill bundle.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
 from dataclasses import dataclass
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,10 @@ from .modes import _loaded_registry
 from .path_lib import SCHEMA_RELATIVE
 
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
+_HASHED_SKILL = re.compile(
+    r"^(?P<base>.+)-(?P<method>no-context|compact|full)-"
+    r"(?P<prompt_hash>[0-9a-f]{10})(?:-(?P<generation_hash>[0-9a-f]{10}))?$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,16 +34,18 @@ class GeneratedArtifact:
     """One physical artifact implementing a canonical generated skill."""
 
     skill_name: str
+    expected_skill: str
     variant_id: str
-    slug: str
     catalog_path: str
 
 
 @dataclass(frozen=True, slots=True)
 class GeneratedGroup:
-    """One generated artifact variant and every case that targets it."""
+    """One generated artifact bundle and every case that targets it."""
 
-    skill_name: str
+    skill_names: tuple[str, ...]
+    expected_skills: tuple[str, ...]
+    run_kind: str
     variant_id: str
     slug: str
     case_ids: tuple[str, ...]
@@ -46,7 +54,9 @@ class GeneratedGroup:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "skill_name": self.skill_name,
+            "skill_names": list(self.skill_names),
+            "expected_skills": list(self.expected_skills),
+            "run_kind": self.run_kind,
             "variant_id": self.variant_id,
             "slug": self.slug,
             "case_ids": list(self.case_ids),
@@ -65,10 +75,12 @@ def build_generated_plan(
 ) -> dict[str, Any]:
     """Create the covered baseline suite and isolated generated phases.
 
-    A case is selected only when it declares exactly one ``expected_skills``
-    entry and at least one active generated artifact has that canonical name.
-    ``limit`` is applied after this coverage filter. All baseline modes run
-    once over the selected suite; every generated variant gets its own phase.
+    A case is selected when at least one name in ``expected_skills`` has an
+    active generated artifact. ``limit`` is applied after this coverage filter.
+    All baseline modes run once over the selected suite. Every available skill
+    variant gets an individual generated phase. Cases that explicitly request a
+    joint run additionally receive every Cartesian product of their available
+    variants, even when only one expected skill is currently available.
     """
     if limit is not None and limit < 1:
         raise ValueError("case limit must be >= 1")
@@ -84,10 +96,11 @@ def build_generated_plan(
     artifacts = _discover_artifacts(source, root / "catalogs")
     artifacts_by_name: dict[str, list[GeneratedArtifact]] = {}
     for artifact in artifacts:
-        artifacts_by_name.setdefault(artifact.skill_name, []).append(artifact)
+        artifacts_by_name.setdefault(artifact.expected_skill, []).append(artifact)
 
     eligible = []
     excluded: list[dict[str, Any]] = []
+    partially_covered: list[dict[str, Any]] = []
     for case in cases:
         expected = tuple(case.raw["expected_skills"])
         if not expected:
@@ -95,18 +108,20 @@ def build_generated_plan(
                 case.case_id, expected, "generated_no_expected_skill_excluded",
                 "case has no expected skill",
             ))
-        elif len(expected) > 1:
-            excluded.append(_exclude(
-                case.case_id, expected, "generated_multiple_skills_excluded",
-                "multiple expected skills are not supported by the isolated baseline yet",
-            ))
-        elif expected[0] not in artifacts_by_name:
+        elif not (available := sorted(set(expected) & artifacts_by_name.keys())):
             excluded.append(_exclude(
                 case.case_id, expected, "generated_skill_unavailable_excluded",
-                f"generated skill is unavailable: {expected[0]}",
+                f"generated skills are unavailable: {', '.join(sorted(expected))}",
             ))
         else:
             eligible.append(case)
+            missing = sorted(set(expected) - set(available))
+            if missing:
+                partially_covered.append({
+                    "case_id": case.case_id,
+                    "available_skills": available,
+                    "unavailable_skills": missing,
+                })
 
     selected = eligible[:limit] if limit is not None else eligible
     if not selected:
@@ -117,24 +132,61 @@ def build_generated_plan(
 
     cases_by_skill: dict[str, list[Any]] = {}
     for case in selected:
-        cases_by_skill.setdefault(case.raw["expected_skills"][0], []).append(case)
+        for expected_skill in sorted(case.raw["expected_skills"]):
+            if expected_skill in artifacts_by_name:
+                cases_by_skill.setdefault(expected_skill, []).append(case)
 
     groups: list[GeneratedGroup] = []
-    for skill_name, skill_cases in sorted(cases_by_skill.items()):
-        for artifact in artifacts_by_name[skill_name]:
-            cases_path = root / "cases" / f"{artifact.slug}.jsonl"
-            _write_cases(cases_path, skill_cases)
+    used_group_slugs: set[str] = set()
+    for expected_skill, skill_cases in sorted(cases_by_skill.items()):
+        for artifact in artifacts_by_name[expected_skill]:
+            slug = _slug(artifact.variant_id, used_group_slugs)
+            used_group_slugs.add(slug)
+            cases_path = root / "cases" / f"{slug}.jsonl"
+            _write_cases(cases_path, skill_cases, expected_skills=(artifact.skill_name,))
             groups.append(GeneratedGroup(
-                skill_name=skill_name,
+                skill_names=(artifact.skill_name,),
+                expected_skills=(expected_skill,),
+                run_kind="individual",
                 variant_id=artifact.variant_id,
-                slug=artifact.slug,
+                slug=slug,
                 case_ids=tuple(case.case_id for case in skill_cases),
                 cases_path=_workspace_path(cases_path),
                 catalog_path=artifact.catalog_path,
             ))
 
+    joint_cases_by_skills: dict[tuple[str, ...], list[Any]] = {}
+    for case in selected:
+        if not case.raw.get("include_joint_skill_run", False):
+            continue
+        available = tuple(sorted(
+            set(case.raw["expected_skills"]) & artifacts_by_name.keys()
+        ))
+        joint_cases_by_skills.setdefault(available, []).append(case)
+
+    for expected_skills, skill_cases in sorted(joint_cases_by_skills.items()):
+        variant_sets = [artifacts_by_name[name] for name in expected_skills]
+        for artifact_bundle in product(*variant_sets):
+            skill_names = tuple(artifact.skill_name for artifact in artifact_bundle)
+            variant_id = _joint_variant_id(artifact_bundle)
+            slug = _slug(variant_id, used_group_slugs)
+            used_group_slugs.add(slug)
+            catalog_path = _bundle_catalog(artifact_bundle, root / "catalogs", slug)
+            cases_path = root / "cases" / f"{slug}.jsonl"
+            _write_cases(cases_path, skill_cases, expected_skills=skill_names)
+            groups.append(GeneratedGroup(
+                skill_names=skill_names,
+                expected_skills=expected_skills,
+                run_kind="joint",
+                variant_id=variant_id,
+                slug=slug,
+                case_ids=tuple(case.case_id for case in skill_cases),
+                cases_path=_workspace_path(cases_path),
+                catalog_path=catalog_path,
+            ))
+
     payload = {
-        "schema_version": "2.0",
+        "schema_version": "2.2",
         "cases_source": str(Path(cases_source).resolve()),
         "generated_root": str(source),
         "source_case_ids": [case.case_id for case in cases],
@@ -143,6 +195,7 @@ def build_generated_plan(
         "covered_cases_path": _workspace_path(covered_path),
         "groups": [group.as_dict() for group in groups],
         "excluded": excluded,
+        "partially_covered": partially_covered,
     }
     (root / "plan.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -151,7 +204,10 @@ def build_generated_plan(
     return payload
 
 
-def _discover_artifacts(source: Path, catalogs_root: Path) -> list[GeneratedArtifact]:
+def _discover_artifacts(
+    source: Path,
+    catalogs_root: Path,
+) -> list[GeneratedArtifact]:
     """Load physical variants while allowing repeated canonical skill names."""
     registry = Registry.load(source)
     errors = [item for item in registry.files() if not item.ok]
@@ -184,8 +240,8 @@ def _discover_artifacts(source: Path, catalogs_root: Path) -> list[GeneratedArti
             )
         artifacts.append(GeneratedArtifact(
             skill_name=str(item.name),
+            expected_skill=_expected_skill(str(item.name)),
             variant_id=variant_id,
-            slug=slug,
             catalog_path=str(catalog.parent),
         ))
     return sorted(artifacts, key=lambda item: (item.skill_name, item.variant_id))
@@ -204,6 +260,33 @@ def _variant_id(item: SkillFile, source: Path) -> str:
     return variant_id
 
 
+def _joint_variant_id(artifacts: tuple[GeneratedArtifact, ...]) -> str:
+    value = "\n".join(
+        f"{artifact.skill_name}\t{artifact.variant_id}" for artifact in artifacts
+    )
+    return "joint-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _bundle_catalog(
+    artifacts: tuple[GeneratedArtifact, ...],
+    catalogs_root: Path,
+    slug: str,
+) -> str:
+    if len(artifacts) == 1:
+        return artifacts[0].catalog_path
+    target = catalogs_root / slug
+    target.mkdir(parents=True)
+    for artifact in artifacts:
+        shutil.copytree(artifact.catalog_path, target, dirs_exist_ok=True)
+    registry = _loaded_registry(target)
+    expected = sorted(artifact.skill_name for artifact in artifacts)
+    if registry.active() != expected:
+        raise ValueError(
+            f"generated bundle {slug} did not load all active skills: {expected}"
+        )
+    return str(target)
+
+
 def _exclude(case_id: str, expected: tuple[str, ...], status: str, reason: str) -> dict[str, Any]:
     return {
         "case_id": case_id,
@@ -213,12 +296,27 @@ def _exclude(case_id: str, expected: tuple[str, ...], status: str, reason: str) 
     }
 
 
-def _write_cases(path: Path, cases: list[Any]) -> None:
+def _write_cases(
+    path: Path,
+    cases: list[Any],
+    *,
+    expected_skills: tuple[str, ...] | None = None,
+) -> None:
+    rows = []
+    for case in cases:
+        raw = dict(case.raw)
+        if expected_skills is not None:
+            raw["expected_skills"] = list(expected_skills)
+        rows.append(raw)
     path.write_text(
-        "".join(json.dumps(case.raw, ensure_ascii=False, sort_keys=True) + "\n"
-                for case in cases),
+        "".join(json.dumps(raw, ensure_ascii=False, sort_keys=True) + "\n" for raw in rows),
         encoding="utf-8",
     )
+
+
+def _expected_skill(skill_name: str) -> str:
+    match = _HASHED_SKILL.fullmatch(skill_name)
+    return match.group("base") if match else skill_name
 
 
 def _copy_skill_artifact(source_file: Path, source_root: Path, target: Path) -> None:

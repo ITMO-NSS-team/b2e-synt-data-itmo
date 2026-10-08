@@ -280,7 +280,7 @@ benchmarking:  ## полный прогон; generated skills изолируют
 			--output "$$plan_root" \
 			$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",); \
 		covered_cases="$$($(PY) -c 'import json,sys; print(json.load(open(sys.argv[1]))["covered_cases_path"])' "$$plan")"; \
-		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["skill_name"],g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
+		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["run_kind"]+":"+",".join(g["skill_names"]),g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
 		: > "$$phase_list"; \
 		if test -n "$(BENCH_BASELINE_MODE_LIST)"; then \
 			echo "Baseline-фаза: $(BENCH_BASELINE_MODES) — один раз для покрытых кейсов $$covered_cases"; \

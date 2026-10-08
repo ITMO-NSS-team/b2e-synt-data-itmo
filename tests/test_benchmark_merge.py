@@ -196,6 +196,7 @@ def test_merge_reports_generated_selection_without_creating_fake_runs(tmp_path: 
         "n_eligible_cases": 1,
         "n_selected_cases": 1,
         "n_excluded_cases": 1,
+        "n_partially_covered_cases": 0,
         "coverage_rate": 0.5,
         "excluded_by_reason": {"generated_skill_unavailable_excluded": 1},
     }
