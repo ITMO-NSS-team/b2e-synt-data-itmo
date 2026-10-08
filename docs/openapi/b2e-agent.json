@@ -123,6 +123,37 @@
    }
   },
   "/sessions/{session_id}": {
+   "delete": {
+    "summary": "Close Session",
+    "description": "Release an isolated extra-skills catalog, retaining session history.\n\nOrdinary sessions have no private catalog and this operation is a no-op.\nAn in-flight isolated turn returns 409; retry after it completes.",
+    "operationId": "close_session_sessions__session_id__delete",
+    "parameters": [
+     {
+      "name": "session_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Session Id"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
    "get": {
     "summary": "Get Session",
     "operationId": "get_session_sessions__session_id__get",
@@ -420,6 +451,21 @@
       "additionalProperties": true,
       "type": "object",
       "title": "Metadata"
+     },
+     "extra_skills": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ExtraSkill"
+        },
+        "type": "array",
+        "maxItems": 16
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Extra Skills"
      }
     },
     "type": "object",
@@ -502,6 +548,28 @@
     ],
     "title": "ExperimentRequest",
     "description": "A batch over a config matrix.\n\n``budget`` is required. An experiment without a declared ceiling is refused\nrather than defaulted, because a default ceiling is one nobody chose."
+   },
+   "ExtraSkill": {
+    "properties": {
+     "filename": {
+      "type": "string",
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Filename"
+     },
+     "content": {
+      "type": "string",
+      "maxLength": 262144,
+      "minLength": 1,
+      "title": "Content"
+     }
+    },
+    "type": "object",
+    "required": [
+     "filename",
+     "content"
+    ],
+    "title": "ExtraSkill"
    },
    "HTTPValidationError": {
     "properties": {

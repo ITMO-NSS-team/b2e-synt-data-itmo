@@ -31,6 +31,17 @@ non-empty token. The permission boundary that makes it safe is the acting-employ
 header, which only the agent sets correctly. Publishing it would let anyone pick
 their own identity.
 
+Private `extra_skills` catalogs enforce isolation at the HTTP catalog boundary:
+other sessions cannot select a view without its capability, and a capability
+is bound to its employee. The CLI receives only its own capability; the catalog
+admin key is excluded from CLI and MCP bridge environments. This is not an OS
+isolation boundary. CLI sessions still share the agent service's user and session
+filesystem. An unrestricted, adversarial code-enabled executor may inspect other
+sessions' files or service process environments; do not rely on private catalogs
+to sandbox such executors. Use the existing restricted tool policy for ordinary
+instruction tests, and keep unrestricted code execution on trusted development
+setups until per-session OS isolation is provided.
+
 ## 2 · Authentication
 
 Every path behind the proxy requires HTTP Basic — including health endpoints,
@@ -67,6 +78,7 @@ $EDITOR deploy/.env
 | `POSTGRES_PASSWORD` | Phoenix's backing store |
 | `CLAUDE_CODE_OAUTH_TOKEN` | subscription token; preferred, cheaper for simulation |
 | `ANTHROPIC_API_KEY` | fallback if no OAuth token |
+| `HEIMDALL_CATALOG_ADMIN_KEY` | shared B2E/Heimdall service secret for private extra-skill catalog provisioning; empty disables provisioning |
 | `TELEGRAM_BOT_TOKEN` | only needed with `PROFILE=telegram` |
 | `TELEGRAM_DEFAULT_EMPLOYEE` | identity a chat acts as until `/employee` changes it |
 | `B2E_TELEGRAM_CONFIG_REF` | `agent_config_interactive` (default) gives a chat one resumable session; `agent_config` makes every message start cold |

@@ -242,7 +242,8 @@ class HeimdallTools:
     """
 
     def __init__(self, base_url: str, *, employee_id: str, token: str,
-                 channel: str = "v2", timeout: float = 60.0) -> None:
+                 channel: str = "v2", timeout: float = 60.0,
+                 catalog_context: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.employee_id = str(employee_id)
         self._client = httpx.Client(
@@ -257,6 +258,8 @@ class HeimdallTools:
                 "Authorization": f"Bearer {token}",
                 "X-Employee-Id": self.employee_id,
                 "x-heimdall-mcp-version": channel,
+                **({"X-Skill-Catalog-Context": catalog_context}
+                   if catalog_context is not None else {}),
             },
         )
         self.call_count = 0
