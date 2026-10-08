@@ -41,6 +41,7 @@ BASE_URL = os.environ.get("HEIMDALL_URL", "http://127.0.0.1:8080").rstrip("/")
 TOKEN = os.environ.get("HEIMDALL_TOKEN", "")
 CHANNEL = os.environ.get("HEIMDALL_CHANNEL", "v2")
 EMPLOYEE_ID = os.environ.get("HEIMDALL_EMPLOYEE_ID", "")
+CATALOG_CONTEXT = os.environ.get("HEIMDALL_CATALOG_CONTEXT")
 TRACE_LOG = os.environ.get("HR_TRACE_LOG", "")
 #: Контекст корневого спана хода в формате W3C, если агент его передал. Мост
 #: ничего с ним не делает — только кладёт в журнал, чтобы записи можно было
@@ -261,6 +262,8 @@ def _headers() -> dict[str, str]:
     # отсутствия: все сессии видели бы одно и то же.
     if EMPLOYEE_ID:
         headers["X-Employee-Id"] = EMPLOYEE_ID
+    if CATALOG_CONTEXT is not None:
+        headers["X-Skill-Catalog-Context"] = CATALOG_CONTEXT
     return headers
 
 

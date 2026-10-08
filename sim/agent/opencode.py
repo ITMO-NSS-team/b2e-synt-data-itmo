@@ -116,7 +116,7 @@ class OpenCodeHarness:
         return Path(self.session_root) / safe
 
     def _bridge_environment(self, employee_id: str, config: AgentConfig,
-                            trace_log: str) -> dict[str, str]:
+                            trace_log: str, catalog_context: str | None = None) -> dict[str, str]:
         environment = {
             "HEIMDALL_URL": self.heimdall_url,
             "HEIMDALL_TOKEN": self.heimdall_token,
@@ -127,6 +127,8 @@ class OpenCodeHarness:
             ),
             "HR_TRACE_LOG": trace_log,
         }
+        if catalog_context is not None:
+            environment["HEIMDALL_CATALOG_CONTEXT"] = catalog_context
         traceparent = telemetry.current_traceparent()
         if traceparent:
             environment["TRACEPARENT"] = traceparent
@@ -150,7 +152,8 @@ class OpenCodeHarness:
         return permissions
 
     def build_config(self, *, config: AgentConfig, system_prompt: str,
-                     employee_id: str, trace_log: str) -> dict[str, Any]:
+                     employee_id: str, trace_log: str,
+                     catalog_context: str | None = None) -> dict[str, Any]:
         model = self.model_name(config.model_id)
         provider_id, model_id = model.split("/", 1)
         provider: dict[str, Any] = {
@@ -182,7 +185,7 @@ class OpenCodeHarness:
                     "command": [self.python_bin, self.bridge_path],
                     "enabled": True,
                     "environment": self._bridge_environment(
-                        employee_id, config, trace_log
+                        employee_id, config, trace_log, catalog_context
                     ),
                 }
             },
@@ -266,6 +269,7 @@ class OpenCodeHarness:
             b2e_session_id: str | None = None,
             resume_session_id: str | None = None,
             on_event: Callable[[dict[str, Any]], None] | None = None,
+            catalog_context: str | None = None,
             ) -> ClaudeCodeResult:
         persistent = self.session_workdir(config, b2e_session_id)
         workdir = Path(self.workdir or persistent
@@ -277,6 +281,7 @@ class OpenCodeHarness:
         config_path.write_text(json.dumps(self.build_config(
             config=config, system_prompt=system_prompt,
             employee_id=employee_id, trace_log=str(bridge_log),
+            catalog_context=catalog_context,
         )), encoding="utf-8")
         if config.conversation_mode != "resume":
             resume_session_id = None

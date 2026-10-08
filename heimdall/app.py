@@ -35,6 +35,7 @@ from .engine.errors import HeimdallError, fail
 from .engine.execute import execute
 from .engine.quirks import Quirks
 from .skills import Registry
+from .skills.contexts import CatalogContexts, catalog_router
 from .store import Snapshot
 
 #: Канал по умолчанию. Скиллы есть только здесь.
@@ -64,6 +65,7 @@ def create_app(snapshot_root: str | Path, catalog_path: str | Path = "catalog/sn
     _install_error_handler(app)
     app.include_router(_mcp_v1_router(state))
     app.include_router(_mcp_v2_router(state))
+    app.include_router(catalog_router(state))
     app.include_router(_rest_router(state))
     app.include_router(_dev_router(state))
     return app
@@ -80,12 +82,20 @@ class _State:
         self.quirks = quirks
         self.budget = budget or Budget()
         self._registry: Registry | None = None
+        self.catalog_contexts = CatalogContexts()
 
     @property
     def registry(self) -> Registry:
         if self._registry is None:
             self._registry = Registry.load(self.skills_root)
         return self._registry
+
+    def catalog_for(self, request: Request) -> Registry:
+        capability = request.headers.get("X-Skill-Catalog-Context")
+        if capability is None:
+            return self.registry
+        return self.catalog_contexts.resolve(
+            capability, request.headers.get("X-Employee-Id", "")).registry
 
     def invalidate(self) -> None:
         """Сбросить кэш каталога скиллов — как делает DELETE у dev-ручки."""
@@ -165,8 +175,8 @@ def _mcp_v1_router(state: _State) -> APIRouter:
         return _run(state, model, payload, query_type=None)
 
     @router.get("/docs/")
-    def get_docs(topic: str = "", _: str = Depends(_require_bearer)) -> dict:
-        registry = state.registry
+    def get_docs(request: Request, topic: str = "", _: str = Depends(_require_bearer)) -> dict:
+        registry = state.catalog_for(request)
         if topic and topic in registry.all_names():
             return {"topic": topic, "markdown": registry.get(topic).markdown}
         return {"topic": topic,
@@ -277,26 +287,26 @@ def _mcp_v2_router(state: _State) -> APIRouter:
         return channel
 
     @router.get("/overview/")
-    def get_overview(_: str = Depends(_require_bearer),
+    def get_overview(request: Request, _: str = Depends(_require_bearer),
                      __: str = Depends(_only_v2)) -> dict:
-        return state.registry.overview()
+        return state.catalog_for(request).overview()
 
     @router.get("/skills/")
-    def find_skills(query: str = Query(...), domain: str = "", kind: str = "",
+    def find_skills(request: Request, query: str = Query(...), domain: str = "", kind: str = "",
                     limit: int = 10, offset: int = 0, include_deprecated: bool = False,
                     _: str = Depends(_require_bearer),
                     __: str = Depends(_only_v2)) -> dict:
         if kind and kind not in ("recipe", "reference"):
             raise fail("request-validation-error", "kind ∈ {recipe, reference}")
-        return state.registry.find(query=query, domain=domain or None,
+        return state.catalog_for(request).find(query=query, domain=domain or None,
                                    kind=kind or None, limit=limit, offset=offset,
                                    include_deprecated=include_deprecated)
 
     @router.get("/skills/{name}/")
-    def get_skill(name: str, _: str = Depends(_require_bearer),
+    def get_skill(name: str, request: Request, _: str = Depends(_require_bearer),
                   __: str = Depends(_only_v2)) -> dict:
         try:
-            return state.registry.get(name).as_detail()
+            return state.catalog_for(request).get(name).as_detail()
         except KeyError:
             raise fail("skill-not-found",
                        f"скилла {name} нет; найди подходящий через find_skills")

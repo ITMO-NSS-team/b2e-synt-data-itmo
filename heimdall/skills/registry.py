@@ -164,6 +164,52 @@ class Registry:
 
     # -------------------------------------------------------------- доступ
 
+    def with_references(self, files: list[tuple[str, str]]) -> "Registry":
+        """Build a separate index after validating every added native reference."""
+        import yaml
+
+        additions: dict[str, Skill] = {}
+        filenames: set[str] = set()
+        for filename, content in files:
+            path = Path(filename)
+            if path.name != filename or "\\" in filename or path.suffix != ".md":
+                raise ValueError("extra skills must be plain Markdown filenames")
+            if filename in filenames:
+                raise ValueError(f"duplicate skill filename: {filename}")
+            filenames.add(filename)
+            try:
+                meta, _body = _split_frontmatter(content)
+                skill = parse_text(content, path)
+            except (yaml.YAMLError, ValueError, TypeError, KeyError) as exc:
+                raise ValueError(f"invalid extra skill {filename}: {exc}") from exc
+            for field in ("name", "title", "domain", "description"):
+                if not isinstance(meta.get(field), str):
+                    raise ValueError(f"{field} must be a string")
+            if "/" in skill.name or "\\" in skill.name:
+                raise ValueError("skill name cannot contain path separators")
+            if skill.name in self._skills or skill.name in additions:
+                raise ValueError(f"duplicate skill name: {skill.name}")
+            try:
+                skill.markdown
+            except (AttributeError, TypeError, KeyError, ValueError) as exc:
+                raise ValueError(f"invalid extra skill {filename}: {exc}") from exc
+            additions[skill.name] = skill
+        return Registry({**self._skills, **additions}, list(self._files),
+                        dict(self._duplicates))
+
+    def content_hash(self) -> str:
+        from dataclasses import asdict
+        from hashlib import sha256
+        import json
+
+        records = []
+        for name in sorted(self._skills):
+            record = asdict(self._skills[name])
+            record.pop("path")
+            records.append(record)
+        return sha256(json.dumps(records, sort_keys=True, ensure_ascii=False,
+                                 separators=(",", ":")).encode()).hexdigest()
+
     def get(self, name: str) -> Skill:
         if name not in self._skills:
             raise KeyError(f"скилла {name!r} нет в каталоге")
@@ -246,9 +292,12 @@ class Registry:
 # ------------------------------------------------------------------- разбор
 
 def _parse(path: Path) -> Skill:
+    return parse_text(path.read_text(encoding="utf-8"), path)
+
+
+def parse_text(text: str, path: Path) -> Skill:
     import yaml
 
-    text = path.read_text(encoding="utf-8")
     kind_by_ext = EXTENSIONS[path.suffix]
 
     if kind_by_ext == "reference":
