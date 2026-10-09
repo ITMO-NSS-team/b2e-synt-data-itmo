@@ -57,11 +57,6 @@
       "uniqueItems": true,
       "description": "Канонические имена предметных скиллов. Каждый доступный generated skill проверяется отдельно; отсутствие остальных имён не блокирует эти прогоны."
     },
-    "include_joint_skill_run": {
-      "type": "boolean",
-      "default": false,
-      "description": "Дополнительно проверить совместный каталог из всех доступных generated skills кейса. Недоступные имена пропускаются; joint-прогон создаётся даже для одного доступного skill."
-    },
     "gold_answer": {},
     "gold_comparison": {
       "oneOf": [

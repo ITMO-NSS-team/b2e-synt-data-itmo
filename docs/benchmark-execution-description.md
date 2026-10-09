@@ -13,13 +13,14 @@
 - расчёт accuracy, инструментальных и ресурсных метрик;
 - агрегирование результатов и сравнение режимов.
 
-Режим `generated_skills` запускается с внешним каталогом, указанным через
-`GENERATED_SKILLS_DIR`. Связь кейса со сгенерированным skill задаётся существующим
-полем `expected_skills`. Если в списке режимов присутствует `generated_skills`,
-весь эксперимент ограничивается кейсами, для которых найден generated-артефакт.
-Baseline-режимы выполняются для каждого такого кейса ровно один раз. Для каждой
-физической вариации generated skill создаётся отдельный изолированный каталог и
-отдельная generated-фаза. Стандартные Heimdall skills в этом режиме недоступны.
+Generated-режимы запускаются с внешним каталогом, указанным через
+`GENERATED_SKILLS_DIR`. Связь кейса со сгенерированным skill задаётся полем
+`expected_skills`. Эксперимент ограничивается кейсами, для которых найден хотя бы
+один соответствующий артефакт. Baseline-режимы выполняются для каждого такого
+кейса ровно один раз, а каждый доступный generated skill проверяется отдельно.
+`generated_skills` предоставляет агенту только проверяемый skill;
+`existing_plus_generated` — весь стандартный каталог Heimdall и тот же один
+generated skill. Несколько generated skills в один каталог не объединяются.
 Непокрытые кейсы не становятся фиктивными запусками: их число и причины исключения
 фиксируются в generated plan и разделе `selection` итоговой сводки. LLM-as-judge
 пока не выполняется — в результатах для него сохраняется только пустая структура.
@@ -32,7 +33,7 @@ Baseline-режимы выполняются для каждого такого 
 | `sim/benchmark/cases.py` | загрузка и проверка кейсов |
 | `sim/benchmark/contracts.py` | публичный контракт ответа и формирование запроса агенту |
 | `sim/benchmark/modes.py` | конфигурации режимов и хеширование каталогов навыков |
-| `sim/benchmark/generated_plan.py` | сопоставление кейсов с generated skills и создание изолированных каталогов |
+| `sim/benchmark/generated_plan.py` | сопоставление кейсов с generated skills и создание изолированных либо расширенных каталогов |
 | `sim/benchmark/preflight.py` | проверки перед обращением к LLM |
 | `sim/benchmark/execution.py` | запуск изолированной сессии и разбор трассы |
 | `sim/benchmark/stand.py` | HTTP-клиент агента и получение Phoenix-трассы |
@@ -62,7 +63,7 @@ Baseline-режимы выполняются для каждого такого 
 | `employee_role` | ожидаемая роль: `self`, `manager` или `hr` |
 | `snapshot_id` | версия набора данных |
 | `skill_registry_hash` | версия реестра навыков стенда |
-| `expected_skills` | навыки, ожидаемые оценочным контуром; для generated baseline сейчас поддерживается ровно одно имя |
+| `expected_skills` | допустимые навыки для решения кейса; каждый доступный generated skill из списка проверяется отдельно |
 | `source_type` | тип источника задачи |
 | `source_business_process` | исходный бизнес-процесс |
 
@@ -133,12 +134,20 @@ Baseline-режимы выполняются для каждого такого 
 | `skills_disabled` | `list_models`, `describe_model`, `mcp_query` | отсутствует | реализован |
 | `existing_skills` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | уже существующий каталог навыков информационного сервиса | реализован |
 | `generated_skills` | `list_models`, `describe_model`, `mcp_query`, `find_skills`, `get_skill` | только соответствующая кейсу вариация skill из `GENERATED_SKILLS_DIR` | реализован; непокрытые кейсы исключаются из всех выбранных режимов |
+| `existing_plus_generated` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | стандартные Heimdall skills и ровно одна соответствующая кейсу generated-вариация | реализован; каждый generated skill проверяется отдельной фазой |
 
 В `generated_skills` отсутствует `get_docs`: встроенные процедурные приёмы Heimdall
 не должны подменять или дополнять проверяемый сгенерированный skill. Через
 `find_skills/get_skill` агент видит только один skill, имя которого указано в
 `expected_skills` текущего кейса. Само имя не добавляется в пользовательский
 запрос: оно используется только при подготовке каталога экспериментального режима.
+
+В `existing_plus_generated` сохраняются стандартные skills и `get_docs`, а к
+каталогу добавляется ровно один проверяемый generated skill. Поэтому режим измеряет,
+найдёт ли агент новый skill среди уже существующих и даст ли он преимущество по
+сравнению с `existing_skills`. Если в кейсе перечислено несколько
+`expected_skills`, planner создаёт отдельный прогон для каждого доступного
+generated skill; совместного прогона нескольких generated skills нет.
 
 `general_knowledge` служит отрицательным baseline: агент не получает инструменты стенда, включая `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills` и `get_skill`. Он не видит перечень витрин, не читает данные, не узнаёт поля и метрики и не получает приёмы и рецепты. Режим проверяет, решается ли задача из общих знаний модели без информации со стенда.
 
@@ -223,7 +232,8 @@ MCP-мост публикует ему ровно три инструмента 
 постоянных табличных виджета: список запусков со ссылкой на trace,
 агрегированные метрики по режимам и попарные дельты accuracy относительно
 `general_knowledge`, `skills_disabled` и `existing_skills`. Абсолютные метрики
-предусматривают также `generated_skills`, когда передан внешний каталог.
+предусматривают также `generated_skills` и `existing_plus_generated`, когда
+передан внешний каталог.
 Колонки сравнения постоянны, а строки создаются только
 для режимов, фактически выбранных в конкретном запуске. Виджеты читают
 `b2e.benchmark.run` и
@@ -318,6 +328,7 @@ make benchmarking \
 - `existing_skills` относительно `skills_disabled` и `general_knowledge`;
 - `generated_skills` относительно `general_knowledge`, когда режим будет подключён;
 - `generated_skills` относительно `existing_skills`, когда режим будет подключён.
+- `existing_plus_generated` относительно `existing_skills`, когда режим подключён.
 
 Для метрик сохраняются абсолютная разница и относительное изменение. Для `answer_accuracy` дополнительно рассчитываются разница в процентных пунктах и сокращение ошибки.
 
@@ -355,10 +366,11 @@ benchmarking/results/<eval_id>/
 - `unscored` — ход был, но нет трассы, пустой ответ после сбоя клиента и т.п.; ручной разбор, не в средних;
 - `draft_skipped` / `mock_skipped` — кейс или режим не допускается к выполнению.
 
-Если выбран `generated_skills`, причины исключения непокрытых кейсов хранятся не
-как статусы запусков, а в `generated_plan.excluded`: отсутствует `expected_skills`,
-нет соответствующего артефакта или указано несколько skills. Последний сценарий
-пока намеренно не реализован.
+Если выбран generated-режим, причины исключения непокрытых кейсов хранятся не
+как статусы запусков, а в `generated_plan.excluded`: отсутствует `expected_skills`
+или нет ни одного соответствующего артефакта. Если доступна только часть навыков
+из `expected_skills`, кейс запускается отдельно для каждого найденного навыка, а
+недоступные имена фиксируются в `generated_plan.partially_covered`.
 
 ## Единый запуск
 
@@ -381,10 +393,15 @@ make benchmarking-generated \
   GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills \
   CASES=b2e-skill-benchmark/gold_dataset
 
-# Все четыре режима и один общий отчёт
+# Стандартный Heimdall-каталог плюс один generated skill на фазу
+make benchmarking-existing-plus-generated \
+  GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills \
+  CASES=b2e-skill-benchmark/gold_dataset
+
+# Все пять режимов и один общий отчёт
 make benchmarking \
   CASES=b2e-skill-benchmark/gold_dataset \
-  BENCH_MODES=general_knowledge,skills_disabled,existing_skills,generated_skills \
+  BENCH_MODES=general_knowledge,skills_disabled,existing_skills,generated_skills,existing_plus_generated \
   GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills
 ```
 
@@ -395,14 +412,15 @@ make benchmarking \
 если его конфигурация монтирования изменилась. Поэтому следующий обычный прогон
 без этой переменной снова использует только стандартный каталог.
 
-Если вместе выбраны baseline-режимы и `generated_skills`, команда автоматически
+Если вместе выбраны baseline-режимы и generated-режимы, команда автоматически
 делит эксперимент на последовательные фазы. Сначала planner оставляет только
-кейсы, чьё единственное имя в `expected_skills` присутствует среди generated
-артефактов. Все baseline-режимы выполняются по этому общему набору один раз со
-стандартным каталогом Heimdall. Затем каждая физическая вариация skill получает
-отдельную generated-фазу с изолированным одноэлементным каталогом. Один skill
-может обслуживать любое число аугментаций кейса, а несколько вариантов этого
-skill не размножают baseline-запуски.
+кейсы, для которых найден хотя бы один skill из `expected_skills`. Все
+baseline-режимы выполняются по этому общему набору один раз со стандартным
+каталогом Heimdall. Затем каждая физическая вариация skill получает отдельную
+фазу: изолированный одноэлементный каталог для `generated_skills` и копию
+стандартного каталога с этим одним skill для `existing_plus_generated`. Один
+skill может обслуживать любое число аугментаций кейса, а несколько вариантов
+или имён не размножают baseline-запуски.
 
 Каноническое имя берётся из frontmatter `name`, а идентификатор варианта — из
 имени директории артефакта. Например, директории `successors_1/SKILL.md` и
@@ -444,3 +462,4 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 - Создание кейсов, получение gold и перевод `draft → verified` выполняются вне runner.
 - Серверный прогон требует, чтобы актуальная версия benchmark-кода находилась в checkout стенда.
 - `generated_skills` без `GENERATED_SKILLS_DIR` остаётся mock и не выбирается.
+- `existing_plus_generated` без `GENERATED_SKILLS_DIR` также остаётся mock и не выбирается.

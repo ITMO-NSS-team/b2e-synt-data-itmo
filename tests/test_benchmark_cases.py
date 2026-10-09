@@ -36,13 +36,10 @@ def test_supplied_example_matches_published_contract_and_is_ready() -> None:
     validate_case(incomplete, schema_path=SCHEMA)
 
 
-def test_joint_skill_run_is_an_optional_boolean() -> None:
+def test_joint_skill_run_is_not_part_of_case_contract() -> None:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw["include_joint_skill_run"] = True
-    validate_case(raw, schema_path=SCHEMA)
-
-    raw["include_joint_skill_run"] = "true"
-    with pytest.raises(ValueError, match="include_joint_skill_run must be boolean"):
+    with pytest.raises(ValueError, match="unknown=.*include_joint_skill_run"):
         validate_case(raw, schema_path=SCHEMA)
 
 

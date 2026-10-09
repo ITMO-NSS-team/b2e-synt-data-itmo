@@ -31,14 +31,10 @@ def _case(
     root: Path,
     case_id: str,
     expected: list[str],
-    *,
-    include_joint: bool = False,
 ) -> None:
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     raw["case_id"] = case_id
     raw["expected_skills"] = expected
-    if include_joint:
-        raw["include_joint_skill_run"] = True
     (root / f"{case_id}.json").write_text(json.dumps(raw), encoding="utf-8")
 
 
@@ -71,7 +67,6 @@ def test_plan_selects_covered_cases_once_and_expands_generated_variants(tmp_path
     for group in plan["groups"]:
         assert group["skill_names"] == ["alpha"]
         assert group["expected_skills"] == ["alpha"]
-        assert group["run_kind"] == "individual"
         assert group["case_ids"] == [
             "case-0101-00", "case-0101-01", "case-0104-00",
         ]
@@ -149,20 +144,17 @@ def test_multiple_expected_skills_run_individually_by_default(tmp_path: Path) ->
         cases, generated, tmp_path / "work", schema_path=SCHEMA,
     )
 
-    assert [group["run_kind"] for group in plan["groups"]] == [
-        "individual", "individual",
-    ]
     assert [group["skill_names"] for group in plan["groups"]] == [
         ["alpha"], ["beta"],
     ]
 
 
-def test_plan_builds_cartesian_bundles_for_multiple_expected_skills(
+def test_plan_never_bundles_multiple_expected_skills(
     tmp_path: Path,
 ) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["beta", "alpha"], include_joint=True)
+    _case(cases, "case-0101-00", ["beta", "alpha"])
     generated = tmp_path / "generated"
     _skill(generated, "alpha-compact-a94e814444-b4d7da560f", variant_id="alpha_1")
     _skill(generated, "alpha-full-a94e814444-c4d7da560f", variant_id="alpha_2")
@@ -174,38 +166,30 @@ def test_plan_builds_cartesian_bundles_for_multiple_expected_skills(
     )
 
     assert plan["selected_case_ids"] == ["case-0101-00"]
-    assert len(plan["groups"]) == 8
-    individual = [group for group in plan["groups"] if group["run_kind"] == "individual"]
-    joint = [group for group in plan["groups"] if group["run_kind"] == "joint"]
-    assert len(individual) == 4
-    assert len(joint) == 4
-    assert all(len(group["skill_names"]) == 1 for group in individual)
-    assert all(group["variant_id"].startswith("joint-") for group in joint)
-    for group in joint:
-        assert group["expected_skills"] == ["alpha", "beta"]
-        assert len(group["skill_names"]) == 2
-        assert Registry.load(group["catalog_path"]).active() == sorted(group["skill_names"])
-        generated_case = json.loads(
-            Path(group["cases_path"]).read_text(encoding="utf-8")
-        )
-        assert generated_case["expected_skills"] == group["skill_names"]
+    assert len(plan["groups"]) == 4
+    assert all(len(group["skill_names"]) == 1 for group in plan["groups"])
 
 
-def test_joint_run_uses_available_subset_even_when_only_one_skill_exists(
+def test_plan_builds_existing_plus_one_generated_catalog(
     tmp_path: Path,
 ) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["alpha", "missing"], include_joint=True)
+    _case(cases, "case-0101-00", ["alpha"])
     generated = tmp_path / "generated"
     _skill(generated, "alpha", variant_id="alpha_1")
+    base = tmp_path / "base"
+    _skill(base, "standard")
 
     plan = build_generated_plan(
         cases, generated, tmp_path / "work", schema_path=SCHEMA,
+        base_catalog_path=base,
+        generated_modes=("generated_skills", "existing_plus_generated"),
     )
 
     assert plan["selected_case_ids"] == ["case-0101-00"]
-    assert [group["run_kind"] for group in plan["groups"]] == ["individual", "joint"]
-    assert [group["skill_names"] for group in plan["groups"]] == [["alpha"], ["alpha"]]
-    assert plan["groups"][0]["variant_id"] == "alpha_1"
-    assert plan["groups"][1]["variant_id"].startswith("joint-")
+    assert plan["generated_modes"] == ["generated_skills", "existing_plus_generated"]
+    assert len(plan["groups"]) == 1
+    group = plan["groups"][0]
+    assert Registry.load(group["catalog_path"]).active() == ["alpha"]
+    assert Registry.load(group["combined_catalog_path"]).active() == ["alpha", "standard"]

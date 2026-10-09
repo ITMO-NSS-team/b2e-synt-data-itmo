@@ -37,7 +37,14 @@ def mode(
         "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
     )
     enabled = name != BenchmarkMode.GENERAL_KNOWLEDGE
-    generated_names = generated_names if name == BenchmarkMode.GENERATED_SKILLS else ()
+    generated_names = (
+        generated_names
+        if name in (
+            BenchmarkMode.GENERATED_SKILLS,
+            BenchmarkMode.EXISTING_PLUS_GENERATED,
+        )
+        else ()
+    )
     tools = (
         GENERATED_SKILL_TOOLS
         if name == BenchmarkMode.GENERATED_SKILLS
@@ -111,12 +118,12 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
     assert metrics["generated_skill_loaded"] == 0
 
 
-def test_generated_routing_requires_every_skill_in_bundle() -> None:
+def test_combined_mode_scores_only_the_generated_target() -> None:
     case = ready_case()
-    case.raw["expected_skills"] = ["skill_one", "skill_two"]
+    case.raw["expected_skills"] = ["generated_headcount"]
     actual = NormalizedAnswer(case.raw["gold_answer"], None)
     observations = {
-        "loaded_skills": ["skill_one"],
+        "loaded_skills": ["existing_headcount"],
         "heimdall_calls": 1,
         "mcp_query_calls": 0,
         "failed_tool_calls": 0,
@@ -126,22 +133,22 @@ def test_generated_routing_requires_every_skill_in_bundle() -> None:
         "tool_time_ms": 1,
     }
 
-    partial = calculate_metrics(
+    not_loaded = calculate_metrics(
         case,
-        mode("generated_skills", ("skill_one", "skill_two")),
+        mode("existing_plus_generated", ("existing_headcount", "generated_headcount")),
         actual,
         observations,
     )
-    observations["loaded_skills"] = ["skill_one", "skill_two"]
-    complete = calculate_metrics(
+    observations["loaded_skills"] = ["generated_headcount"]
+    loaded = calculate_metrics(
         case,
-        mode("generated_skills", ("skill_one", "skill_two")),
+        mode("existing_plus_generated", ("existing_headcount", "generated_headcount")),
         actual,
         observations,
     )
 
-    assert partial["generated_skill_loaded"] == 0
-    assert complete["generated_skill_loaded"] == 1
+    assert not_loaded["generated_skill_loaded"] == 0
+    assert loaded["generated_skill_loaded"] == 1
 
 
 def test_generated_routing_is_not_applicable_without_expected_generated_skill() -> None:

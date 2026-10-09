@@ -147,9 +147,11 @@ def _validate_generated_plan_execution(
         for manifest in manifests
         for mode in manifest.get("modes", [])
     }
+    generated_modes = plan.get("generated_modes", ["generated_skills"])
     expected = {
-        f"generated_skills@{group['variant_id']}"
+        f"{mode}@{group['variant_id']}"
         for group in plan.get("groups", [])
+        for mode in generated_modes
     }
     missing = sorted(expected - actual)
     if missing:

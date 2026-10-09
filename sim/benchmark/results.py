@@ -129,7 +129,6 @@ _SKIP_STATUSES = frozenset({
     "draft_skipped",
     "mock_skipped",
     "generated_no_expected_skill_skipped",
-    "generated_multiple_skills_skipped",
     "generated_skill_unavailable_skipped",
 })
 _SCORED_STATUSES = frozenset({"completed", "normalization_pending"})

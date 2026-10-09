@@ -187,10 +187,6 @@ def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
         raise ValueError("expected_skills must be an array of non-empty strings")
     if len(set(skills)) != len(skills):
         raise ValueError("expected_skills contains duplicates")
-    if "include_joint_skill_run" in raw and not isinstance(
-        raw["include_joint_skill_run"], bool
-    ):
-        raise ValueError("include_joint_skill_run must be boolean")
     if not isinstance(raw["gold_contract"], dict):
         raise ValueError("gold_contract must be an object")
     if raw["gold_contract"]:

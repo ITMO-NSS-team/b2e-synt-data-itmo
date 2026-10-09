@@ -34,11 +34,13 @@ class BenchmarkMode(str, Enum):
         SKILLS_DISABLED: Data discovery and query tools, without skill guidance.
         EXISTING_SKILLS: Catalog of already-deployed skills plus ``find_skills``/``get_skill``.
         GENERATED_SKILLS: Generated-only catalog; may still be a mock.
+        EXISTING_PLUS_GENERATED: Existing catalog plus one generated skill.
     """
     GENERAL_KNOWLEDGE = "general_knowledge"
     SKILLS_DISABLED = "skills_disabled"
     EXISTING_SKILLS = "existing_skills"
     GENERATED_SKILLS = "generated_skills"
+    EXISTING_PLUS_GENERATED = "existing_plus_generated"
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,9 +105,12 @@ class ModeConfig:
         tool_subset: Tools the agent may call in this arm.
         catalog_path: Snapshot path, or ``None`` when skills are disabled.
         catalog_hash: Content hash of that snapshot, or ``None``.
-        generated_skills_path: Source catalog containing generated skills only.
-        generated_skills_hash: Content hash of the generated-only source catalog.
-        generated_skill_names: Active generated skill names.
+        generated_skills_path: Source catalog mounted for a generated-skill arm.
+            It is generated-only for ``generated_skills`` and combined for
+            ``existing_plus_generated``.
+        generated_skills_hash: Content hash of that source catalog.
+        generated_skill_names: Active names in that source catalog. The planner
+            narrows each generated phase to one target through ``expected_skills``.
         common: Shared conditions copied into every arm.
         skills_enabled: Whether ``find_skills``/``get_skill`` are in the subset.
         is_mock: True when generated skills were not supplied.
@@ -193,7 +198,7 @@ class ModeStrategy:
         expected_skills: Iterable[str],
         loaded_skills: Iterable[str],
     ) -> int | None:
-        """Score whether every generated skill expected by this case was loaded."""
+        """Score whether the generated target expected in this phase was loaded."""
         if not self.generated or config.is_mock:
             return None
         targets = set(expected_skills) & set(config.generated_skill_names)
@@ -240,6 +245,14 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
                 BenchmarkMode.EXISTING_SKILLS,
             ),
         ),
+        ModeStrategy(
+            BenchmarkMode.EXISTING_PLUS_GENERATED,
+            SKILL_TOOLS,
+            True,
+            "generated",
+            generated=True,
+            comparison_baselines=(BenchmarkMode.EXISTING_SKILLS,),
+        ),
     )
 })
 
@@ -276,6 +289,7 @@ class ModeConfigs:
         skills_disabled: Data tools without skill discovery, recipes or procedural docs.
         existing_skills: Catalog of already-deployed skills.
         generated_skills: Generated-only catalog, possibly still a mock.
+        existing_plus_generated: Existing catalog plus one generated skill.
     """
     by_name: Mapping[str, ModeConfig]
 
@@ -307,6 +321,10 @@ class ModeConfigs:
     @property
     def generated_skills(self) -> ModeConfig:
         return self[BenchmarkMode.GENERATED_SKILLS]
+
+    @property
+    def existing_plus_generated(self) -> ModeConfig:
+        return self[BenchmarkMode.EXISTING_PLUS_GENERATED]
 
     def __iter__(self) -> Iterator[ModeConfig]:
         """Yield arms in strategy registration order."""
@@ -364,12 +382,14 @@ def build_modes(
     Args:
         common: Shared model, prompt, snapshot and emulator conditions.
         base_catalog_path: Live existing-skill catalog to snapshot.
-        generated_skills_path: Optional catalog containing generated skills only.
+        generated_skills_path: Optional active catalog for generated-skill modes.
+            The planner supplies either an isolated generated catalog or a
+            standard catalog extended with exactly one generated skill.
         snapshots_root: Directory for content-addressed catalog copies.
             Required when ``generated_skills_path`` is set.
 
     Returns:
-        Three mode configs sharing ``common``.
+        Registered mode configs sharing ``common``.
 
     Raises:
         ValueError: If a catalog is empty or invalid.
@@ -394,7 +414,7 @@ def build_modes(
         generated = Path(generated_skills_path).resolve()
         generated_registry = _loaded_registry(generated)
         if not _skill_files(generated):
-            raise ValueError("generated_skills mode requires at least one generated skill")
+            raise ValueError("generated-skill mode requires at least one active skill")
         names = tuple(generated_registry.active())
         if len(names) != len(generated_registry.all_names()):
             raise ValueError("generated skills must be active")

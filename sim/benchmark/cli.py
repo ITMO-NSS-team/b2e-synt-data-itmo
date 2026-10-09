@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from .cases import BenchmarkCase, load_case, load_suite, validate_case
 from .execution import PinnedConfigActivator, StandSessionExecutor
-from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes
+from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes, mode_strategy
 from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
 from .results import ResultWriter, summarize_results
@@ -194,7 +194,7 @@ def select_modes(all_modes: Iterable[ModeConfig], names: str) -> dict[str, ModeC
         Ordered mapping of requested name to config.
 
     Raises:
-        ValueError: If a name is unknown, duplicated, or generated_skills is a mock.
+        ValueError: If a name is unknown, duplicated, or a generated mode is a mock.
     """
     requested = [item.strip() for item in names.split(",") if item.strip()]
     if not requested:
@@ -248,8 +248,8 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
     )
     selected = select_modes(modes, args.modes)
     variant_id = getattr(args, "generated_variant_id", None)
-    if variant_id and BenchmarkMode.GENERATED_SKILLS.value not in selected:
-        raise ValueError("--generated-variant-id requires generated_skills mode")
+    if variant_id and not any(mode.strategy.generated for mode in selected.values()):
+        raise ValueError("--generated-variant-id requires a generated-skill mode")
     if variant_id and not re.fullmatch(r"[A-Za-z0-9_.-]+", variant_id):
         raise ValueError("generated variant id contains unsupported characters")
     refs = live["refs"]
@@ -310,7 +310,7 @@ def _manifest(
 
 
 def _result_mode_name(mode_name: str, generated_variant_id: str | None) -> str:
-    if mode_name == BenchmarkMode.GENERATED_SKILLS.value and generated_variant_id:
+    if generated_variant_id and mode_strategy(mode_name).generated:
         return f"{mode_name}@{generated_variant_id}"
     return mode_name
 
@@ -435,8 +435,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--generated-skills",
         help=(
-            "Directory with generated .md/.yaml skills mounted as the complete "
-            "skill catalog for generated_skills"
+            "Directory mounted as the complete active catalog for a generated-skill "
+            "mode"
         ),
     )
     result.add_argument(
