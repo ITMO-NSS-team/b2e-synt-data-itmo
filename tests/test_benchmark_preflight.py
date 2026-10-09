@@ -109,7 +109,7 @@ def test_ready_preflight_validates_all_inputs_and_builds_fingerprint(tmp_path: P
     ("expected", "status"),
     [
         ([], "generated_no_expected_skill_skipped"),
-        (["one", "two"], "generated_multiple_skills_skipped"),
+        (["available", "missing"], "generated_skill_unavailable_skipped"),
         (["missing"], "generated_skill_unavailable_skipped"),
     ],
 )

@@ -29,12 +29,22 @@ def ready_case() -> BenchmarkCase:
     return BenchmarkCase(Path("/authorial/case-9999-00.json"), raw)
 
 
-def mode(name: str = "existing_skills") -> ModeConfig:
+def mode(
+    name: str = "existing_skills",
+    generated_names: tuple[str, ...] = ("generated_headcount",),
+) -> ModeConfig:
     common = CommonConditions(
         "model", 0.0, "prompt@1", "heimdall-sandbox@test", True, "instant", ()
     )
     enabled = name != BenchmarkMode.GENERAL_KNOWLEDGE
-    generated_names = ("generated_headcount",) if name == BenchmarkMode.GENERATED_SKILLS else ()
+    generated_names = (
+        generated_names
+        if name in (
+            BenchmarkMode.GENERATED_SKILLS,
+            BenchmarkMode.EXISTING_PLUS_GENERATED,
+        )
+        else ()
+    )
     tools = (
         GENERATED_SKILL_TOOLS
         if name == BenchmarkMode.GENERATED_SKILLS
@@ -106,6 +116,39 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
     )
 
     assert metrics["generated_skill_loaded"] == 0
+
+
+def test_combined_mode_scores_only_the_generated_target() -> None:
+    case = ready_case()
+    case.raw["expected_skills"] = ["generated_headcount"]
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    observations = {
+        "loaded_skills": ["existing_headcount"],
+        "heimdall_calls": 1,
+        "mcp_query_calls": 0,
+        "failed_tool_calls": 0,
+        "total_tokens": 1,
+        "latency_ms": 1,
+        "agent_duration_ms": 1,
+        "tool_time_ms": 1,
+    }
+
+    not_loaded = calculate_metrics(
+        case,
+        mode("existing_plus_generated", ("existing_headcount", "generated_headcount")),
+        actual,
+        observations,
+    )
+    observations["loaded_skills"] = ["generated_headcount"]
+    loaded = calculate_metrics(
+        case,
+        mode("existing_plus_generated", ("existing_headcount", "generated_headcount")),
+        actual,
+        observations,
+    )
+
+    assert not_loaded["generated_skill_loaded"] == 0
+    assert loaded["generated_skill_loaded"] == 1
 
 
 def test_generated_routing_is_not_applicable_without_expected_generated_skill() -> None:

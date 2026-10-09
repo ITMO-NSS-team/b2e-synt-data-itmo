@@ -30,7 +30,8 @@ _COMPARISON_DEFAULTS = {
 
 @dataclass(frozen=True, slots=True)
 class _CaseSchema:
-    fields: frozenset[str]
+    required_fields: frozenset[str]
+    allowed_fields: frozenset[str]
     categories: frozenset[str]
     case_id: re.Pattern[str]
     sha256: re.Pattern[str]
@@ -41,7 +42,8 @@ class _CaseSchema:
 def _case_schema(schema_path: str) -> _CaseSchema:
     contract = json.loads(Path(schema_path).read_text(encoding="utf-8"))
     return _CaseSchema(
-        fields=frozenset(contract["required"]),
+        required_fields=frozenset(contract["required"]),
+        allowed_fields=frozenset(contract["properties"]),
         categories=frozenset(contract["properties"]["category"]["enum"]),
         case_id=re.compile(contract["properties"]["case_id"]["pattern"]),
         sha256=re.compile(contract["properties"]["skill_registry_hash"]["pattern"]),
@@ -154,8 +156,8 @@ def validate_case(raw: Any, *, schema_path: str | Path | None = None) -> None:
     schema = _case_schema(str(resolve_schema_path(schema_path)))
     if not isinstance(raw, dict):
         raise ValueError("case must be a JSON object")
-    missing = schema.fields - raw.keys()
-    extra = raw.keys() - schema.fields
+    missing = schema.required_fields - raw.keys()
+    extra = raw.keys() - schema.allowed_fields
     if missing or extra:
         raise ValueError(f"case fields: missing={sorted(missing)}, unknown={sorted(extra)}")
     if raw["schema_version"] != schema.version:

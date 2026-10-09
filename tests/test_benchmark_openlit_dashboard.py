@@ -101,7 +101,7 @@ def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
     assert "accuracy_delta_vs_general_knowledge_pct" in MODE_COMPARISON_QUERY
     assert "accuracy_delta_vs_skills_disabled_pct" in MODE_COMPARISON_QUERY
     assert "accuracy_delta_vs_existing_skills_pct" in MODE_COMPARISON_QUERY
-    assert "l.mode != 'generated_skills'" in MODE_COMPARISON_QUERY
+    assert "('generated_skills', 'existing_plus_generated')" in MODE_COMPARISON_QUERY
     assert "expected_modes" not in MODE_COMPARISON_QUERY
     assert all(
         "b2e.benchmark.final" in query

@@ -21,7 +21,7 @@ def ready_case(case_id: str = "case-9999-00") -> dict:
 
 def test_supplied_example_matches_published_contract_and_is_ready() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["required"]) <= set(schema["properties"])
     case = load_case(EXAMPLE, schema_path=SCHEMA)
     assert case.case_id == "case-0000-00"
     assert case.status == "verified"

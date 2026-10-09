@@ -30,7 +30,8 @@ SMOKE_DATA ?= $(STAND_DATA_PATH)
 .PHONY: help setup catalog data data-small validate stats doc serve test clean \
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
         rebuild sim-test demo benchmarking benchmarking-check benchmarking-smoke \
-        benchmarking-generated openlit-dashboard prepare-resolv _benchmarking-single
+        benchmarking-generated benchmarking-existing-plus-generated \
+        openlit-dashboard prepare-resolv _benchmarking-single
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -169,23 +170,26 @@ BENCH_CHECK_ONLY ?=
 BENCH_SKIP_OPENLIT ?=
 BENCH_PHASE_TELEMETRY ?=
 BENCH_GENERATED_VARIANT_ID ?=
-BENCH_SKILLS_ROOT = $(if $(findstring generated_skills,$(BENCH_MODES)),/app/heimdall-skill-catalog/generated,/app/heimdall-skill-catalog/existing)
 empty :=
 space := $(empty) $(empty)
 comma := ,
 BENCH_MODE_LIST = $(subst $(comma),$(space),$(BENCH_MODES))
-BENCH_BASELINE_MODE_LIST = $(filter-out generated_skills,$(BENCH_MODE_LIST))
+BENCH_GENERATED_MODES := generated_skills existing_plus_generated
+BENCH_GENERATED_MODE_LIST = $(filter $(BENCH_GENERATED_MODES),$(BENCH_MODE_LIST))
+BENCH_GENERATED_MODE_CSV = $(subst $(space),$(comma),$(strip $(BENCH_GENERATED_MODE_LIST)))
+BENCH_SKILLS_ROOT = $(if $(BENCH_GENERATED_MODE_LIST),/app/heimdall-skill-catalog/generated,/app/heimdall-skill-catalog/existing)
+BENCH_BASELINE_MODE_LIST = $(filter-out $(BENCH_GENERATED_MODES),$(BENCH_MODE_LIST))
 BENCH_BASELINE_MODES = $(subst $(space),$(comma),$(strip $(BENCH_BASELINE_MODE_LIST)))
 
 define BENCHMARK_PREPARE
 	@$(MAKE) --no-print-directory prepare-resolv
 	@mkdir -p var/empty-generated-skills
-	@if printf ',%s,' "$(BENCH_MODES)" | grep -q ',generated_skills,' && \
+	@if test -n "$(BENCH_GENERATED_MODE_LIST)" && \
 	   printf ',%s,' "$(BENCH_MODES)" | grep -q ',existing_skills,'; then \
-		echo "existing_skills и generated_skills используют разные каталоги; запустите их отдельно"; \
+		echo "existing_skills и generated-skill режимы используют разные каталоги; запустите их отдельно"; \
 		exit 1; \
 	fi
-	@if printf ',%s,' "$(BENCH_MODES)" | grep -q ',generated_skills,'; then \
+	@if test -n "$(BENCH_GENERATED_MODE_LIST)"; then \
 		test -n "$(GENERATED_SKILLS_INPUT)" || { echo "для generated_skills задайте GENERATED_SKILLS_DIR"; exit 1; }; \
 		test -d "$(GENERATED_SKILLS_DIR)" || { echo "нет каталога generated skills: $(GENERATED_SKILLS_DIR)"; exit 1; }; \
 		find "$(GENERATED_SKILLS_DIR)" -type f \( -name '*.md' -o -name '*.yaml' -o -name '*.yml' \) -print -quit | grep -q . || { \
@@ -243,7 +247,7 @@ _benchmarking-single:
 		python3.12 -m sim.benchmark.cli \
 			--cases "/app/$(CASES)" --data /data/snapshot \
 			--catalog /app/heimdall-skills \
-			$(if $(findstring generated_skills,$(BENCH_MODES)),--generated-skills /app/generated-skills,) \
+			$(if $(BENCH_GENERATED_MODE_LIST),--generated-skills /app/generated-skills,) \
 			--catalog-snapshots /app/var/benchmark-catalog-snapshots \
 			--model-catalog /app/catalog/snapshot.json \
 			--live-config "/app/$(BENCH_LIVE_CONFIG)" \
@@ -260,7 +264,7 @@ _benchmarking-single:
 			$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
 benchmarking:  ## полный прогон; generated skills изолируются по expected_skills кейса
-	@if test -n "$(filter generated_skills,$(BENCH_MODE_LIST))"; then \
+	@if test -n "$(BENCH_GENERATED_MODE_LIST)"; then \
 		set -e; \
 		test -n "$(GENERATED_SKILLS_INPUT)" || { \
 			echo "для generated_skills задайте непустой GENERATED_SKILLS_DIR"; \
@@ -277,10 +281,12 @@ benchmarking:  ## полный прогон; generated skills изолируют
 		$(PY) -m sim.benchmark.generated_plan \
 			--cases "$(BENCH_CASES_HOST)" \
 			--generated-skills "$(GENERATED_SKILLS_DIR)" \
+			--base-skills "$(abspath heimdall-skills)" \
+			--modes "$(BENCH_GENERATED_MODE_CSV)" \
 			--output "$$plan_root" \
 			$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",); \
 		covered_cases="$$($(PY) -c 'import json,sys; print(json.load(open(sys.argv[1]))["covered_cases_path"])' "$$plan")"; \
-		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["skill_name"],g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
+		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["combined_catalog_path"] or "-",",".join(g["skill_names"]),g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
 		: > "$$phase_list"; \
 		if test -n "$(BENCH_BASELINE_MODE_LIST)"; then \
 			echo "Baseline-фаза: $(BENCH_BASELINE_MODES) — один раз для покрытых кейсов $$covered_cases"; \
@@ -293,18 +299,23 @@ benchmarking:  ## полный прогон; generated skills изолируют
 				BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)"; \
 			echo "$$phase_root/baseline/$$eval_id" >> "$$phase_list"; \
 		fi; \
-		while IFS="$$(printf '\t')" read -r slug cases catalog skill variant <&3; do \
+		while IFS="$$(printf '\t')" read -r slug cases catalog combined_catalog skill variant <&3; do \
 			test -n "$$slug" || continue; \
-			echo "Generated-фаза: $$skill ($$variant) — изолированный каталог, кейсы $$cases"; \
-			$(MAKE) --no-print-directory _benchmarking-single \
-				CASES="$$cases" GENERATED_SKILLS_DIR="$$catalog" \
-				BENCH_MODES="generated_skills" BENCH_EVAL_ID="$$eval_id" \
-				BENCH_GENERATED_VARIANT_ID="$$variant" \
-				BENCH_RESULTS="$$phase_root/generated-$$slug" BENCH_SKIP_OPENLIT=1 \
-				BENCH_PHASE_TELEMETRY=1 \
-				BENCH_CHECK_ONLY="$(BENCH_CHECK_ONLY)" BENCH_LIMIT="" \
-				BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)"; \
-			echo "$$phase_root/generated-$$slug/$$eval_id" >> "$$phase_list"; \
+			for generated_mode in $(BENCH_GENERATED_MODE_LIST); do \
+				active_catalog="$$catalog"; \
+				if test "$$generated_mode" = "existing_plus_generated"; then active_catalog="$$combined_catalog"; fi; \
+				test "$$active_catalog" != "-" || { echo "не собран объединённый каталог для $$variant"; exit 2; }; \
+				echo "Generated-фаза: $$generated_mode, $$skill ($$variant), кейсы $$cases"; \
+				$(MAKE) --no-print-directory _benchmarking-single \
+					CASES="$$cases" GENERATED_SKILLS_DIR="$$active_catalog" \
+					BENCH_MODES="$$generated_mode" BENCH_EVAL_ID="$$eval_id" \
+					BENCH_GENERATED_VARIANT_ID="$$variant" \
+					BENCH_RESULTS="$$phase_root/generated-$$generated_mode-$$slug" BENCH_SKIP_OPENLIT=1 \
+					BENCH_PHASE_TELEMETRY=1 \
+					BENCH_CHECK_ONLY="$(BENCH_CHECK_ONLY)" BENCH_LIMIT="" \
+					BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)"; \
+				echo "$$phase_root/generated-$$generated_mode-$$slug/$$eval_id" >> "$$phase_list"; \
+			done; \
 		done 3< "$$group_list"; \
 		merge_args=""; \
 		while IFS= read -r phase; do merge_args="$$merge_args --phase $$phase"; done < "$$phase_list"; \
@@ -336,3 +347,7 @@ benchmarking-smoke: benchmarking  ## первый verified-кейс, один п
 benchmarking-generated: BENCH_MODES := generated_skills
 benchmarking-generated: BENCH_EVAL_PREFIX := generated
 benchmarking-generated: benchmarking  ## прогон только с каталогом GENERATED_SKILLS_DIR
+
+benchmarking-existing-plus-generated: BENCH_MODES := existing_plus_generated
+benchmarking-existing-plus-generated: BENCH_EVAL_PREFIX := existing-plus-generated
+benchmarking-existing-plus-generated: benchmarking  ## Heimdall skills плюс один generated skill на фазу

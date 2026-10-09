@@ -64,6 +64,7 @@ def test_modes_pin_same_common_conditions(
     assert modes.skills_disabled.skills_enabled is False
     assert modes.existing_skills.tool_subset == SKILL_TOOLS
     assert modes.generated_skills.tool_subset == GENERATED_SKILL_TOOLS
+    assert modes.existing_plus_generated.tool_subset == SKILL_TOOLS
     assert "get_docs" not in modes.generated_skills.tool_subset
     assert modes.existing_skills.catalog_hash == catalog_hash(base)
     assert modes.generated_skills.catalog_hash == catalog_hash(generated)
@@ -71,12 +72,14 @@ def test_modes_pin_same_common_conditions(
         "generated",
     }
     assert modes.generated_skills.generated_skill_names == ("generated",)
+    assert modes.existing_plus_generated.generated_skill_names == ("generated",)
 
 
 def test_mode_behavior_comes_from_registered_strategies() -> None:
     general = mode_strategy(BenchmarkMode.GENERAL_KNOWLEDGE)
     disabled = mode_strategy(BenchmarkMode.SKILLS_DISABLED)
     generated = mode_strategy(BenchmarkMode.GENERATED_SKILLS)
+    combined = mode_strategy(BenchmarkMode.EXISTING_PLUS_GENERATED)
 
     assert general.tool_subset == ()
     assert general.requires_catalog is False
@@ -85,7 +88,11 @@ def test_mode_behavior_comes_from_registered_strategies() -> None:
     assert generated.requires_catalog is True
     assert generated.requires_catalog_activator is True
     assert generated.catalog_source == "generated"
+    assert combined.tool_subset == SKILL_TOOLS
+    assert combined.generated is True
+    assert combined.catalog_source == "generated"
     assert ("generated_skills", "existing_skills") in comparison_pairs()
+    assert ("existing_plus_generated", "existing_skills") in comparison_pairs()
     assert ("existing_skills", "skills_disabled") in comparison_pairs()
 
 
@@ -175,6 +182,8 @@ def test_general_knowledge_and_mock_generated_modes_are_explicit(
         assert forbidden not in modes.skills_disabled.tool_subset
     assert modes.generated_skills.is_mock is True
     assert modes.generated_skills.generated_skill_names == ()
+    assert modes.existing_plus_generated.is_mock is True
+    assert modes.existing_plus_generated.generated_skill_names == ()
 
 
 def test_generated_mode_builds_generated_only_snapshot_and_allows_standard_name(

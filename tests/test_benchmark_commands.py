@@ -75,8 +75,8 @@ def test_generated_benchmark_mounts_only_generated_catalog() -> None:
     compose = (root / "deploy/docker-compose.yml").read_text(encoding="utf-8")
 
     assert "sim.benchmark.generated_plan" in makefile
-    assert 'GENERATED_SKILLS_DIR="$$catalog"' in makefile
-    assert 'BENCH_MODES="generated_skills"' in makefile
+    assert 'GENERATED_SKILLS_DIR="$$active_catalog"' in makefile
+    assert 'BENCH_MODES="$$generated_mode"' in makefile
     assert (
         "${GENERATED_SKILLS_DIR:-../var/empty-generated-skills}:"
         "/app/generated-skills:ro"
@@ -93,11 +93,11 @@ def test_mixed_benchmark_splits_catalogs_and_merges_results() -> None:
     assert "Generated-фаза:" in source
     assert 'BENCH_MODES="$(BENCH_BASELINE_MODES)"' in source
     assert 'CASES="$$covered_cases"' in source
-    assert 'BENCH_MODES="generated_skills"' in source
+    assert 'BENCH_MODES="$$generated_mode"' in source
     assert 'BENCH_GENERATED_VARIANT_ID="$$variant"' in source
-    assert 'read -r slug cases catalog skill variant <&3' in source
+    assert 'read -r slug cases catalog combined_catalog skill variant <&3' in source
     assert 'done 3< "$$group_list"' in source
-    assert 'CASES="$$cases" GENERATED_SKILLS_DIR="$$catalog"' in source
+    assert 'CASES="$$cases" GENERATED_SKILLS_DIR="$$active_catalog"' in source
     assert "sim.benchmark.generated_plan" in source
     assert "--generated-plan" in source
     assert "sim.benchmark.merge" in source

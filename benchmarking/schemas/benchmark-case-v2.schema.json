@@ -55,7 +55,7 @@
       "type": "array",
       "items": {"type": "string", "minLength": 1},
       "uniqueItems": true,
-      "description": "Ожидаемые предметные скиллы. Изолированный generated baseline запускается только для одного имени, если одноимённый artifact доступен; остальные случаи фиксируются как skipped без вызова модели."
+      "description": "Канонические имена предметных скиллов. Каждый доступный generated skill проверяется отдельно; отсутствие остальных имён не блокирует эти прогоны."
     },
     "gold_answer": {},
     "gold_comparison": {

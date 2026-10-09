@@ -61,6 +61,9 @@ def capture_live_config(
         BenchmarkMode.SKILLS_DISABLED.value: pinned["skills_disabled"],
         BenchmarkMode.EXISTING_SKILLS.value: pinned["existing_skills"],
         BenchmarkMode.GENERATED_SKILLS.value: pinned["generated_skills"],
+        BenchmarkMode.EXISTING_PLUS_GENERATED.value: pinned.get(
+            "existing_plus_generated", pinned["existing_skills"],
+        ),
     }
     configs: dict[str, dict[str, Any]] = {}
     prompt_versions: dict[str, str] = {}

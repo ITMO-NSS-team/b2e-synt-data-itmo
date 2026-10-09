@@ -38,6 +38,7 @@ def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
     )
     return {
         "existing_skills": on_version.ref,
+        "existing_plus_generated": on_version.ref,
         "generated_skills": generated_version.ref,
         "skills_disabled": disabled_version.ref,
         "general_knowledge": general_version.ref,
@@ -52,6 +53,7 @@ def main() -> None:
     registry = Registry(path)
     refs = pin(registry)
     print(f"existing_skills={refs['existing_skills']}")
+    print(f"existing_plus_generated={refs['existing_plus_generated']}")
     print(f"generated_skills={refs['generated_skills']}")
     print(f"skills_disabled={refs['skills_disabled']}")
     print(f"general_knowledge={refs['general_knowledge']}")

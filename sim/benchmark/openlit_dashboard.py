@@ -154,17 +154,20 @@ SELECT
     l.runs AS runs,
     round(l.accuracy * 100, 1) AS answer_accuracy_pct,
     if(
-        l.mode != 'generated_skills' AND b.general_present > 0,
+        splitByChar('@', l.mode)[1] NOT IN ('generated_skills', 'existing_plus_generated')
+            AND b.general_present > 0,
         round((l.accuracy - b.general_accuracy) * 100, 1),
         NULL
     ) AS accuracy_delta_vs_general_knowledge_pct,
     if(
-        l.mode != 'generated_skills' AND b.disabled_present > 0,
+        splitByChar('@', l.mode)[1] NOT IN ('generated_skills', 'existing_plus_generated')
+            AND b.disabled_present > 0,
         round((l.accuracy - b.disabled_accuracy) * 100, 1),
         NULL
     ) AS accuracy_delta_vs_skills_disabled_pct,
     if(
-        l.mode != 'generated_skills' AND b.existing_present > 0,
+        splitByChar('@', l.mode)[1] NOT IN ('generated_skills', 'existing_plus_generated')
+            AND b.existing_present > 0,
         round((l.accuracy - b.existing_accuracy) * 100, 1),
         NULL
     ) AS accuracy_delta_vs_existing_skills_pct,
@@ -178,7 +181,8 @@ ORDER BY l.finished_at DESC, l.eval_id, indexOf([
     'general_knowledge',
     'skills_disabled',
     'existing_skills',
-    'generated_skills'
+    'generated_skills',
+    'existing_plus_generated'
 ], splitByChar('@', l.mode)[1])
 LIMIT 400
 """.strip()

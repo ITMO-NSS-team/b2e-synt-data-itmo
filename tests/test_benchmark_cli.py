@@ -136,3 +136,5 @@ def test_generated_mock_cannot_be_selected(tmp_path) -> None:
     assert set(selected) == {"general_knowledge", "existing_skills"}
     with pytest.raises(ValueError, match="still a mock"):
         select_modes(modes, "generated_skills")
+    with pytest.raises(ValueError, match="still a mock"):
+        select_modes(modes, "existing_plus_generated")
