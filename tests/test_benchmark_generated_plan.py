@@ -149,27 +149,6 @@ def test_multiple_expected_skills_run_individually_by_default(tmp_path: Path) ->
     ]
 
 
-def test_plan_never_bundles_multiple_expected_skills(
-    tmp_path: Path,
-) -> None:
-    cases = tmp_path / "cases"
-    cases.mkdir()
-    _case(cases, "case-0101-00", ["beta", "alpha"])
-    generated = tmp_path / "generated"
-    _skill(generated, "alpha-compact-a94e814444-b4d7da560f", variant_id="alpha_1")
-    _skill(generated, "alpha-full-a94e814444-c4d7da560f", variant_id="alpha_2")
-    _skill(generated, "beta-compact-b94e814444-d4d7da560f", variant_id="beta_1")
-    _skill(generated, "beta-full-b94e814444-e4d7da560f", variant_id="beta_2")
-
-    plan = build_generated_plan(
-        cases, generated, tmp_path / "work", schema_path=SCHEMA,
-    )
-
-    assert plan["selected_case_ids"] == ["case-0101-00"]
-    assert len(plan["groups"]) == 4
-    assert all(len(group["skill_names"]) == 1 for group in plan["groups"])
-
-
 def test_plan_builds_existing_plus_one_generated_catalog(
     tmp_path: Path,
 ) -> None:

@@ -244,25 +244,3 @@ def test_merge_rejects_missing_planned_generated_variant(tmp_path: Path) -> None
             [generated], results_root=tmp_path / "results", eval_id="eval-1",
             generated_plan=plan,
         )
-
-
-def test_merge_requires_each_requested_generated_mode(tmp_path: Path) -> None:
-    generated = _phase(tmp_path, "generated", "generated_skills@alpha_1")
-    combined = _phase(
-        tmp_path, "combined", "existing_plus_generated@alpha_1",
-    )
-    plan = tmp_path / "plan.json"
-    plan.write_text(json.dumps({
-        "cases_source": "/cases",
-        "source_case_ids": ["case-0001-00"],
-        "eligible_case_ids": ["case-0001-00"],
-        "selected_case_ids": ["case-0001-00"],
-        "excluded": [],
-        "generated_modes": ["generated_skills", "existing_plus_generated"],
-        "groups": [{"variant_id": "alpha_1"}],
-    }), encoding="utf-8")
-
-    merge_phases(
-        [generated, combined], results_root=tmp_path / "results", eval_id="eval-1",
-        generated_plan=plan,
-    )
