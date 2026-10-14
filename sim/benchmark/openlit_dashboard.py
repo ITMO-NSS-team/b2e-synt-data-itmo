@@ -12,7 +12,7 @@ import argparse
 import json
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
 import httpx
@@ -36,13 +36,9 @@ WITH
 SELECT
     formatDateTime(Timestamp, '%Y-%m-%d %H:%i:%S') AS started_at,
     SpanAttributes['b2e.benchmark.eval_id'] AS eval_id,
-    SpanAttributes['b2e.benchmark.modes'] AS modes,
     toUInt32OrZero(SpanAttributes['b2e.benchmark.case_count']) AS cases,
     toUInt32OrZero(SpanAttributes['b2e.summary.n_runs']) AS runs,
-    toUInt32OrZero(SpanAttributes['b2e.summary.n_completed']) AS completed,
     toUInt32OrZero(SpanAttributes['b2e.summary.n_scored']) AS scored,
-    toUInt32OrZero(SpanAttributes['b2e.summary.n_unscored']) AS unscored,
-    round(Duration / 1000000000.0, 1) AS duration_s,
     concat(__OPENLIT_UI_URL__, '/telemetry/traces/', SpanId) AS trace_url
 FROM otel_traces
 WHERE
@@ -51,140 +47,150 @@ WHERE
     AND SpanAttributes['b2e.benchmark.final'] != 'false'
     AND Timestamp >= start_time AND Timestamp <= end_time
 ORDER BY Timestamp DESC
-LIMIT 100
+LIMIT 50
 """.strip()
 
-MODE_SUMMARY_QUERY = """
-WITH
-    parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,
-    parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time
-SELECT
-    formatDateTime(Timestamp, '%Y-%m-%d %H:%i:%S') AS finished_at,
-    SpanAttributes['b2e.benchmark.eval_id'] AS eval_id,
-    SpanAttributes['b2e.benchmark.mode'] AS mode,
-    toUInt32OrZero(SpanAttributes['b2e.summary.n_runs']) AS runs,
-    round(toFloat64OrNull(nullIf(
-        SpanAttributes['b2e.summary.answer_accuracy'], '')) * 100, 1)
-        AS answer_accuracy_pct,
-    round(toFloat64OrNull(nullIf(
-        SpanAttributes['b2e.summary.exact_match'], '')) * 100, 1)
-        AS exact_match_pct,
-    round(toFloat64OrNull(nullIf(
-        SpanAttributes['b2e.summary.correct_refusal'], '')) * 100, 1)
-        AS refusal_pct,
-    round(toFloat64OrNull(nullIf(
-        SpanAttributes['b2e.summary.mcp_query_calls'], '')), 1)
-        AS mcp_queries,
-    round(toFloat64OrNull(nullIf(
-        SpanAttributes['b2e.summary.failed_tool_calls'], '')), 1)
-        AS failed_calls,
-    round(toFloat64OrNull(nullIf(
-        SpanAttributes['b2e.summary.total_tokens'], '')), 0)
-        AS tokens,
-    round(toFloat64OrNull(nullIf(
-        SpanAttributes['b2e.summary.latency_ms'], '')) / 1000, 1)
-        AS latency_s,
-    concat(__OPENLIT_UI_URL__, '/telemetry/traces/', SpanId) AS trace_url
-FROM otel_traces
-WHERE
-    ServiceName = 'b2e-benchmark-runner'
-    AND startsWith(SpanName, 'b2e.benchmark.summary.')
-    AND SpanAttributes['b2e.benchmark.final'] != 'false'
-    AND Timestamp >= start_time AND Timestamp <= end_time
-ORDER BY Timestamp DESC, eval_id, mode
-LIMIT 300
-""".strip()
-
-MODE_COMPARISON_QUERY = """
+_LATEST_SCORE_CTES = """
 WITH
     parseDateTimeBestEffort('{{filter.timeLimit.start}}') AS start_time,
     parseDateTimeBestEffort('{{filter.timeLimit.end}}') AS end_time,
-    summaries AS (
+    latest_eval AS (
         SELECT
-            Timestamp,
-            SpanId AS span_id,
-            SpanAttributes['b2e.benchmark.eval_id'] AS eval_id,
-            SpanAttributes['b2e.benchmark.mode'] AS mode,
-            toUInt32OrZero(SpanAttributes['b2e.summary.n_runs']) AS runs,
-            toFloat64OrNull(nullIf(
-                SpanAttributes['b2e.summary.answer_accuracy'], '')) AS accuracy,
-            toFloat64OrNull(nullIf(
-                SpanAttributes['b2e.summary.mcp_query_calls'], '')) AS mcp_queries,
-            toFloat64OrNull(nullIf(
-                SpanAttributes['b2e.summary.total_tokens'], '')) AS tokens,
-            toFloat64OrNull(nullIf(
-                SpanAttributes['b2e.summary.latency_ms'], '')) / 1000 AS latency_s
+            argMax(SpanAttributes['b2e.benchmark.eval_id'], Timestamp) AS eval_id
         FROM otel_traces
         WHERE
             ServiceName = 'b2e-benchmark-runner'
-            AND startsWith(SpanName, 'b2e.benchmark.summary.')
+            AND SpanName = 'b2e.benchmark.run'
             AND SpanAttributes['b2e.benchmark.final'] != 'false'
             AND Timestamp >= start_time AND Timestamp <= end_time
     ),
-    latest AS (
+    scores AS (
+        SELECT
+            SpanAttributes['b2e.benchmark.eval_id'] AS eval_id,
+            splitByChar('@', SpanAttributes['b2e.benchmark.mode'])[1] AS mode,
+            splitByChar('@', SpanAttributes['b2e.benchmark.mode'])[2] AS variant,
+            toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.answer_accuracy'], '')) AS answer_score,
+            toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.generated_skill_loaded'], '')) AS skill_loaded_score,
+            toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.latency_ms'], '')) AS latency_ms,
+            toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.mcp_query_calls'], '')) AS mcp_queries
+        FROM otel_traces
+        WHERE
+            ServiceName = 'b2e-benchmark-runner'
+            AND SpanAttributes['b2e.benchmark.span_type'] = 'score'
+            AND SpanAttributes['b2e.benchmark.eval_id'] = (
+                SELECT eval_id FROM latest_eval
+            )
+            AND Timestamp >= start_time AND Timestamp <= end_time
+    ),
+    grouped AS (
         SELECT
             eval_id,
             mode,
-            max(Timestamp) AS finished_at,
-            argMax(runs, Timestamp) AS runs,
-            argMax(accuracy, Timestamp) AS accuracy,
-            argMax(mcp_queries, Timestamp) AS mcp_queries,
-            argMax(tokens, Timestamp) AS tokens,
-            argMax(latency_s, Timestamp) AS latency_s,
-            argMax(span_id, Timestamp) AS span_id
-        FROM summaries
-        GROUP BY eval_id, mode
+            multiIf(
+                variant = '', '—',
+                length(splitByString('--', variant)) >= 2,
+                    splitByString('--', variant)[1],
+                position(variant, '-no-context-') > 0, 'no-context',
+                position(variant, '-compact-') > 0, 'compact',
+                'unknown'
+            ) AS method,
+            multiIf(
+                variant = '', '—',
+                length(splitByString('--', variant)) >= 2,
+                    splitByString('--', variant)[2],
+                'unknown'
+            ) AS detail,
+            avg(answer_score) AS answer_accuracy,
+            avg(skill_loaded_score) AS target_skill_loaded,
+            quantileExactInclusive(0.5)(latency_ms) / 1000 AS median_latency_s,
+            quantileExactInclusive(0.5)(mcp_queries) AS median_mcp_queries
+        FROM scores
+        GROUP BY eval_id, mode, method, detail
     ),
     baseline AS (
         SELECT
             eval_id,
-            countIf(mode = 'general_knowledge') AS general_present,
-            anyIf(accuracy, mode = 'general_knowledge') AS general_accuracy,
-            countIf(mode = 'skills_disabled') AS disabled_present,
-            anyIf(accuracy, mode = 'skills_disabled') AS disabled_accuracy,
             countIf(mode = 'existing_skills') AS existing_present,
-            anyIf(accuracy, mode = 'existing_skills') AS existing_accuracy
-        FROM latest
+            anyIf(answer_accuracy, mode = 'existing_skills') AS existing_accuracy
+        FROM grouped
         GROUP BY eval_id
     )
+""".strip()
+
+MODE_COMPARISON_QUERY = _LATEST_SCORE_CTES + "\n" + """
 SELECT
-    formatDateTime(l.finished_at, '%Y-%m-%d %H:%i:%S') AS finished_at,
-    l.eval_id AS eval_id,
-    l.mode AS mode,
-    l.runs AS runs,
-    round(l.accuracy * 100, 1) AS answer_accuracy_pct,
+    g.mode AS mode,
+    g.method AS method,
+    g.detail AS detail,
+    round(g.answer_accuracy * 100, 1) AS answer_accuracy_pct,
     if(
-        splitByChar('@', l.mode)[1] NOT IN ('generated_skills', 'existing_plus_generated')
-            AND b.general_present > 0,
-        round((l.accuracy - b.general_accuracy) * 100, 1),
-        NULL
-    ) AS accuracy_delta_vs_general_knowledge_pct,
+        g.mode = 'existing_skills' OR b.existing_present = 0,
+        NULL,
+        round((g.answer_accuracy - b.existing_accuracy) * 100, 1)
+    ) AS accuracy_delta_vs_existing_skills_pp,
     if(
-        splitByChar('@', l.mode)[1] NOT IN ('generated_skills', 'existing_plus_generated')
-            AND b.disabled_present > 0,
-        round((l.accuracy - b.disabled_accuracy) * 100, 1),
+        g.mode IN ('generated_skills', 'existing_plus_generated'),
+        round(g.target_skill_loaded * 100, 1),
         NULL
-    ) AS accuracy_delta_vs_skills_disabled_pct,
-    if(
-        splitByChar('@', l.mode)[1] NOT IN ('generated_skills', 'existing_plus_generated')
-            AND b.existing_present > 0,
-        round((l.accuracy - b.existing_accuracy) * 100, 1),
-        NULL
-    ) AS accuracy_delta_vs_existing_skills_pct,
-    round(l.mcp_queries, 1) AS mcp_queries,
-    round(l.tokens, 0) AS tokens,
-    round(l.latency_s, 1) AS latency_s,
-    concat(__OPENLIT_UI_URL__, '/telemetry/traces/', l.span_id) AS trace_url
-FROM latest AS l
-LEFT JOIN baseline AS b ON b.eval_id = l.eval_id
-ORDER BY l.finished_at DESC, l.eval_id, indexOf([
+    ) AS target_skill_loaded_pct,
+    round(g.median_latency_s, 1) AS median_latency_s,
+    round(g.median_mcp_queries, 1) AS median_mcp_queries
+FROM grouped AS g
+LEFT JOIN baseline AS b ON b.eval_id = g.eval_id
+ORDER BY indexOf([
     'general_knowledge',
     'skills_disabled',
     'existing_skills',
     'generated_skills',
     'existing_plus_generated'
-], splitByChar('@', l.mode)[1])
-LIMIT 400
+], g.mode), g.method, g.detail
+LIMIT 50
+""".strip()
+
+ACCURACY_CHART_QUERY = _LATEST_SCORE_CTES + "\n" + """
+SELECT
+    result.1 AS answer_result,
+    result.2 AS share_pct
+FROM grouped
+ARRAY JOIN [
+    tuple(
+        concat(if(method = '—', mode, concat(method, ' / ', detail)), ' · correct'),
+        round(answer_accuracy * 100, 1)
+    ),
+    tuple(
+        concat(if(method = '—', mode, concat(method, ' / ', detail)), ' · incorrect'),
+        round((1 - answer_accuracy) * 100, 1)
+    )
+] AS result
+WHERE answer_accuracy IS NOT NULL
+ORDER BY answer_result
+""".strip()
+
+LATENCY_CHART_QUERY = _LATEST_SCORE_CTES + "\n" + """
+SELECT
+    if(method = '—', mode, concat(method, ' / ', detail)) AS configuration,
+    round(median_latency_s, 1) AS median_latency_s
+FROM grouped
+WHERE median_latency_s IS NOT NULL
+ORDER BY median_latency_s DESC, configuration
+""".strip()
+
+# Kept as a public alias for callers that imported the previous query name.
+MODE_SUMMARY_QUERY = LATENCY_CHART_QUERY
+
+SKILL_LOADING_CHART_QUERY = _LATEST_SCORE_CTES + "\n" + """
+SELECT
+    concat(method, ' / ', detail) AS configuration,
+    round(target_skill_loaded * 100, 1) AS target_skill_loaded_pct
+FROM grouped
+WHERE
+    mode IN ('generated_skills', 'existing_plus_generated')
+    AND target_skill_loaded IS NOT NULL
+ORDER BY target_skill_loaded_pct DESC, configuration
 """.strip()
 
 
@@ -195,6 +201,8 @@ class WidgetSpec:
     description: str
     query: str
     position: Mapping[str, int]
+    widget_type: str = "TABLE"
+    properties: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def id(self) -> str:
@@ -211,25 +219,50 @@ WIDGETS = (
     ),
     WidgetSpec(
         key="mode-summary",
-        title="Metrics by mode",
+        title="Median execution time — latest experiment",
         description=(
-            "Агрегированные метрики режима. answer_accuracy_pct — доля "
-            "правильно решённых среди оценённых задач, в процентах."
+            "Медианное время решения в секундах; устойчиво к единичным "
+            "длинным запускам."
         ),
         query=MODE_SUMMARY_QUERY,
-        position={"x": 0, "y": 2, "w": 4, "h": 3},
+        position={"x": 0, "y": 2, "w": 2, "h": 2},
+        widget_type="BAR_CHART",
+        properties={"xAxis": "configuration", "yAxis": "median_latency_s"},
     ),
     WidgetSpec(
         key="mode-comparison",
-        title="Mode comparison",
+        title="Latest experiment metrics",
         description=(
-            "Сопоставление режимов по доле правильно решённых задач и "
-            "дельтам в процентных пунктах относительно general_knowledge, "
-            "skills_disabled и existing_skills. Строки создаются только для "
-            "запущенных режимов; каждая generated-вариация показана отдельно."
+            "Последний benchmark в выбранном интервале: accuracy, прирост к "
+            "existing_skills, загрузка целевого generated skill и медианы "
+            "времени и mcp_query. Метод и детализация извлекаются из variant_id."
         ),
         query=MODE_COMPARISON_QUERY,
-        position={"x": 0, "y": 5, "w": 4, "h": 3},
+        position={"x": 0, "y": 4, "w": 4, "h": 3},
+    ),
+    WidgetSpec(
+        key="accuracy-chart",
+        title="Correct / incorrect answers — latest experiment",
+        description=(
+            "Доли правильных и неправильных ответов. В отличие от обычного "
+            "accuracy bar, график остаётся видимым при результате 0%."
+        ),
+        query=ACCURACY_CHART_QUERY,
+        position={"x": 2, "y": 2, "w": 2, "h": 2},
+        widget_type="BAR_CHART",
+        properties={"xAxis": "answer_result", "yAxis": "share_pct"},
+    ),
+    WidgetSpec(
+        key="skill-loading-chart",
+        title="Target skill loading — latest experiment",
+        description=(
+            "Доля запусков, в которых агент загрузил соответствующий "
+            "generated skill."
+        ),
+        query=SKILL_LOADING_CHART_QUERY,
+        position={"x": 0, "y": 7, "w": 4, "h": 2},
+        widget_type="BAR_CHART",
+        properties={"xAxis": "configuration", "yAxis": "target_skill_loaded_pct"},
     ),
 )
 
@@ -352,9 +385,9 @@ def provision_dashboard(
             "id": widget_id,
             "title": widget.title,
             "description": widget.description,
-            "widget_type": "TABLE",
+            "widget_type": widget.widget_type,
             "properties": json.dumps(
-                {"color": "#F36C06", "autoRefresh": True},
+                {"color": "#F36C06", "autoRefresh": True, **widget.properties},
                 separators=(",", ":"),
             ),
             "config": json.dumps(
