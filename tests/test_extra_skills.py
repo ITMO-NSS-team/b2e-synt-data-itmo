@@ -27,6 +27,7 @@ from sim.agent.config import AgentConfig
 from sim.agent.loop import TurnResult
 from sim.agent.opencode import OpenCodeHarness
 from sim.agent.store import Store
+from sim.agent.tools import HeimdallTools
 
 
 def native(name: str, marker: str) -> dict:
@@ -225,6 +226,53 @@ def test_cli_bridge_environment_has_scoped_capability_and_no_admin_key(monkeypat
     assert "HEIMDALL_CATALOG_ADMIN_KEY" not in env
 
     assert "private-service-key" not in json.dumps(opencode.child_env(Path("/tmp/test-config.json")))
+
+
+def test_get_skills_returns_baseline_catalog_as_executor_sees_it(catalog):
+    (catalog.root / "zeta.md").write_text(native("zeta", "zeta_title")["content"])
+    catalog.state.invalidate()
+    state = SimpleNamespace(heimdall_url=catalog.url, heimdall_token="t")
+    client = TestClient(create_app(state))
+    extra = provision(catalog, [native("alpha", "hidden_from_baseline")])
+    assert extra.status_code == 201
+    response = client.get("/skills")
+    assert response.status_code == 200
+    assert response.json() == {
+        "skills": [
+            {
+                "name": "existing",
+                "title": "baseline",
+                "kind": "reference",
+                "domain": "general",
+                "description": "baseline",
+                "markdown": "# baseline\n\nbaseline\n\nПрименяй baseline.\n",
+            },
+            {
+                "name": "zeta",
+                "title": "zeta_title",
+                "kind": "reference",
+                "domain": "general",
+                "description": "zeta_title",
+                "markdown": "# zeta_title\n\nzeta_title\n\nПрименяй zeta_title.\n",
+            },
+        ]
+    }
+
+
+def test_get_skills_maps_heimdall_errors_to_502(catalog, monkeypatch):
+    original = HeimdallTools.__init__
+
+    def with_v1(self, base_url, **kwargs):
+        kwargs["channel"] = "v1"
+        original(self, base_url, **kwargs)
+
+    monkeypatch.setattr(HeimdallTools, "__init__", with_v1)
+    state = SimpleNamespace(heimdall_url=catalog.url, heimdall_token="t")
+    response = TestClient(create_app(state)).get("/skills")
+    assert response.status_code == 502
+    assert response.json() == {
+        "detail": "каталог скиллов доступен только в канале v2, запрошен v1",
+    }
 
 
 def test_empty_additions_do_not_require_provisioning_key(tmp_path, fingerprint):
