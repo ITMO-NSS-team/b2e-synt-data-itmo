@@ -120,11 +120,11 @@ class Registry:
             self._conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True,
                                          check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
-            self._lock = threading.Lock()
+            self._lock = threading.RLock()
             return
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -134,7 +134,19 @@ class Registry:
         self._conn.commit()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
+    def _fetchone(self, query: str, parameters=()):
+        # check_same_thread=False permits sharing, but Python statement-cache
+        # access and cursor consumption must still share the write lock.
+        with self._lock:
+            return self._conn.execute(query, parameters).fetchone()
+
+    def _fetchall(self, query: str, parameters=()):
+        with self._lock:
+            return self._conn.execute(query, parameters).fetchall()
+
+
 
     # ---------------------------------------------------------------- blobs
 
@@ -152,9 +164,9 @@ class Registry:
         return digest
 
     def get_object(self, digest: str) -> bytes | None:
-        row = self._conn.execute(
+        row = self._fetchone(
             "SELECT body FROM objects WHERE hash = ?", (digest,)
-        ).fetchone()
+        )
         return None if row is None else bytes(row["body"])
 
     def get_json(self, digest: str) -> Any | None:
@@ -201,16 +213,16 @@ class Registry:
         return _as_version(row)
 
     def head(self, name: str) -> Version | None:
-        row = self._conn.execute(
+        row = self._fetchone(
             "SELECT * FROM versions WHERE name = ? ORDER BY version DESC LIMIT 1",
             (name,),
-        ).fetchone()
+        )
         return None if row is None else _as_version(row)
 
     def get_version(self, name: str, version: int) -> Version | None:
-        row = self._conn.execute(
+        row = self._fetchone(
             "SELECT * FROM versions WHERE name = ? AND version = ?", (name, version)
-        ).fetchone()
+        )
         return None if row is None else _as_version(row)
 
     def resolve(self, ref: str) -> Version | None:
@@ -224,19 +236,19 @@ class Registry:
         return self.head(ref)
 
     def history(self, name: str) -> list[Version]:
-        rows = self._conn.execute(
+        rows = self._fetchall(
             "SELECT * FROM versions WHERE name = ? ORDER BY version DESC", (name,)
-        ).fetchall()
+        )
         return [_as_version(r) for r in rows]
 
     def names(self, kind: str | None = None) -> list[str]:
         if kind is None:
-            rows = self._conn.execute(
-                "SELECT DISTINCT name FROM versions ORDER BY name").fetchall()
+            rows = self._fetchall(
+                "SELECT DISTINCT name FROM versions ORDER BY name")
         else:
-            rows = self._conn.execute(
+            rows = self._fetchall(
                 "SELECT DISTINCT name FROM versions WHERE kind = ? ORDER BY name",
-                (kind,)).fetchall()
+                (kind,))
         return [r["name"] for r in rows]
 
     def load(self, ref: str) -> tuple[Version, Any]:
@@ -264,12 +276,12 @@ class Registry:
     def audit_read(self, *, target: str | None = None,
                    limit: int = 200) -> list[dict[str, Any]]:
         if target is None:
-            rows = self._conn.execute(
-                "SELECT * FROM audit ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+            rows = self._fetchall(
+                "SELECT * FROM audit ORDER BY ts DESC LIMIT ?", (limit,))
         else:
-            rows = self._conn.execute(
+            rows = self._fetchall(
                 "SELECT * FROM audit WHERE target = ? ORDER BY ts DESC LIMIT ?",
-                (target, limit)).fetchall()
+                (target, limit))
         return [
             {"id": r["id"], "ts": r["ts"], "actor": r["actor"], "action": r["action"],
              "target": r["target"], "detail": json.loads(r["detail"])}
@@ -277,7 +289,7 @@ class Registry:
         ]
 
     def iter_audit(self) -> Iterator[dict[str, Any]]:
-        for row in self._conn.execute("SELECT * FROM audit ORDER BY id"):
+        for row in self._fetchall("SELECT * FROM audit ORDER BY id"):
             yield {"id": row["id"], "ts": row["ts"], "actor": row["actor"],
                    "action": row["action"], "target": row["target"],
                    "detail": json.loads(row["detail"])}

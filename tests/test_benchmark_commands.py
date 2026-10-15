@@ -8,7 +8,7 @@ import subprocess
 def _make(*arguments: str) -> str:
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        ["make", "-n", *arguments],
+        ["make", "-n", "DOCKER=true", "BENCH_LOCK_HELD=1", "BENCH_MODES=general_knowledge,skills_disabled,existing_skills", *arguments],
         cwd=root,
         text=True,
         capture_output=True,

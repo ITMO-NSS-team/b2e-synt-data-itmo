@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from heimdall.catalog.model import Catalog
 from heimdall.engine.compile import compile_query
@@ -97,6 +97,43 @@ def validate_skill_catalog(root: str | Path, model_catalog: Catalog) -> Registry
     return registry
 
 
+@dataclass(frozen=True, slots=True)
+class PreflightContext:
+    """Phase-local validated data and catalogs, reused across every case."""
+    snapshot_root: Path
+    manifest: dict[str, Any]
+    identity: Any
+    model_catalog: Catalog
+    registries: dict[Path, Registry]
+    hashes: dict[Path, str]
+
+    def verify_unchanged(self) -> None:
+        for path, expected in self.hashes.items():
+            if verify_snapshot(path) != expected:
+                raise ValueError(f"catalog changed during preflight: {path}")
+
+
+def prepare_preflight_context(
+    snapshot_root: str | Path, standard_catalog_path: str | Path,
+    model_catalog_path: str | Path, modes: Iterable[ModeConfig],
+    *, identity_factory: Callable[..., IdentityIndex] = IdentityIndex,
+) -> PreflightContext:
+    selected = list(modes)
+    if not selected:
+        raise ValueError("preflight requires a selected mode")
+    root = Path(snapshot_root).resolve()
+    if not (root / "manifest.json").is_file() or not (root / "truth/people.json").is_file():
+        raise ValueError(f"data snapshot is unavailable: {root}")
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    identity = identity_factory(root, hr_employee_ids=selected[0].common.hr_employee_ids)
+    catalog = Catalog.load(model_catalog_path)
+    paths = {Path(standard_catalog_path).resolve()}
+    paths.update(Path(mode.catalog_path).resolve() for mode in selected if mode.catalog_path)
+    hashes = {path: verify_snapshot(path) for path in paths}
+    registries = {path: validate_skill_catalog(path, catalog) for path in paths}
+    return PreflightContext(root, manifest, identity, catalog, registries, hashes)
+
+
 def preflight_case(
     case: BenchmarkCase,
     mode: ModeConfig,
@@ -107,6 +144,7 @@ def preflight_case(
     agent_config_version: str,
     identity_factory: Callable[..., IdentityIndex] = IdentityIndex,
     schema_path: str | Path | None = None,
+    prepared: PreflightContext | None = None,
 ) -> PreflightResult:
     """Validate a case × mode pair. Draft and mock are non-errors but non-runnable.
 
@@ -152,34 +190,47 @@ def preflight_case(
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file() or not (root / "truth" / "people.json").is_file():
         raise ValueError(f"data snapshot is unavailable: {root}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = prepared.manifest if prepared else json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("snapshot_id") != case.raw["snapshot_id"]:
         raise ValueError(f"{case.case_id}: data snapshot manifest has a different snapshot_id")
     try:
-        scope = identity_factory(root, hr_employee_ids=mode.common.hr_employee_ids).scope_for(
-            case.raw["employee_id"]
-        )
+        if prepared and prepared.snapshot_root != root.resolve():
+            raise ValueError("prepared snapshot does not match case snapshot")
+        identity = prepared.identity if prepared else identity_factory(root, hr_employee_ids=mode.common.hr_employee_ids)
+        scope = identity.scope_for(case.raw["employee_id"])
     except Exception as exc:
         raise ValueError(f"{case.case_id}: employee does not exist in snapshot: {exc}") from exc
     if scope.role != case.raw["employee_role"]:
         raise ValueError(
             f"{case.case_id}: employee role mismatch: expected {case.raw['employee_role']}, actual {scope.role}"
         )
-    model_catalog = Catalog.load(model_catalog_path)
-    standard = Path(standard_catalog_path)
-    verify_snapshot(standard)
-    validate_skill_catalog(standard, model_catalog)
-    if strategy.requires_catalog:
-        if mode.catalog_path is None or mode.catalog_hash is None:
-            raise ValueError(f"{mode.name}: skill catalog path/hash is missing")
-        if verify_snapshot(mode.catalog_path) != mode.catalog_hash:
-            raise ValueError(f"{mode.name}: configured catalog hash differs from snapshot")
-        if Path(mode.catalog_path).resolve() != standard.resolve():
-            registry = validate_skill_catalog(mode.catalog_path, model_catalog)
+    if prepared:
+        if strategy.requires_catalog:
+            if mode.catalog_path is None or mode.catalog_hash is None:
+                raise ValueError(f"{mode.name}: skill catalog path/hash is missing")
+            path = Path(mode.catalog_path).resolve()
+            if prepared.hashes.get(path) != mode.catalog_hash:
+                raise ValueError(f"{mode.name}: configured catalog hash differs from snapshot")
             if strategy.generated:
-                missing = set(mode.generated_skill_names) - set(registry.active())
+                missing = set(mode.generated_skill_names) - set(prepared.registries[path].active())
                 if missing:
                     raise ValueError(f"generated target skills missing or inactive: {sorted(missing)}")
+    else:
+        model_catalog = Catalog.load(model_catalog_path)
+        standard = Path(standard_catalog_path)
+        verify_snapshot(standard)
+        validate_skill_catalog(standard, model_catalog)
+        if strategy.requires_catalog:
+            if mode.catalog_path is None or mode.catalog_hash is None:
+                raise ValueError(f"{mode.name}: skill catalog path/hash is missing")
+            if verify_snapshot(mode.catalog_path) != mode.catalog_hash:
+                raise ValueError(f"{mode.name}: configured catalog hash differs from snapshot")
+            if Path(mode.catalog_path).resolve() != standard.resolve():
+                registry = validate_skill_catalog(mode.catalog_path, model_catalog)
+                if strategy.generated:
+                    missing = set(mode.generated_skill_names) - set(registry.active())
+                    if missing:
+                        raise ValueError(f"generated target skills missing or inactive: {sorted(missing)}")
     fingerprint = RunFingerprint.create(
         agent_config_version=agent_config_version,
         prompt_registry_version=mode.common.prompt_registry_version,

@@ -24,6 +24,16 @@ def merge_phases(
     _validate_manifests(manifests, eval_id)
     plan = _read_json(Path(generated_plan)) if generated_plan else None
     _validate_generated_plan_execution(manifests, plan)
+    if plan and plan.get("experiment") == "prompt_detail":
+        common = manifests[0]["modes"][0]["common"]
+        registry = manifests[0]["live_stand"]["skill_registry_hash"]
+        for manifest in manifests:
+            if any(mode["common"] != common for mode in manifest["modes"]):
+                raise ValueError("detail phases have different model/prompt/snapshot/access conditions")
+            if manifest["live_stand"]["skill_registry_hash"] != registry:
+                raise ValueError("detail phase executable registry drift")
+            if manifest.get("workers", 1) != manifests[0].get("workers", 1):
+                raise ValueError("detail phase concurrency changed")
 
     writer = ResultWriter(results_root, eval_id)
     combined_manifest = dict(manifests[0])

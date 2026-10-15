@@ -66,7 +66,7 @@ class Store:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -94,7 +94,19 @@ class Store:
                 "ALTER TABLE sessions ADD COLUMN session_harness TEXT")
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
+    def _fetchone(self, query: str, parameters=()):
+        # check_same_thread=False permits sharing, but Python statement-cache
+        # access and cursor consumption must still share the write lock.
+        with self._lock:
+            return self._conn.execute(query, parameters).fetchone()
+
+    def _fetchall(self, query: str, parameters=()):
+        with self._lock:
+            return self._conn.execute(query, parameters).fetchall()
+
+
 
     # -------------------------------------------------------------- sessions
 
@@ -112,8 +124,8 @@ class Store:
         return session_id
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            "SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        row = self._fetchone(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,))
         if row is None:
             return None
         return {"id": row["id"], "employee_id": row["employee_id"],
@@ -148,13 +160,13 @@ class Store:
     def list_sessions(self, *, employee_id: str | None = None,
                       limit: int = 50) -> list[dict[str, Any]]:
         if employee_id:
-            rows = self._conn.execute(
+            rows = self._fetchall(
                 "SELECT * FROM sessions WHERE employee_id = ? "
-                "ORDER BY created_at DESC LIMIT ?", (str(employee_id), limit)).fetchall()
+                "ORDER BY created_at DESC LIMIT ?", (str(employee_id), limit))
         else:
-            rows = self._conn.execute(
+            rows = self._fetchall(
                 "SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?",
-                (limit,)).fetchall()
+                (limit,))
         return [{"id": r["id"], "employee_id": r["employee_id"],
                  "config_ref": r["config_ref"], "created_at": r["created_at"],
                  "fingerprint": json.loads(r["fingerprint"])} for r in rows]
@@ -178,9 +190,9 @@ class Store:
         return seq
 
     def messages(self, session_id: str) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        rows = self._fetchall(
             "SELECT * FROM messages WHERE session_id = ? ORDER BY seq",
-            (session_id,)).fetchall()
+            (session_id,))
         return [{"seq": r["seq"], "role": r["role"], "content": r["content"],
                  "trace_id": r["trace_id"], "created_at": r["created_at"],
                  "stats": json.loads(r["stats"])} for r in rows]
@@ -256,8 +268,8 @@ class Store:
             self._conn.commit()
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            "SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        row = self._fetchone(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,))
         if row is None:
             return None
         return {"id": row["id"], "status": row["status"],
@@ -267,7 +279,7 @@ class Store:
                 "result": json.loads(row["result"]), "error": row["error"]}
 
     def list_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
+        rows = self._fetchall(
             "SELECT id, status, created_at, updated_at FROM jobs "
-            "ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            "ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]

@@ -176,3 +176,26 @@ def test_require_env_refuses_blank_instead_of_docker_defaults(monkeypatch) -> No
     monkeypatch.setenv("HEIMDALL_URL", "  ")
     with pytest.raises(ValueError, match="HEIMDALL_URL is empty"):
         require_env("HEIMDALL_URL")
+
+
+def test_default_env_is_benchmark_local_and_ignores_deployment(tmp_path, monkeypatch):
+    import sim.benchmark.env as env_module
+    from sim.benchmark.path_lib import ENV_RELATIVE
+    assert ENV_RELATIVE == "sim/benchmark/.env"
+    (tmp_path / "deploy").mkdir()
+    (tmp_path / "sim/benchmark").mkdir(parents=True)
+    (tmp_path / "deploy/.env").write_text("BENCH_TEST_VALUE=deploy\n")
+    local = tmp_path / "sim/benchmark/.env"
+    local.write_text("BENCH_TEST_VALUE=benchmark\n")
+    monkeypatch.setattr(env_module, "ENV_PATH", local)
+    monkeypatch.delenv("BENCH_TEST_VALUE", raising=False)
+    monkeypatch.chdir(tmp_path / "deploy")
+    env_module.load_env()
+    assert os.environ["BENCH_TEST_VALUE"] == "benchmark"
+    monkeypatch.setenv("BENCH_TEST_VALUE", "process")
+    env_module.load_env()
+    assert os.environ["BENCH_TEST_VALUE"] == "process"
+    local.unlink()
+    monkeypatch.delenv("BENCH_TEST_VALUE")
+    env_module.load_env()
+    assert "BENCH_TEST_VALUE" not in os.environ

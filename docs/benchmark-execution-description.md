@@ -215,7 +215,7 @@ MCP-мост публикует ему ровно три инструмента 
 
 Требования:
 
-- заполнен `deploy/.env`;
+- заполнен `deploy/.env` для сервисов и `sim/benchmark/.env` для бенчмарка;
 - подготовлен снимок данных с `manifest.json` и `truth/people.json`;
 - кейсы имеют статус `verified`.
 
@@ -225,9 +225,43 @@ MCP-мост публикует ему ровно три инструмента 
 `BENCH_DATA_PATH` настраивать не требуется. Разовый запуск можно переопределить
 через `DATA_DIR=/absolute/path make benchmarking-check`.
 
-Каждая команда проверяет `manifest.json` и состояние `admin-ui`, `b2e-agent`, `phoenix`, `heimdall-emulator`. Если сервисы уже работают, они не перезапускаются. Иначе выполняется `make up`. Затем из `admin-ui` снимается live-config и запускается `benchmark-runner`.
+Сервисы используют `deploy/docker-compose.yml` и `deploy/.env`.
+Бенчмарк читает собственный `sim/benchmark/.env`; шаблон — `sim/benchmark/.env.example`.
+Настройки эксперимента из `deploy/.env` не читаются.
+В Compose сохранены исходные `name: b2e-itmo`, имена образов, targets и DNS-overlay.
+Локальный `COMPOSE_PROJECT_NAME` в `.env`, если задан, стандартным механизмом
+Docker Compose переопределяет имя проекта; перед сменой имени проверьте тома.
 
-Если в `deploy/.env` задан `OPENLIT_CLICKHOUSE_URL`, перед живым прогоном
+```bash
+cp sim/benchmark/.env.example sim/benchmark/.env  # один раз, затем заполнить
+make setup   # uv создаёт .venv и устанавливает зависимости из pyproject.toml
+make up      # исходная команда: подготовка DNS-overlay и up -d --build
+```
+
+Benchmark проверяет manifest снимка и состояние нужных сервисов. Ошибка Compose
+показывается сразу; она не считается отсутствием стенда. Если сервисов нет или
+нужно восстановить DNS-overlay, выполняется исходный `make up`. При готовом
+стенде смена каталога skills может пересоздать `heimdall-emulator` без остальных
+сервисов. Затем снимается live-config и запускается `benchmark-runner`.
+
+В `sim/benchmark/.env` можно задать `BENCH_MODES`, `BENCH_REPETITIONS`, `BENCH_RESULTS`,
+`BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_HEALTH_TIMEOUT`, `BENCH_LIMIT`
+и `BENCH_EVAL_ID`. Аргументы Make имеют приоритет. `BENCH_EVAL_ID` лучше оставить
+незаданным, чтобы каждый запуск получил новый идентификатор.
+`CASES`, `BENCHMARK_REPO_DIR` и `GENERATED_SKILLS_DIR` в `sim/benchmark/.env`
+задаются относительно корня репозитория. `DATA_DIR` остаётся настройкой
+стенда в `deploy/.env` и задаётся относительно `deploy/`.
+Например: `GENERATED_SKILLS_DIR=generated-skills/all-methods-20261008T113215Z`.
+Путь `GENERATED_SKILLS_DIR` в аргументе Make, как и прежде, задаётся относительно
+корня проекта либо абсолютным путём.
+
+Локальное окружение устанавливается через `uv pip install -e ".[serve]"`;
+`make setup` не пересоздаёт уже существующую `.venv`. `pyproject.toml` и отдельный
+`deploy/requirements.txt` сохранены в исходном виде. Синхронизация зависимостей
+Docker через lock-файл не вводится. `.dockerignore` исключает локальные окружения,
+данные, секреты и результаты из контекста сборки, не меняя Dockerfile.
+
+Если в `sim/benchmark/.env` задан `OPENLIT_CLICKHOUSE_URL`, перед живым прогоном
 идемпотентно создаётся или обновляется dashboard `B2E Benchmark`. В нём три
 постоянных табличных виджета: список запусков со ссылкой на trace,
 агрегированные метрики по режимам и попарные дельты accuracy относительно
@@ -286,7 +320,7 @@ make benchmarking \
 | Параметр | По умолчанию | Назначение |
 | --- | --- | --- |
 | `DATA_DIR` | значение из `deploy/.env`, иначе `../data` | единственный источник пути к снимку для стенда и benchmark |
-| `CASES` | значение `CASES` из `deploy/.env` | источник кейсов |
+| `CASES` | значение `CASES` из `sim/benchmark/.env` | источник кейсов |
 | `BENCH_MODES` | `general_knowledge,skills_disabled,existing_skills` | режимы запуска |
 | `BENCH_REPETITIONS` | `1` | число повторов полного прогона |
 | `BENCH_RESULTS` | `benchmarking/results` | каталог результатов |
@@ -450,8 +484,8 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 - `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — параметры запуска и результатов;
 - `BENCH_MODES` — по умолчанию `general_knowledge,skills_disabled,existing_skills`;
 - `BENCH_MODEL` — модель для pinned benchmark-конфигураций без изменения provider или harness.
-- `GENERATED_SKILLS_DIR` — абсолютный или относительный от корня репозитория
-  путь к `.md`/`.yaml` skills, созданным генератором.
+- `GENERATED_SKILLS_DIR` — в env путь относительно корня репозитория,
+  в аргументе Make — относительно корня репозитория; допустим абсолютный путь к `.md`/`.yaml` skills, созданным генератором.
 
 Если стенд находится на другой машине, сначала нужно войти на неё обычным способом, а затем вызвать одну из трёх команд в серверном checkout.
 
@@ -463,3 +497,105 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 - Серверный прогон требует, чтобы актуальная версия benchmark-кода находилась в checkout стенда.
 - `generated_skills` без `GENERATED_SKILLS_DIR` остаётся mock и не выбирается.
 - `existing_plus_generated` без `GENERATED_SKILLS_DIR` также остаётся mock и не выбирается.
+
+
+## Эксперимент по детализации описания
+
+`make benchmarking-detail` сравнивает уже сгенерированные Skill Factory навыки
+для `abstract`, `medium` и `detailed`. Артефакты должны лежать в
+`<GENERATED_SKILLS_DIR>/<method>/<level>/<artifact>/SKILL.md`.
+Генерация не выполняется: сравнивается качество применения готовых скилов.
+
+Для каждой пары метод × детализация создаётся отдельный каталог всех навыков
+этой пары, без стандартного каталога Heimdall и без `get_docs`. Агент сам выбирает
+нужный скил среди этого каталога; ожидаемый скил не сообщается ему в запросе.
+Каждая комбинация должна содержать ровно одну генерацию каждого канонического
+навыка. Несколько генераций требуют отдельного эксперимента, а не скрытого выбора.
+
+Все arms используют одинаковые кейсы, покрытые во всех выбранных комбинациях.
+Отсутствие любого требуемого скила исключает кейс из всех arms и фиксируется
+с причиной. Методы `no-context` и `compact` анализируются раздельно; baseline
+`skills_disabled` выполняется один раз по общему набору. Порядок generated-фаз
+перемешивается с фиксированным seed. Одновременно выполняются только независимые
+stateless-сессии; весь каталог остаётся одним и тем же до конца фазы.
+
+```bash
+make benchmarking-detail-check      # preflight всей матрицы, без LLM
+make benchmarking-detail-smoke      # один кейс во всех каталогах, живой запуск
+make benchmarking-detail            # все verified-кейсы, живой эксперимент
+
+# Только compact; несколько повторов решения каждого кейса
+make benchmarking-detail BENCH_DETAIL_METHODS=compact BENCH_REPETITIONS=3
+
+# Продолжить после прерывания без повторного запуска сохранённых ячеек
+make benchmarking-detail BENCH_EVAL_ID=detail-<исходный-id> BENCH_RESUME=1
+```
+
+Настройки `BENCH_DETAIL_METHODS`, `BENCH_DETAIL_LEVELS`, `BENCH_DETAIL_BASELINES`,
+`BENCH_DETAIL_WORKERS`, `BENCH_DETAIL_SEED` можно задать в `sim/benchmark/.env`.
+По умолчанию: оба метода; три уровня; один baseline; четыре параллельные сессии;
+seed 17. Чтобы убрать baseline, передайте `BENCH_DETAIL_BASELINES=` аргументом Make.
+`BENCH_REPETITIONS` — повторы решения, а не повторы генерации.
+
+Один Docker-стенд одновременно обслуживает один benchmark: dispatcher держит
+`var/benchmark-stand.lock`. Условия проверяются до первой LLM-сессии каждой фазы
+относительно первого manifest; модель, prompt, snapshot, роли и workers должны
+совпадать. При resume также должны совпадать входные кейсы, артефакты и настройки.
+Сохранённые ответы и оценки не переписываются. Несохранённый ход после прерывания
+может потребовать повторного вызова; неполная запись response/score требует разбора.
+
+Дополнительные результаты:
+
+- `detail-report.html` — сводный отчёт для открытия в браузере;
+- `detail-report.md` — текстовый отчёт;
+- `detail-report.json` — полные агрегаты, разбивка по навыкам и paired comparisons;
+- `detail-runs.csv` — каждая ячейка, метрики, session_id, trace_id и путь к трейсу.
+
+Основная quality-метрика — `answer_accuracy`; также доступны exact match,
+загрузка ожидаемого generated skill, ошибки и число инструментальных запросов,
+токены, задержка и стоимость выполнения. Ошибки формата считаются неверными
+ответами; инфраструктурные сбои показаны отдельно и не входят в conditional
+accuracy. Парные дельты рассчитаны только на общих scored-ячейках. Наряду с
+accuracy по кейсам выводится accuracy с равным весом каждого типа навыка.
+95% интервалы для парной macro-дельты получены bootstrap по типам навыков:
+аугментации одного навыка не считаются независимыми наблюдениями.
+
+Результат относится к готовым скилам из описаний разной детализации. Он сам по
+себе не доказывает необходимость интерактивного этапа уточнения SF: для такого
+вывода нужны отдельный контроль с уточнением и без него, несколько генераций
+на комбинацию и стоимость самого уточнения. Стоимость генерации из архива
+неизвестна; отчёт показывает только стоимость ответов benchmark-агента.
+
+
+Для быстрого, сбалансированного исследования всех типов навыков:
+
+```bash
+make benchmarking-detail BENCH_DETAIL_METHODS=compact BENCH_DETAIL_CASES_PER_SKILL=1
+```
+
+Выбор воспроизводим: сначала answerable-кейсы, затем остальные категории, с
+сортировкой по case_id. Один тип навыка не получает больше веса из-за большего
+числа аугментаций. Такой запуск — пилот; для покрытия всех сценариев нужен полный
+набор без `BENCH_DETAIL_CASES_PER_SKILL`.
+
+`brief-summary.md` формируется автоматически вместе с итоговым отчётом.
+Для наблюдения за длинным запуском без LLM-вызовов:
+
+```bash
+python -m sim.benchmark.detail_progress \
+  --plan var/benchmark-generated-plans/<eval_id>/plan.json --watch
+```
+
+Страница `<eval_id>-progress.html` располагается рядом с каталогом результатов
+и автоматически обновляется. Промежуточные средние по разным фазам не являются
+сравнением на одинаковых кейсах; окончательные дельты строятся по matched pairs.
+В detail-режиме серия из трёх infrastructure/unscored-сбоев прекращает новые
+запросы и сохраняет checkpoint. При изменении live fingerprint запуск также
+останавливается. Исправленные read-locks Registry, SkillStore и session Store
+позволяют выполнять независимые сессии параллельно, сохраняя read-only границы.
+
+При остановке оператором неполные фазовые результаты сохраняются отдельно в
+`benchmarking/results/.phases/<eval_id>/`. Маркер `experiment-status.json` в этом
+каталоге со статусом `cancelled` или `interrupted` завершает `detail_progress --watch`;
+страница перестаёт обновляться и явно указывает, что эксперимент не завершён.
+Исходные `responses.jsonl`, `scores.jsonl` и трейсы при этом не изменяются.

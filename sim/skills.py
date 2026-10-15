@@ -147,8 +147,9 @@ class SkillStore:
         # cannot promote its own drafts, and unconditional schema creation would
         # make that open fail.
         if not getattr(registry, "readonly", False):
-            self.registry._conn.executescript(SCHEMA)
-            self.registry._conn.commit()
+            with self.registry._lock:
+                self.registry._conn.executescript(SCHEMA)
+                self.registry._conn.commit()
 
     # ------------------------------------------------------------- creation
 
@@ -256,8 +257,8 @@ class SkillStore:
     # --------------------------------------------------------------- reading
 
     def get(self, code_hash: str) -> SkillRecord | None:
-        row = self.registry._conn.execute(
-            "SELECT * FROM skills WHERE code_hash = ?", (code_hash,)).fetchone()
+        row = self.registry._fetchone(
+            "SELECT * FROM skills WHERE code_hash = ?", (code_hash,))
         if row is None:
             return None
         return SkillRecord(
@@ -268,12 +269,12 @@ class SkillStore:
 
     def list(self, state: SkillState | None = None) -> list[SkillRecord]:
         if state is None:
-            rows = self.registry._conn.execute(
-                "SELECT * FROM skills ORDER BY updated_at DESC").fetchall()
+            rows = self.registry._fetchall(
+                "SELECT * FROM skills ORDER BY updated_at DESC")
         else:
-            rows = self.registry._conn.execute(
+            rows = self.registry._fetchall(
                 "SELECT * FROM skills WHERE state = ? ORDER BY updated_at DESC",
-                (state.value,)).fetchall()
+                (state.value,))
         return [SkillRecord(
             name=r["name"], code_hash=r["code_hash"],
             definition_hash=r["definition_hash"], state=SkillState(r["state"]),

@@ -14,7 +14,7 @@ def load_env(path: str | Path | None = None) -> None:
     file is allowed.
 
     Args:
-        path: Env file. ``None`` uses ``deploy/.env`` at the repository root.
+        path: Env file. ``None`` uses ``sim/benchmark/.env`` at the repository root.
     """
     env_path = Path(path) if path is not None else ENV_PATH
     if not env_path.is_file():
