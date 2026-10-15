@@ -166,3 +166,70 @@ def test_a_second_question_replaces_the_view():
     board.start("ses_a", "первый").observe(_tool_use("Bash"))
     board.start("ses_a", "второй")
     assert board.get("ses_a")["tool_calls"] == 0
+
+
+def test_native_tool_start_and_result_are_available_in_retained_final_snapshot():
+    board = ProgressBoard()
+    turn = board.start("session", "question")
+    turn.observe({"type": "assistant", "message": {"content": [{
+        "type": "tool_use", "id": "call-1", "name": "mcp__heimdall__get_skill",
+        "input": {"name": "draft"},
+    }]}})
+    assert board.get("session")["tool_steps"] == [{
+        "id": "call-1", "name": "mcp__heimdall__get_skill", "input": {"name": "draft"},
+        "status": "running", "output": None, "input_truncated": False,
+        "output_truncated": False, "name_truncated": False,
+    }]
+    turn.observe({"type": "user", "message": {"content": [{
+        "type": "tool_result", "tool_use_id": "call-1", "is_error": False,
+        "content": [{"type": "text", "text": "# Draft\n"}],
+    }]}})
+    turn.observe(RESULT)
+    snapshot = board.get("session")
+    assert snapshot["done"] is True
+    assert snapshot["tool_steps"] == [{
+        "id": "call-1", "name": "mcp__heimdall__get_skill", "input": {"name": "draft"},
+        "status": "completed", "output": "# Draft\n", "input_truncated": False,
+        "output_truncated": False, "name_truncated": False,
+    }]
+    snapshot["tool_steps"][0]["input"]["name"] = "mutated by observer"
+    assert board.get("session")["tool_steps"][0]["input"] == {"name": "draft"}
+
+
+def test_failed_native_tool_result_updates_matching_call_only():
+    turn = TurnProgress("s", "q")
+    for call_id in ("first", "second"):
+        turn.observe({"type": "assistant", "message": {"content": [{
+            "type": "tool_use", "id": call_id, "name": "Bash", "input": {},
+        }]}})
+    turn.observe({"type": "user", "message": {"content": [{
+        "type": "tool_result", "tool_use_id": "second", "is_error": True,
+        "content": "denied",
+    }]}})
+    assert [(step["id"], step["status"], step["output"])
+            for step in turn.snapshot()["tool_steps"]] == [
+        ("first", "running", None), ("second", "error", "denied")]
+
+
+def test_progress_tool_previews_are_bounded_in_utf8_and_steps_are_capped():
+    from sim.agent.progress import TOOL_PREVIEW_BYTES, TOOL_STEP_LIMIT
+    turn = TurnProgress("s", "q")
+    for i in range(TOOL_STEP_LIMIT + 2):
+        turn.observe({"type": "assistant", "message": {"content": [{
+            "type": "tool_use", "id": str(i), "name": "Bash",
+            "input": {"command": "я" * TOOL_PREVIEW_BYTES},
+        }]}})
+    turn.observe({"type": "user", "message": {"content": [{
+        "type": "tool_result", "tool_use_id": str(TOOL_STEP_LIMIT + 1),
+        "content": "я" * TOOL_PREVIEW_BYTES,
+    }]}})
+    snapshot = turn.snapshot()
+    assert snapshot["tool_calls"] == TOOL_STEP_LIMIT + 2
+    assert snapshot["tool_steps_dropped"] == 2
+    assert len(snapshot["tool_steps"]) == TOOL_STEP_LIMIT
+    assert snapshot["tool_steps"][0]["id"] == "2"
+    last = snapshot["tool_steps"][-1]
+    assert last["input_truncated"] is True and last["output_truncated"] is True
+    assert len(last["input"].encode()) <= TOOL_PREVIEW_BYTES
+    assert len(last["output"].encode()) <= TOOL_PREVIEW_BYTES
+    assert last["status"] == "completed"

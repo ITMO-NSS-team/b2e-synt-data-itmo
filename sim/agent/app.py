@@ -27,6 +27,8 @@ from pydantic import BaseModel, Field
 
 from sim import telemetry
 from sim.agent.config import AgentConfig
+from sim.agent.catalogs import SessionCatalogs
+from heimdall.skills.contexts import ExtraSkill
 from sim.agent.llm import ReplayMiss, build_client
 from sim.agent.loop import run_turn
 from sim.agent.progress import ProgressBoard
@@ -49,6 +51,7 @@ class CreateSession(BaseModel):
     employee_id: str
     config_ref: str = "agent_config"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    extra_skills: list[ExtraSkill] | None = Field(default=None, max_length=16)
 
 
 class PostMessage(BaseModel):
@@ -81,6 +84,8 @@ class AgentState:
         env = os.environ
         self.heimdall_url = env.get("HEIMDALL_URL", "http://heimdall-emulator:8081")
         self.heimdall_token = env.get("HEIMDALL_TOKEN", "sim-technical-account")
+        self.catalogs = SessionCatalogs(
+            self.heimdall_url, env.get("HEIMDALL_CATALOG_ADMIN_KEY", ""))
         self.llm_mode = env.get("B2E_LLM_MODE", "replay")
         self.cassette_dir = env.get("B2E_CASSETTES", "cassettes")
         self.registry = Registry(env.get("B2E_REGISTRY_DB", "var/registry.db"))
@@ -347,12 +352,39 @@ def create_app(state: AgentState | None = None) -> FastAPI:
     @app.post("/sessions", status_code=201)
     def create_session(payload: CreateSession) -> dict[str, Any]:
         fingerprint, _config, _prompt = state.build_fingerprint(payload.config_ref)
-        session_id = state.store.create_session(
-            employee_id=payload.employee_id, config_ref=payload.config_ref,
-            fingerprint=fingerprint.as_dict(), metadata=payload.metadata)
+        catalog = None
+        recorded_fingerprint = fingerprint.as_dict()
+        if payload.extra_skills:
+            catalog = state.catalogs.provision(
+                payload.employee_id, [file.model_dump() for file in payload.extra_skills])
+            recorded_fingerprint["skill_catalog"] = catalog["catalog_evidence"]
+        try:
+            session_id = state.store.create_session(
+                employee_id=payload.employee_id, config_ref=payload.config_ref,
+                fingerprint=recorded_fingerprint, metadata=payload.metadata)
+        except Exception:
+            if catalog is not None:
+                state.catalogs.close_context(catalog["catalog_context"])
+            raise
+        if catalog is not None:
+            state.catalogs.bind(session_id, catalog["catalog_context"])
         return {"session_id": session_id, "employee_id": payload.employee_id,
-                "fingerprint": fingerprint.as_dict(),
-                "condition_id": fingerprint.condition_id}
+                "fingerprint": recorded_fingerprint,
+                "condition_id": fingerprint.condition_id,
+                **({"catalog_evidence": catalog["catalog_evidence"]} if catalog else {})}
+
+    @app.delete("/sessions/{session_id}", status_code=204)
+    def close_session(session_id: str) -> None:
+        """Release an isolated extra-skills catalog, retaining session history.
+
+        Ordinary sessions have no private catalog and this operation is a no-op.
+        An in-flight isolated turn returns 409; retry after it completes.
+        """
+        session = state.store.get_session(session_id)
+        if session is None:
+            raise HTTPException(404, f"no session {session_id}")
+        if "skill_catalog" in session["fingerprint"]:
+            state.catalogs.close(session_id)
 
     @app.get("/sessions")
     def list_sessions(employee_id: str | None = None, limit: int = 50) -> dict[str, Any]:
@@ -364,7 +396,9 @@ def create_app(state: AgentState | None = None) -> FastAPI:
         session = state.store.get_session(session_id)
         if session is None:
             raise HTTPException(404, f"no session {session_id}")
-        return {**session, "messages": state.store.messages(session_id)}
+        return {**session, "messages": state.store.messages(session_id),
+                **({"catalog_evidence": session["fingerprint"]["skill_catalog"]}
+                   if "skill_catalog" in session["fingerprint"] else {})}
 
     @app.get("/sessions/{session_id}/progress")
     def get_progress(session_id: str) -> dict[str, Any]:
@@ -389,6 +423,13 @@ def create_app(state: AgentState | None = None) -> FastAPI:
         if session is None:
             raise HTTPException(404, f"no session {session_id}")
 
+        if "skill_catalog" in session["fingerprint"]:
+            with state.catalogs.turn(session) as catalog_context:
+                return perform_message(session_id, payload, session, catalog_context)
+        return perform_message(session_id, payload, session, None)
+
+    def perform_message(session_id: str, payload: PostMessage, session: dict,
+                        catalog_context: str | None) -> dict[str, Any]:
         fingerprint, config, prompt_template = state.build_fingerprint(
             session["config_ref"])
         _resume_session_id(session, config)
@@ -404,16 +445,19 @@ def create_app(state: AgentState | None = None) -> FastAPI:
             **session["metadata"],
             "question_id": payload.question_id,
             "employee_role": session["metadata"].get("role"),
+            **({"skill_catalog": session["fingerprint"]["skill_catalog"]}
+               if catalog_context is not None else {}),
         }
 
         if config.harness in ("claude_code", "open_code"):
             result = _run_claude_code(state, session, config, system_prompt,
                                       payload.content, fingerprint, session_id,
-                                      metadata)
+                                      metadata, catalog_context=catalog_context)
         else:
             tools = HeimdallTools(state.heimdall_url,
                                   employee_id=session["employee_id"],
-                                  token=state.heimdall_token)
+                                  token=state.heimdall_token,
+                                  catalog_context=catalog_context)
             # The same switch the claude_code arm reads, so the two harnesses
             # agree on what a session *is*. They had not: messages_api always
             # replayed history while claude_code never did, which made any
@@ -460,6 +504,8 @@ def create_app(state: AgentState | None = None) -> FastAPI:
                       "cost_mode": result.cost_mode},
             "errors": result.errors,
             "condition_id": fingerprint.condition_id,
+            **({"catalog_evidence": session["fingerprint"]["skill_catalog"]}
+               if catalog_context is not None else {}),
         }
 
     # -------------------------------------------------------------- batching
@@ -559,7 +605,8 @@ def _resume_session_id(session: dict[str, Any], config: AgentConfig) -> str | No
 def _run_claude_code(state: "AgentState", session: dict[str, Any],
                      config: AgentConfig, system_prompt: str, question: str,
                      fingerprint: RunFingerprint, session_id: str,
-                     metadata: dict[str, Any]) -> "TurnResult":
+                     metadata: dict[str, Any],
+                     catalog_context: str | None = None) -> "TurnResult":
     """Run one turn through the environment-selected headless CLI harness.
 
     The root span is opened here rather than inside the harness so that both
@@ -622,7 +669,8 @@ def _run_claude_code(state: "AgentState", session: dict[str, Any],
                 keep_stream=_keeps_raw_stream(metadata),
                 b2e_session_id=session_id,
                 resume_session_id=resume_session_id,
-                on_event=observe)
+                on_event=observe,
+                **({"catalog_context": catalog_context} if catalog_context is not None else {}))
         except Exception:
             # A turn that dies without closing its progress leaves every poller
             # waiting on a "думаю…" that will never advance — and an open tool

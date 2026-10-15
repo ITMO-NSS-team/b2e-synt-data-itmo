@@ -8,8 +8,8 @@ being broken. This module is what makes the wait legible.
 What it is not
 --------------
 It is not a second source of truth. The trace is the record; this is a view of
-one in-flight turn that is discarded the moment the turn ends. Nothing here is
-persisted, nothing here is fingerprinted, and no consumer of it may influence
+one turn retained briefly after it ends so a final poll can read completion.
+Nothing here is persisted, nothing here is fingerprinted, and no consumer of it may influence
 the turn — the Telegram bridge polls it read-only and the poll never reaches the
 model. Keeping that line sharp is what stops a progress display from quietly
 becoming agent behaviour that shows up in somebody's measurements.
@@ -22,9 +22,13 @@ The bot renders strings it is given.
 """
 from __future__ import annotations
 
+import copy
+import json
 import threading
 import time
 from typing import Any
+
+from sim.tool_outcomes import tool_outcome
 
 MCP_PREFIX = "mcp__heimdall__"
 
@@ -46,6 +50,16 @@ TOOL_LABELS = {
 #: How many recent steps the rendered line keeps. A turn can make a dozen calls
 #: and a status message that grows without bound is worse than no status at all.
 TRAIL = 3
+# Bounded observation previews; the recorded trace remains the full evidence.
+TOOL_STEP_LIMIT = 256
+TOOL_PREVIEW_BYTES = 4096
+
+
+def _preview(value: Any) -> tuple[Any, bool]:
+    encoded = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8", errors="replace")
+    if len(encoded) <= TOOL_PREVIEW_BYTES:
+        return json.loads(encoded), False
+    return encoded[:TOOL_PREVIEW_BYTES].decode("utf-8", errors="ignore"), True
 
 
 def label_for(tool_name: str) -> str:
@@ -69,6 +83,8 @@ class TurnProgress:
         self.started_at = time.time()
         self.updated_at = self.started_at
         self.steps: list[str] = []
+        self.tool_steps: list[dict[str, Any]] = []
+        self._tool_steps_dropped = 0
         self.tool_calls = 0
         self.heimdall_calls = 0
         self.done = False
@@ -82,18 +98,36 @@ class TurnProgress:
         if kind == "assistant":
             for block in (event.get("message") or {}).get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    self._step(label_for(block.get("name")),
+                    self._step(label_for(block.get("name")), block=block,
                                heimdall=str(block.get("name") or "")
                                .startswith(MCP_PREFIX))
+        elif kind == "user":
+            for block in (event.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    self._result(block)
         elif kind == "result":
             with self._lock:
                 self.done = True
                 self.failed = bool(event.get("is_error"))
                 self.updated_at = time.time()
 
-    def _step(self, label: str, *, heimdall: bool) -> None:
+    def _step(self, label: str, *, heimdall: bool, block: dict) -> None:
         with self._lock:
             self.tool_calls += 1
+            preview, truncated = _preview(block.get("input"))
+            name, name_truncated = _preview(str(block.get("name") or ""))
+            call_id = str(block.get("id") or f"step-{self.tool_calls}")
+            if len(call_id.encode("utf-8", errors="replace")) > TOOL_PREVIEW_BYTES:
+                call_id = f"step-{self.tool_calls}"
+            self.tool_steps.append({
+                "id": call_id, "name": name, "input": preview,
+                "status": "running", "output": None,
+                "input_truncated": truncated, "output_truncated": False,
+                "name_truncated": name_truncated,
+            })
+            if len(self.tool_steps) > TOOL_STEP_LIMIT:
+                del self.tool_steps[0]
+                self._tool_steps_dropped += 1
             if heimdall:
                 self.heimdall_calls += 1
             # Consecutive identical steps are collapsed. Paging a mart is five
@@ -102,6 +136,30 @@ class TurnProgress:
             if not self.steps or self.steps[-1] != label:
                 self.steps.append(label)
             self.updated_at = time.time()
+
+    def _result(self, block: dict) -> None:
+        call_id = str(block.get("tool_use_id") or "")
+        with self._lock:
+            for step in reversed(self.tool_steps):
+                if step["id"] != call_id:
+                    continue
+                content = block.get("content")
+                # The native stream supplies strings or MCP text blocks. Keep
+                # the response legible without retaining the unbounded payload.
+                if isinstance(content, list):
+                    content = "\n".join(
+                        item["text"] if isinstance(item, dict) else item
+                        for item in content
+                        if isinstance(item, str)
+                        or isinstance(item, dict) and isinstance(item.get("text"), str))
+                output, truncated = _preview(content)
+                outcome = tool_outcome(block.get("content"),
+                                       is_error=bool(block.get("is_error")),
+                                       denied=bool(block.get("permission_denied")))
+                step.update(output=output, output_truncated=truncated,
+                            status="error" if outcome["is_error"] else "completed")
+                self.updated_at = time.time()
+                break
 
     def finish(self, *, failed: bool = False) -> None:
         with self._lock:
@@ -117,6 +175,8 @@ class TurnProgress:
                 "session_id": self.session_id,
                 "elapsed_seconds": round(time.time() - self.started_at, 1),
                 "steps": list(self.steps),
+                "tool_steps": copy.deepcopy(self.tool_steps),
+                "tool_steps_dropped": self._tool_steps_dropped,
                 "tool_calls": self.tool_calls,
                 "heimdall_calls": self.heimdall_calls,
                 "done": self.done,

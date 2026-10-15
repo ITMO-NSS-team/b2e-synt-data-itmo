@@ -469,7 +469,8 @@ class ClaudeCodeHarness:
 
     def mcp_config(self, employee_id: str,
                    config: AgentConfig | None = None,
-                   trace_log: str | None = None) -> dict[str, Any]:
+                   trace_log: str | None = None,
+                   catalog_context: str | None = None) -> dict[str, Any]:
         """One stdio MCP server, carrying the acting identity and the subset.
 
         The identity is per-session and travels in the server's environment, so
@@ -488,6 +489,8 @@ class ClaudeCodeHarness:
             "HEIMDALL_EMPLOYEE_ID": str(employee_id),
             "HEIMDALL_CHANNEL": "v2",
         }
+        if catalog_context is not None:
+            env["HEIMDALL_CATALOG_CONTEXT"] = catalog_context
         if config is not None:
             prefix = f"mcp__{MCP_SERVER_NAME}__"
             env["HEIMDALL_TOOL_SUBSET"] = ",".join(
@@ -680,7 +683,8 @@ class ClaudeCodeHarness:
             employee_id: str, keep_stream: bool = True,
             b2e_session_id: str | None = None,
             resume_session_id: str | None = None,
-            on_event: "Callable[[dict[str, Any]], None] | None" = None
+            on_event: "Callable[[dict[str, Any]], None] | None" = None,
+            catalog_context: str | None = None
             ) -> ClaudeCodeResult:
         suffix = system_prompt + "\n" + self.harness_note(config)
         # Noted before the CLI starts: a resumed session's transcript holds every
@@ -699,7 +703,7 @@ class ClaudeCodeHarness:
         # calls as if they had just happened.
         bridge_log = workdir / f"heimdall-{uuid.uuid4().hex[:16]}.jsonl"
         mcp_path.write_text(
-            json.dumps(self.mcp_config(employee_id, config, str(bridge_log))), "utf-8")
+            json.dumps(self.mcp_config(employee_id, config, str(bridge_log), catalog_context)), "utf-8")
 
         if config.conversation_mode != "resume":
             resume_session_id = None

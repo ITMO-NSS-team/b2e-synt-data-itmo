@@ -154,6 +154,8 @@ services:
       HEIMDALL_SKILLS: ${HEIMDALL_SKILLS_ROOT:-/app/heimdall-skill-catalog/existing}
       HEIMDALL_TRAPS_ENABLED: ${TRAPS_ENABLED:-true}
       HEIMDALL_LATENCY_PROFILE: ${LATENCY_PROFILE:-realistic}
+      HEIMDALL_CATALOG_ADMIN_KEY: ${HEIMDALL_CATALOG_ADMIN_KEY:-}
+      HEIMDALL_CATALOG_TTL_SECONDS: ${HEIMDALL_CATALOG_TTL_SECONDS:-86400}
       HEIMDALL_ENABLE_DEV_ROUTER: "false"   # see docs/skill-execution-threat-model.md §1.1
       HEIMDALL_HR_EMPLOYEE_IDS: ${HR_EMPLOYEE_IDS:-}
       HEIMDALL_QUERY_BUDGET_BYTES: ${QUERY_BUDGET_BYTES:-4294967296}
@@ -216,6 +218,8 @@ services:
     environment:
       HEIMDALL_URL: http://heimdall-emulator:8081
       HEIMDALL_TOKEN: ${HEIMDALL_TOKEN:-sim-technical-account}
+      HEIMDALL_CATALOG_ADMIN_KEY: ${HEIMDALL_CATALOG_ADMIN_KEY:-}
+      HEIMDALL_CATALOG_TTL_SECONDS: ${HEIMDALL_CATALOG_TTL_SECONDS:-86400}
       B2E_LLM_MODE: ${B2E_LLM_MODE:-replay}
       B2E_CASSETTES: /app/cassettes
       B2E_REGISTRY_DB: /app/registry/registry.db
