@@ -58,6 +58,13 @@
 	redir /research /research/ 308
 	redir /agent /agent/ 308
 	redir /phoenix /phoenix/ 308
+	redir /benchmark-reports /benchmark-reports/ 308
+
+	# Only generated HTML reports are mounted here; raw answers and traces stay private.
+	handle_path /benchmark-reports/* {
+		root * /srv/benchmark-reports
+		file_server
+	}
 
 	# ---- research API (C4)
 	handle_path /research/* {

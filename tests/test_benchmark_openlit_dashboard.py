@@ -46,7 +46,11 @@ def _tables() -> list[dict[str, str]]:
 def test_provision_creates_board_widgets_and_links() -> None:
     store = FakeStore([_tables(), [], *([[]] * (len(WIDGETS) * 2))])
 
-    result = provision_dashboard(store, ui_url="http://openlit.example/")
+    result = provision_dashboard(
+        store,
+        ui_url="http://openlit.example/",
+        reports_url="https://stand.example/benchmark-reports/",
+    )
 
     assert result.created_board is True
     assert result.created_widgets == len(WIDGETS)
@@ -62,6 +66,7 @@ def test_provision_creates_board_widgets_and_links() -> None:
     runs = next(row for row in widget_rows if row["title"] == "Benchmark runs")
     assert "http://openlit.example" in runs["config"]
     assert "/telemetry/traces/" in runs["config"]
+    assert "https://stand.example/benchmark-reports" in runs["config"]
     charts = [row for row in widget_rows if row["widget_type"] == "BAR_CHART"]
     assert len(charts) == 3
     assert all('"xAxis"' in row["properties"] for row in charts)
@@ -85,10 +90,15 @@ def test_provision_updates_existing_resources_without_duplicates() -> None:
 
 
 def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
-    rendered = _render_query(RUNS_QUERY, "http://localhost:3000/")
+    rendered = _render_query(
+        RUNS_QUERY,
+        "http://localhost:3000/",
+        "https://localhost:8443/benchmark-reports/",
+    )
 
     assert "http://localhost:3000" in rendered
     assert "/telemetry/traces/" in rendered
+    assert "https://localhost:8443/benchmark-reports" in rendered
     assert "SpanId" in rendered
     assert "skills_disabled" in MODE_COMPARISON_QUERY
     assert "existing_skills" in MODE_COMPARISON_QUERY

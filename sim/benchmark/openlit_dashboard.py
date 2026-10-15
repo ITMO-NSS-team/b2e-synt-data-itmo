@@ -39,6 +39,10 @@ SELECT
     toUInt32OrZero(SpanAttributes['b2e.benchmark.case_count']) AS cases,
     toUInt32OrZero(SpanAttributes['b2e.summary.n_runs']) AS runs,
     toUInt32OrZero(SpanAttributes['b2e.summary.n_scored']) AS scored,
+    concat(
+        __BENCHMARK_REPORTS_URL__, '/',
+        SpanAttributes['b2e.benchmark.eval_id'], '/report.html'
+    ) AS report_url,
     concat(__OPENLIT_UI_URL__, '/telemetry/traces/', SpanId) AS trace_url
 FROM otel_traces
 WHERE
@@ -344,7 +348,7 @@ class ProvisionResult:
 
 
 def provision_dashboard(
-    store: DashboardStore, *, ui_url: str = "",
+    store: DashboardStore, *, ui_url: str = "", reports_url: str = "",
 ) -> ProvisionResult:
     """Create or refresh the managed board and its widgets."""
     _require_tables(store)
@@ -391,7 +395,7 @@ def provision_dashboard(
                 separators=(",", ":"),
             ),
             "config": json.dumps(
-                {"query": _render_query(widget.query, ui_url)},
+                {"query": _render_query(widget.query, ui_url, reports_url)},
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
@@ -434,11 +438,15 @@ def provision_dashboard(
     )
 
 
-def _render_query(query: str, ui_url: str) -> str:
+def _render_query(query: str, ui_url: str, reports_url: str = "") -> str:
     """Insert the deployment-specific UI base into stored trace links."""
     base = ui_url.rstrip("/")
+    report_base = reports_url.rstrip("/")
     literal = "'" + base.replace("'", "''") + "'"
-    return query.replace("__OPENLIT_UI_URL__", literal)
+    report_literal = "'" + report_base.replace("'", "''") + "'"
+    return query.replace("__OPENLIT_UI_URL__", literal).replace(
+        "__BENCHMARK_REPORTS_URL__", report_literal,
+    )
 
 
 def _require_tables(store: DashboardStore) -> None:
@@ -504,7 +512,14 @@ def main(argv: list[str] | None = None) -> int:
     store = ClickHouseHTTPStore(config)
     try:
         dashboard_url = (os.getenv("OPENLIT_UI_URL") or "").rstrip("/")
-        result = provision_dashboard(store, ui_url=dashboard_url)
+        public_url = (os.getenv("PUBLIC_URL") or "").rstrip("/")
+        reports_url = (
+            os.getenv("BENCHMARK_REPORTS_URL")
+            or (f"{public_url}/benchmark-reports" if public_url else "")
+        ).rstrip("/")
+        result = provision_dashboard(
+            store, ui_url=dashboard_url, reports_url=reports_url,
+        )
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         if args.required:
             raise SystemExit(f"OpenLIT dashboard provisioning failed: {exc}") from exc
