@@ -212,3 +212,32 @@ def test_preflight_rejects_unavailable_snapshot_and_invalid_reference_example(
         preflight_case(
             ready_case(), invalid_modes.existing_skills, **kwargs
         )
+
+
+def test_phase_context_reuses_identity_and_preserves_scope_checks(tmp_path):
+    from sim.benchmark.preflight import prepare_preflight_context
+    root = data_snapshot(tmp_path / "data")
+    standard = make_catalog(tmp_path / "skills")
+    modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
+    constructions = []
+    class Identity(FakeIdentity):
+        def __init__(self, *args, **kwargs):
+            constructions.append(1)
+            super().__init__(*args, **kwargs)
+    context = prepare_preflight_context(root, modes.existing_skills.catalog_path, MODEL_CATALOG,
+                                        [modes.skills_disabled], identity_factory=Identity)
+    case = ready_case()
+    for _ in range(2):
+        result = preflight_case(case, modes.skills_disabled, snapshot_root=root,
+            standard_catalog_path=modes.existing_skills.catalog_path,
+            model_catalog_path=MODEL_CATALOG, agent_config_version="agent@1",
+            schema_path=SCHEMA, prepared=context)
+        assert result.status == "ready"
+    assert len(constructions) == 1
+    case.raw["employee_id"] = 999
+    with pytest.raises(ValueError, match="employee does not exist"):
+        preflight_case(case, modes.skills_disabled, snapshot_root=root,
+            standard_catalog_path=modes.existing_skills.catalog_path,
+            model_catalog_path=MODEL_CATALOG, agent_config_version="agent@1",
+            schema_path=SCHEMA, prepared=context)
+    context.verify_unchanged()

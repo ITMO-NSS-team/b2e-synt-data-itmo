@@ -40,7 +40,7 @@ class RunResult:
 class ResultWriter:
     """Write each raw response once; scores stay independently reproducible."""
 
-    def __init__(self, results_root: str | Path, eval_id: str) -> None:
+    def __init__(self, results_root: str | Path, eval_id: str, *, resume: bool = False) -> None:
         """Create an empty evaluation directory.
 
         Args:
@@ -51,7 +51,8 @@ class ResultWriter:
             ValueError: If ``results_root/eval_id`` already has content.
         """
         self.root = Path(results_root).resolve() / eval_id
-        if self.root.exists() and any(self.root.iterdir()):
+        self.resume = resume
+        if self.root.exists() and any(self.root.iterdir()) and not resume:
             raise ValueError(f"evaluation output already exists: {self.root}")
         self.traces = self.root / "traces"
         self.responses_path = self.root / "responses.jsonl"
@@ -96,9 +97,40 @@ class ResultWriter:
         """
         path = self.root / "run-manifest.json"
         if path.exists():
-            raise ValueError(f"run manifest already exists: {path}")
+            if not self.resume:
+                raise ValueError(f"run manifest already exists: {path}")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if _resume_signature(saved) != _resume_signature(manifest):
+                raise ValueError("resume manifest differs: cases, catalog, concurrency or conditions changed")
+            return path
         path.write_text(_pretty_json(manifest) + "\n", encoding="utf-8")
         return path
+
+    def read_checkpoint(self) -> list[RunResult]:
+        """Read saved cells without rewriting them or repeating an LLM call."""
+        if not self.resume:
+            return []
+        def rows(path):
+            return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line] if path.exists() else []
+        scores = {row["run_id"]: row for row in rows(self.scores_path)}
+        results, seen = [], set()
+        for raw in rows(self.responses_path):
+            run_id = raw["run_id"]
+            if run_id in seen:
+                raise ValueError(f"duplicate checkpoint run: {run_id}")
+            seen.add(run_id)
+            if run_id not in scores and raw["status"] not in _SKIP_STATUSES:
+                raise ValueError(f"incomplete checkpoint cell {run_id}; review files before resuming")
+            results.append(RunResult(
+                run_id, raw["comparison_group_id"], raw["case_id"], raw["mode"],
+                int(raw["repetition"]), raw["status"],
+                {key: value for key, value in raw.items() if key not in {
+                    "run_id", "comparison_group_id", "case_id", "mode", "repetition", "status",
+                }}, scores.get(run_id), None,
+            ))
+        if set(scores) - seen:
+            raise ValueError("checkpoint contains scores without responses")
+        return results
 
     def write_summary(
         self,
@@ -310,3 +342,17 @@ def _pretty_json(value: Any) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, indent=2, default=str,
     )
+
+
+def _resume_signature(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Pinned ref numbers can advance; effective conditions must remain equal."""
+    return {
+        **{key: manifest.get(key) for key in ("eval_id", "check_only", "case_ids", "case_hashes", "repetitions", "workers")},
+        "skill_registry_hash": manifest.get("live_stand", {}).get("skill_registry_hash"),
+        "modes": [
+            {key: mode.get(key) for key in (
+                "name", "common", "tool_subset", "catalog_hash", "generated_skills_hash",
+                "generated_skill_names", "skills_enabled", "is_mock",
+            )} for mode in manifest.get("modes", [])
+        ],
+    }
