@@ -98,7 +98,8 @@ def test_two_multiple_skill_catalogs_use_native_read_routes_and_one_index(catalo
     assert evidence["baseline_hash"] != evidence["catalog_hash"]
     assert evidence["native_skills"] == [
         {"filename": f"{name}.md", "name": name,
-         "sha256": sha256(native(name, marker)["content"].encode()).hexdigest()}
+         "sha256": sha256(native(name, marker)["content"].encode()).hexdigest(),
+         "replaces": False}
         for name, marker in [("alpha", "alpha_unique"), ("beta", "beta_unique")]]
     detail = c.client.get(READS[2], headers=headers(ca)).json()
     assert detail["body"] == "Применяй alpha_unique.\n"
@@ -123,7 +124,6 @@ def test_two_multiple_skill_catalogs_use_native_read_routes_and_one_index(catalo
 
 
 @pytest.mark.parametrize("files", [
-    [native("existing", "collision")],
     [native("alpha", "one"), native("alpha", "two")],
     [native("alpha", "valid"), {"filename": "bad.md", "content": "---\nname: bad\n---\ninvalid"}],
     [{"filename": "../escape.md", "content": native("alpha", "valid")["content"]}],
@@ -134,6 +134,58 @@ def test_invalid_batch_is_atomic_and_never_changes_baseline(catalog, files):
     assert provision(catalog, files).status_code == 422
     assert catalog.state.catalog_contexts._views == {}
     assert catalog.state.registry.all_names() == ["existing"]
+
+
+def test_same_name_candidate_replaces_baseline_recipe(catalog):
+    recipe = (
+        "name: headcount\n"
+        "title: Original headcount\n"
+        "kind: recipe\n"
+        "domain: org\n"
+        "description: Original recipe\n"
+        "query: {schema: dm_core, logic_model: employee_actual, metrics: [fact_count]}\n"
+    )
+    path = catalog.root / "org" / "headcount.yaml"
+    path.parent.mkdir()
+    path.write_text(recipe)
+    catalog.state.invalidate()
+    original = catalog.client.get("/api/v2/mcp/skills/headcount/", headers=headers())
+    assert original.status_code == 200
+    assert original.json()["kind"] == "recipe"
+    assert original.json()["title"] == "Original headcount"
+    original_markdown = original.json()["markdown"]
+
+    candidate = native("headcount", "revised")
+    created = provision(catalog, [candidate])
+    assert created.status_code == 201
+    context = created.json()["catalog_context"]
+    assert created.json()["catalog_evidence"]["native_skills"] == [{
+        "filename": "headcount.md",
+        "name": "headcount",
+        "sha256": sha256(candidate["content"].encode()).hexdigest(),
+        "replaces": True,
+    }]
+    revised = catalog.client.get("/api/v2/mcp/skills/headcount/", headers=headers(context))
+    assert revised.status_code == 200
+    assert revised.json()["kind"] == "reference"
+    assert revised.json()["markdown"] == "# revised\n\nrevised\n\nПрименяй revised.\n"
+    assert revised.json()["body"] == "Применяй revised.\n"
+    overview = catalog.client.get("/api/v2/mcp/overview/", headers=headers(context)).json()
+    assert [skill for skill in overview["skills"] if skill["name"] == "headcount"] == [{
+        "name": "headcount", "title": "revised", "domain": "general",
+        "kind": "reference", "description": "revised",
+    }]
+    found = catalog.client.get(
+        "/api/v2/mcp/skills/?query=revised", headers=headers(context)).json()
+    assert found["results"][0] == {
+        "name": "headcount", "title": "revised", "domain": "general",
+        "kind": "reference", "description": "revised", "relevance": 1.0,
+    }
+    untouched = catalog.client.get("/api/v2/mcp/skills/headcount/", headers=headers())
+    assert untouched.status_code == 200
+    assert untouched.json()["kind"] == "recipe"
+    assert untouched.json()["markdown"] == original_markdown
+    assert catalog.state.registry.get("headcount").kind == "recipe"
 
 
 def test_context_authentication_employee_binding_close_and_expiration(catalog, monkeypatch):

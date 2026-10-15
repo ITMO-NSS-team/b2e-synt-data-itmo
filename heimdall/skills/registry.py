@@ -187,15 +187,21 @@ class Registry:
                     raise ValueError(f"{field} must be a string")
             if "/" in skill.name or "\\" in skill.name:
                 raise ValueError("skill name cannot contain path separators")
-            if skill.name in self._skills or skill.name in additions:
+            if skill.name in additions:
                 raise ValueError(f"duplicate skill name: {skill.name}")
             try:
                 skill.markdown
             except (AttributeError, TypeError, KeyError, ValueError) as exc:
                 raise ValueError(f"invalid extra skill {filename}: {exc}") from exc
             additions[skill.name] = skill
-        return Registry({**self._skills, **additions}, list(self._files),
-                        dict(self._duplicates))
+        # Имя из каталога в этой сессии заменяется кандидатом; дубль внутри пачки
+        # выше уже отклонён. Иначе _files/_duplicates базового реестра снова
+        # показали бы заменённый скилл.
+        replaced = set(additions) & set(self._skills)
+        files = [item for item in self._files if item.name not in replaced]
+        duplicates = {name: paths for name, paths in self._duplicates.items()
+                      if name not in replaced}
+        return Registry({**self._skills, **additions}, files, duplicates)
 
     def content_hash(self) -> str:
         from dataclasses import asdict
