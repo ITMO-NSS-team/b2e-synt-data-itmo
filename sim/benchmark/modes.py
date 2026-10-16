@@ -16,6 +16,7 @@ from sim.fingerprint import VALID_LATENCY_PROFILES
 
 GENERAL_KNOWLEDGE_TOOLS: tuple[str, ...] = ()
 DATA_TOOLS = ("list_models", "describe_model", "mcp_query")
+DOCS_ONLY_TOOLS = ("list_models", "describe_model", "get_docs", "mcp_query")
 SKILL_TOOLS = (
     "list_models", "describe_model", "get_docs", "mcp_query",
     "find_skills", "get_skill",
@@ -32,12 +33,16 @@ class BenchmarkMode(str, Enum):
     Attributes:
         GENERAL_KNOWLEDGE: Model knowledge only; no Heimdall tools or catalog.
         SKILLS_DISABLED: Data discovery and query tools, without skill guidance.
+        DOCS_ONLY: Data tools and ``get_docs``, without skill discovery.
+        EXISTING_SKILLS_NO_DOCS: Existing skills without ``get_docs``.
         EXISTING_SKILLS: Catalog of already-deployed skills plus ``find_skills``/``get_skill``.
         GENERATED_SKILLS: Generated-only catalog; may still be a mock.
         EXISTING_PLUS_GENERATED: Existing catalog plus one generated skill.
     """
     GENERAL_KNOWLEDGE = "general_knowledge"
     SKILLS_DISABLED = "skills_disabled"
+    DOCS_ONLY = "docs_only"
+    EXISTING_SKILLS_NO_DOCS = "existing_skills_no_docs"
     EXISTING_SKILLS = "existing_skills"
     GENERATED_SKILLS = "generated_skills"
     EXISTING_PLUS_GENERATED = "existing_plus_generated"
@@ -224,6 +229,20 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
             comparison_baselines=(BenchmarkMode.GENERAL_KNOWLEDGE,),
         ),
         ModeStrategy(
+            BenchmarkMode.DOCS_ONLY,
+            DOCS_ONLY_TOOLS,
+            False,
+            "base",
+            comparison_baselines=(BenchmarkMode.SKILLS_DISABLED,),
+        ),
+        ModeStrategy(
+            BenchmarkMode.EXISTING_SKILLS_NO_DOCS,
+            GENERATED_SKILL_TOOLS,
+            True,
+            "base",
+            comparison_baselines=(BenchmarkMode.SKILLS_DISABLED,),
+        ),
+        ModeStrategy(
             BenchmarkMode.EXISTING_SKILLS,
             SKILL_TOOLS,
             True,
@@ -231,6 +250,8 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
             comparison_baselines=(
                 BenchmarkMode.GENERAL_KNOWLEDGE,
                 BenchmarkMode.SKILLS_DISABLED,
+                BenchmarkMode.DOCS_ONLY,
+                BenchmarkMode.EXISTING_SKILLS_NO_DOCS,
             ),
         ),
         ModeStrategy(
@@ -287,6 +308,8 @@ class ModeConfigs:
     Attributes:
         general_knowledge: Baseline with no Heimdall tools, catalog, docs or data access.
         skills_disabled: Data tools without skill discovery, recipes or procedural docs.
+        docs_only: Data tools plus procedural docs, without skill discovery.
+        existing_skills_no_docs: Existing skills and data tools without procedural docs.
         existing_skills: Catalog of already-deployed skills.
         generated_skills: Generated-only catalog, possibly still a mock.
         existing_plus_generated: Existing catalog plus one generated skill.
@@ -313,6 +336,14 @@ class ModeConfigs:
     @property
     def skills_disabled(self) -> ModeConfig:
         return self[BenchmarkMode.SKILLS_DISABLED]
+
+    @property
+    def docs_only(self) -> ModeConfig:
+        return self[BenchmarkMode.DOCS_ONLY]
+
+    @property
+    def existing_skills_no_docs(self) -> ModeConfig:
+        return self[BenchmarkMode.EXISTING_SKILLS_NO_DOCS]
 
     @property
     def existing_skills(self) -> ModeConfig:

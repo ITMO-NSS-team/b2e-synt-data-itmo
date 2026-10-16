@@ -93,6 +93,8 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     metrics = calculate_metrics(case, mode("generated_skills"), actual, observations)
     assert metrics["exact_match"] == 1
     assert metrics["answer_accuracy"] == 1
+    assert metrics["any_skill_loaded"] == 1
+    assert metrics["expected_skill_loaded"] == 1
     assert metrics["generated_skill_loaded"] == 1
 
 
@@ -116,6 +118,8 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
     )
 
     assert metrics["generated_skill_loaded"] == 0
+    assert metrics["any_skill_loaded"] == 1
+    assert metrics["expected_skill_loaded"] == 0
 
 
 def test_combined_mode_scores_only_the_generated_target() -> None:

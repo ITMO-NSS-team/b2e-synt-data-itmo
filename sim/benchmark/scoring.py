@@ -125,11 +125,15 @@ def calculate_metrics(
         case.raw["expected_skills"],
         observations["loaded_skills"],
     )
+    loaded_skills = set(observations["loaded_skills"])
+    expected_skills = set(case.raw["expected_skills"])
     return {
         "answer_accuracy": answer_accuracy,
         "exact_match": exact_match,
         "outcome_accuracy": outcome_accuracy,
         "correct_refusal": correct_refusal,
+        "any_skill_loaded": int(bool(loaded_skills)),
+        "expected_skill_loaded": int(bool(loaded_skills & expected_skills)),
         "generated_skill_loaded": generated_loaded,
         **{name: observations.get(name) for name in OPERATIONAL_METRICS},
     }

@@ -96,7 +96,7 @@ prepare-resolv:
 
 up: prepare-resolv  ## поднять весь стек одной командой; PROFILE=telegram добавит бота
 	@test -f deploy/.env || { echo "нет deploy/.env — скопируйте deploy/.env.example"; exit 1; }
-	@mkdir -p var/empty-generated-skills
+	@mkdir -p var/empty-generated-skills "$(BENCHMARK_REPORT_DIR)"
 	@test -d "$(GENERATED_SKILLS_DIR)" || { echo "нет каталога skills: $(GENERATED_SKILLS_DIR)"; exit 1; }
 	@force_recreate=""; \
 	if test -f "$(RESOLV_RECREATE_MARKER)"; then \
@@ -158,6 +158,8 @@ export GENERATED_SKILLS_DIR
 BENCH_MODES ?= general_knowledge,skills_disabled,existing_skills
 BENCH_REPETITIONS ?= 1
 BENCH_RESULTS ?= benchmarking/results
+BENCHMARK_REPORT_DIR ?= $(abspath benchmarking/reports)
+export BENCHMARK_REPORT_DIR
 BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
 BENCH_EVAL_ID ?=
 BENCH_TIMEOUT ?= 1800
@@ -231,7 +233,7 @@ define BENCHMARK_PREPARE
 			exit 1; \
 		fi; \
 	fi
-	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" var/benchmark-catalog-snapshots
+	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" "$(BENCHMARK_REPORT_DIR)" var/benchmark-catalog-snapshots
 	$(COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
 		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
 endef
