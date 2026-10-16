@@ -1,6 +1,7 @@
 """C2 — the b2e-agent service on :8082.
 
 API:
+    GET  /skills                        baseline catalog as the executor sees it
     POST /sessions                      open a session for one employee
     POST /sessions/{id}/messages        ask a question, get an answer
     GET  /sessions/{id}                 session state and transcript
@@ -21,6 +22,7 @@ import threading
 import time
 from typing import Any
 
+import httpx
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -349,6 +351,33 @@ def create_app(state: AgentState | None = None) -> FastAPI:
                 "registry": state.registry_status if not missing else _status,
                 "missing_configs": missing}
 
+    @app.get("/skills")
+    def list_skills() -> dict[str, Any]:
+        tools = HeimdallTools(
+            state.heimdall_url, employee_id="0", token=state.heimdall_token)
+        try:
+            overview = _heimdall_payload(tools.get_overview())
+            cards = overview.get("skills")
+            if not isinstance(cards, list):
+                raise HTTPException(502, overview.get("detail", overview))
+            skills = []
+            for card in cards:
+                detail = _heimdall_payload(tools.get_skill(card["name"]))
+                skills.append({
+                    "name": detail["name"],
+                    "title": detail["title"],
+                    "kind": detail["kind"],
+                    "domain": detail["domain"],
+                    "description": detail["description"],
+                    "markdown": detail["markdown"],
+                })
+            skills.sort(key=lambda item: item["name"])
+            return {"skills": skills}
+        except (httpx.HTTPError, KeyError, TypeError) as exc:
+            raise HTTPException(502, str(exc)) from exc
+        finally:
+            tools.close()
+
     @app.post("/sessions", status_code=201)
     def create_session(payload: CreateSession) -> dict[str, Any]:
         fingerprint, _config, _prompt = state.build_fingerprint(payload.config_ref)
@@ -586,6 +615,15 @@ def create_app(state: AgentState | None = None) -> FastAPI:
         return guard.status()
 
     return app
+
+
+def _heimdall_payload(body: Any) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        raise HTTPException(502, f"unexpected Heimdall response: {body!r}"[:200])
+    status = body.get("_http_status", 200)
+    if isinstance(status, int) and status >= 400:
+        raise HTTPException(502, body.get("detail", body))
+    return body
 
 
 def _resume_session_id(session: dict[str, Any], config: AgentConfig) -> str | None:

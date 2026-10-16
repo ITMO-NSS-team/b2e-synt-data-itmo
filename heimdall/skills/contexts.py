@@ -53,19 +53,26 @@ class CatalogContexts:
         if any(len(file.content.encode()) > 262_144 for file in request.extra_skills):
             raise HTTPException(422, "extra skill exceeds 256 KiB")
         baseline_hash = base.content_hash()
+        baseline_names = set(base.all_names())
         try:
             registry = base.with_references([(file.filename, file.content)
                                             for file in request.extra_skills])
             catalog_hash = registry.content_hash()
         except (ValueError, TypeError, KeyError, RecursionError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        native_skills = []
+        for file in request.extra_skills:
+            name = _split_frontmatter(file.content)[0]["name"]
+            native_skills.append({
+                "filename": file.filename,
+                "name": name,
+                "sha256": sha256(file.content.encode()).hexdigest(),
+                "replaces": name in baseline_names,
+            })
         evidence = {
             "baseline_hash": baseline_hash,
             "catalog_hash": catalog_hash,
-            "native_skills": [{"filename": file.filename,
-                              "name": _split_frontmatter(file.content)[0]["name"],
-                              "sha256": sha256(file.content.encode()).hexdigest()}
-                             for file in request.extra_skills],
+            "native_skills": native_skills,
         }
         capability = secrets.token_urlsafe(32)
         with self._lock:
