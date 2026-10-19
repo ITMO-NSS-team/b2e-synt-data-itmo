@@ -77,7 +77,10 @@
               "uniqueItems": true
             },
             "allow_extra_rows": {"type": "boolean"},
-            "numeric_absolute_tolerance": {"type": "number", "minimum": 0}
+            "numeric_absolute_tolerance": {"type": "number", "minimum": 0},
+            "refusal_evidence": {
+              "enum": ["backend_403", "policy_refusal"]
+            }
           }
         },
         {
@@ -93,7 +96,10 @@
               "uniqueItems": true
             },
             "allow_extra_rows": {"type": "boolean"},
-            "numeric_absolute_tolerance": {"type": "number", "minimum": 0}
+            "numeric_absolute_tolerance": {"type": "number", "minimum": 0},
+            "refusal_evidence": {
+              "enum": ["backend_403", "policy_refusal"]
+            }
           }
         }
       ]

@@ -6,7 +6,7 @@ const colors = {
   generated_skills: "#f79009",
   existing_plus_generated: "#12b76a",
 };
-const symbols = { abstract: "circle", medium: "square", detailed: "triangle-up", "—": "diamond" };
+const symbols = { abstract: "circle", medium: "square", detailed: "diamond", "—": "cross" };
 const pct = value => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
 const num = value => value == null ? "—" : Number(value).toFixed(1);
 const esc = value => String(value).replace(/[&<>"']/g, char => ({
@@ -29,7 +29,7 @@ document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
   <td>${row.delta_pp == null ? "—" : `${row.delta_pp > 0 ? "+" : ""}${row.delta_pp.toFixed(1)}`}</td>
   <td>${pct(row.any_skill_loaded)}</td><td>${pct(row.expected_skill_loaded)}</td>
   <td>${row.median_latency_s == null ? "—" : `${num(row.median_latency_s)} с`}</td>
-  <td>${num(row.median_mcp_queries)}</td><td>${num(row.median_total_tokens)}</td>
+  <td>${num(row.median_mcp_queries)}</td><td>${num(row.median_iterations)}</td><td>${num(row.median_total_tokens)}</td>
 </tr>`).join("");
 
 const plotConfig = {
@@ -38,36 +38,39 @@ const plotConfig = {
   displaylogo: false,
   toImageButtonOptions: { format: "png" },
 };
-const layout = (xTitle, yTitle) => ({
+const layout = (xTitle, yTitle, zTitle) => ({
   margin: { l: 68, r: 20, t: 24, b: 62 },
   paper_bgcolor: "transparent",
   plot_bgcolor: "#fff",
   hovermode: "closest",
-  dragmode: "pan",
+  dragmode: "orbit",
   font: { family: "Inter, system-ui, sans-serif", color: "#344054" },
-  xaxis: { title: { text: xTitle }, gridcolor: "#e7ebf1", zerolinecolor: "#98a2b3", automargin: true },
-  yaxis: { title: { text: yTitle }, gridcolor: "#e7ebf1", zerolinecolor: "#98a2b3", automargin: true },
+  scene: {
+    xaxis: { title: { text: xTitle }, gridcolor: "#e7ebf1", zerolinecolor: "#98a2b3" },
+    yaxis: { title: { text: yTitle }, gridcolor: "#e7ebf1", zerolinecolor: "#98a2b3" },
+    zaxis: { title: { text: zTitle }, gridcolor: "#e7ebf1", zerolinecolor: "#98a2b3" },
+  },
 });
 const legend = (rows, correctness = false) => {
   let html = Object.entries(colors)
     .filter(([mode]) => rows.some(row => row.mode === mode))
     .map(([mode, color]) => `<span><i class="dot" style="background:${color}"></i>${mode}</span>`)
     .join("");
-  html += '<span><i class="shape">○</i>abstract</span><span><i class="shape">□</i>medium</span><span><i class="shape">△</i>detailed</span>';
+  html += '<span><i class="shape">○</i>abstract</span><span><i class="shape">□</i>medium</span><span><i class="shape">◇</i>detailed</span>';
   if (correctness) {
     html += '<span><i class="dot" style="background:#fff;border:2px solid #067647"></i>правильно</span><span><i class="dot" style="background:#fff;border:2px solid #d92d20"></i>ошибка</span>';
   }
   return html;
 };
 
-const runs = data.runs.filter(row => row.accuracy != null && row.latency_s != null && row.mcp_queries != null);
+const runs = data.runs.filter(row => row.accuracy != null && row.latency_s != null && row.iterations != null);
 const runCustom = runs.map(row => [
-  row.run_id, row.case_id, configName(row), row.accuracy, row.latency_s, row.mcp_queries,
+  row.run_id, row.case_id, configName(row), row.accuracy, row.latency_s, row.mcp_queries, row.iterations,
 ]);
 Plotly.newPlot("efficiency", [{
   type: "scatter",
   mode: "markers",
-  x: runs.map(row => row.mcp_queries),
+  x: runs.map(row => row.iterations),
   y: runs.map(row => row.latency_s),
   customdata: runCustom,
   marker: {
@@ -77,22 +80,32 @@ Plotly.newPlot("efficiency", [{
     line: { color: runs.map(row => row.accuracy === 1 ? "#067647" : "#d92d20"), width: 3 },
     opacity: 0.85,
   },
-  hovertemplate: "<b>%{customdata[0]}</b><br>case: %{customdata[1]}<br>%{customdata[2]}<br>accuracy: %{customdata[3]}<br>time: %{customdata[4]:.1f} s<br>mcp_query: %{customdata[5]}<extra></extra>",
-}], layout("Число вызовов mcp_query, шт.", "Время выполнения, с"), plotConfig);
+  hovertemplate: "<b>%{customdata[0]}</b><br>case: %{customdata[1]}<br>%{customdata[2]}<br>accuracy: %{customdata[3]}<br>time: %{customdata[4]:.1f} s<br>mcp_query: %{customdata[5]}<br>steps: %{customdata[6]}<extra></extra>",
+}], {
+  margin: { l: 68, r: 20, t: 24, b: 62 },
+  paper_bgcolor: "transparent",
+  plot_bgcolor: "#fff",
+  hovermode: "closest",
+  dragmode: "pan",
+  font: { family: "Inter, system-ui, sans-serif", color: "#344054" },
+  xaxis: { title: { text: "Шаги агента, шт." }, gridcolor: "#e7ebf1", zerolinecolor: "#98a2b3", automargin: true },
+  yaxis: { title: { text: "Время выполнения, с" }, gridcolor: "#e7ebf1", zerolinecolor: "#98a2b3", automargin: true },
+}, plotConfig);
 document.getElementById("efficiency-legend").innerHTML = legend(data.runs, true);
 
-const aggregates = data.aggregates.filter(row => row.accuracy != null && row.median_total_tokens != null);
+const aggregates = data.aggregates.filter(row => row.accuracy != null && row.median_total_tokens != null && row.median_iterations != null);
 const aggregateCustom = aggregates.map(row => [
-  configName(row), row.accuracy, row.median_total_tokens, row.median_mcp_queries, row.runs,
+  configName(row), row.accuracy, row.median_total_tokens, row.median_mcp_queries, row.median_iterations, row.runs,
 ]);
-const qualityLayout = layout("Медиана total_tokens, токены", "Answer_accuracy, %");
-qualityLayout.yaxis.range = [-0.03, 1.03];
-qualityLayout.yaxis.tickformat = ".0%";
+const qualityLayout = layout("Медиана total_tokens, токены", "Answer_accuracy, %", "Медиана шагов, шт.");
+qualityLayout.scene.yaxis.range = [-0.03, 1.03];
+qualityLayout.scene.yaxis.tickformat = ".0%";
 Plotly.newPlot("quality-cost", [{
-  type: "scatter",
+  type: "scatter3d",
   mode: "markers",
   x: aggregates.map(row => row.median_total_tokens),
   y: aggregates.map(row => row.accuracy),
+  z: aggregates.map(row => row.median_iterations),
   customdata: aggregateCustom,
   marker: {
     size: 12,
@@ -101,17 +114,17 @@ Plotly.newPlot("quality-cost", [{
     line: { color: "#fff", width: 2 },
     opacity: 0.9,
   },
-  hovertemplate: "<b>%{customdata[0]}</b><br>accuracy: %{customdata[1]:.1%}<br>tokens: %{customdata[2]:.1f}<br>median mcp_query: %{customdata[3]:.1f}<br>runs: %{customdata[4]}<extra></extra>",
+  hovertemplate: "<b>%{customdata[0]}</b><br>accuracy: %{customdata[1]:.1%}<br>tokens: %{customdata[2]:.1f}<br>median mcp_query: %{customdata[3]:.1f}<br>median steps: %{customdata[4]:.1f}<br>runs: %{customdata[5]}<extra></extra>",
 }], qualityLayout, plotConfig);
 document.getElementById("quality-legend").innerHTML = legend(aggregates);
 
 document.getElementById("efficiency").on("plotly_click", event => {
   const row = event.points[0].customdata;
-  document.getElementById("efficiency-selection").textContent = `${row[0]} | case: ${row[1]} | ${row[2]} | accuracy: ${row[3]} | time: ${num(row[4])} s | mcp_query: ${row[5]}`;
+  document.getElementById("efficiency-selection").textContent = `${row[0]} | case: ${row[1]} | ${row[2]} | accuracy: ${row[3]} | time: ${num(row[4])} s | mcp_query: ${row[5]} | steps: ${row[6]}`;
 });
 document.getElementById("quality-cost").on("plotly_click", event => {
   const row = event.points[0].customdata;
-  document.getElementById("quality-selection").textContent = `${row[0]} | accuracy: ${pct(row[1])} | tokens: ${num(row[2])} | median mcp_query: ${num(row[3])} | runs: ${row[4]}`;
+  document.getElementById("quality-selection").textContent = `${row[0]} | accuracy: ${pct(row[1])} | tokens: ${num(row[2])} | median mcp_query: ${num(row[3])} | median steps: ${num(row[4])} | runs: ${row[5]}`;
 });
 
 document.querySelectorAll(".expand").forEach(button => button.addEventListener("click", () => {

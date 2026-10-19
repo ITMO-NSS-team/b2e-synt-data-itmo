@@ -128,6 +128,7 @@ def _point(row: dict[str, Any]) -> dict[str, Any]:
         "expected_skill_loaded": metrics.get("expected_skill_loaded"),
         "latency_s": latency / 1000 if latency is not None else None,
         "mcp_queries": metrics.get("mcp_query_calls"),
+        "iterations": metrics.get("iterations"),
         "total_tokens": metrics.get("total_tokens"),
     }
 
@@ -184,6 +185,7 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
             ),
             "median_latency_s": _median(point["latency_s"] for point in group),
             "median_mcp_queries": _median(point["mcp_queries"] for point in group),
+            "median_iterations": _median(point["iterations"] for point in group),
             "median_total_tokens": _median(point["total_tokens"] for point in group),
         })
     return output

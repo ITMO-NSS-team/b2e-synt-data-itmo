@@ -15,22 +15,22 @@
     <section class="charts">
       <article class="panel">
         <div class="chart-title">
-          <h2>Время × вызовы mcp_query</h2>
+          <h2>Время × шаги</h2>
           <button class="expand" type="button">Развернуть</button>
         </div>
-        <div class="muted">Одна точка — один run; цвет — режим, форма — детализация, контур — верность.</div>
-        <div id="efficiency" class="plot" aria-label="График времени и вызовов mcp_query"></div>
+        <div class="muted">Одна точка — один run; цвет — режим, форма — детализация, контур — верность. Значение mcp_query видно при наведении или нажатии на точку.</div>
+        <div id="efficiency" class="plot" aria-label="График времени и шагов"></div>
         <div id="efficiency-legend" class="legend"></div>
         <div id="efficiency-selection" class="selection">Нажмите на точку, чтобы увидеть конкретный run.</div>
       </article>
 
       <article class="panel">
         <div class="chart-title">
-          <h2>Answer_accuracy × токены</h2>
+          <h2>Answer_accuracy × токены × шаги</h2>
           <button class="expand" type="button">Развернуть</button>
         </div>
         <div class="muted">Одна точка — агрегированная конфигурация; цвет — режим, форма — детализация.</div>
-        <div id="quality-cost" class="plot" aria-label="График Answer_accuracy и числа токенов"></div>
+        <div id="quality-cost" class="plot" aria-label="График Answer_accuracy, числа токенов и медианы шагов"></div>
         <div id="quality-legend" class="legend"></div>
         <div id="quality-selection" class="selection">Нажмите на точку, чтобы увидеть агрегированные значения.</div>
       </article>
@@ -44,7 +44,7 @@
             <th>Режим</th><th>Метод</th><th>Детализация</th><th>Runs</th>
             <th>Accuracy</th><th>Δ к existing, п.п.</th>
             <th>Любой skill загружен</th><th>Expected skill загружен</th>
-            <th>Медиана времени</th><th>Медиана mcp_query</th><th>Медиана токенов</th>
+            <th>Медиана времени</th><th>Медиана mcp_query</th><th>Медиана шагов</th><th>Медиана токенов</th>
           </tr></thead>
           <tbody id="metrics"></tbody>
         </table>

@@ -224,6 +224,40 @@ def test_access_refusal_requires_heimdall_403_and_empty_rows() -> None:
     assert leaked["answer_accuracy"] == 0
 
 
+def test_policy_refusal_requires_no_data_query() -> None:
+    case = ready_case()
+    case.raw["category"] = "access_control"
+    case.raw["gold_answer"] = {"outcome": "access_control", "rows": []}
+    case.raw["gold_comparison"]["refusal_evidence"] = "policy_refusal"
+    observations = {
+        "loaded_skills": ["absence_limits"],
+        "heimdall_calls": 2,
+        "mcp_query_calls": 0,
+        "failed_tool_calls": 0,
+        "total_tokens": 1,
+        "latency_ms": 1,
+        "agent_duration_ms": 1,
+        "tool_time_ms": 1,
+        "http_statuses": [],
+        "error_codes": [],
+        "mcp_query_rows": [],
+    }
+    refusal = NormalizedAnswer(
+        {"outcome": "access_control", "rows": [], "comment": "Только свои данные"},
+        None,
+    )
+
+    metrics = calculate_metrics(case, mode(), refusal, observations)
+    assert metrics["correct_refusal"] == 1
+    assert metrics["answer_accuracy"] == 1
+
+    queried = calculate_metrics(
+        case, mode(), refusal, dict(observations, mcp_query_calls=1),
+    )
+    assert queried["correct_refusal"] == 0
+    assert queried["answer_accuracy"] == 0
+
+
 def test_format_failure_is_scored_as_incorrect() -> None:
     metrics = calculate_metrics(
         ready_case(), mode(), NormalizedAnswer(None, "invalid JSON"),

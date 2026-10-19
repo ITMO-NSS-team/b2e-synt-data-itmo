@@ -39,7 +39,7 @@ class BenchmarkRunner:
     activator: ModeActivator
     executor: SessionExecutor
     writer: ResultWriter | None = None
-    scorer_version: str = "benchmark-scorer@1"
+    scorer_version: str = "benchmark-scorer@2"
     mode_labels: Mapping[str, str] | None = None
 
     def run(

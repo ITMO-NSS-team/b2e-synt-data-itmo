@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from sim.benchmark.report import write_report, write_report_from_files
 
 
-def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int):
+def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int, steps: int):
     return SimpleNamespace(
         run_id=run_id, case_id="case-0001-00", mode=mode, repetition=1,
         status="completed", score={"metrics": {
@@ -13,6 +13,7 @@ def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int):
             "generated_skill_loaded": 1 if "generated" in mode else None,
             "latency_ms": latency,
             "mcp_query_calls": calls,
+            "iterations": steps,
             "total_tokens": 100 * calls,
         }},
         response={
@@ -30,21 +31,22 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     public = tmp_path / "public"
     monkeypatch.setenv("BENCHMARK_REPORT_DIR", str(public))
     results = [
-        _result("run-existing", "existing_skills", 0, 1000, 2),
+        _result("run-existing", "existing_skills", 0, 1000, 2, 2),
         _result(
             "run-generated",
             "existing_plus_generated@compact--medium--skill-id",
-            1, 3000, 4,
+            1, 3000, 4, 3,
         ),
+        _result("run-generated-2", "existing_plus_generated@compact--medium--skill-id", 1, 3000, 4, 7),
     ]
 
     text = write_report(tmp_path / "eval-1", results).read_text(encoding="utf-8")
 
     assert "run-existing" in text
     assert "run-generated" in text
-    assert "Время × вызовы mcp_query" in text
+    assert "Время × шаги" in text
     assert "Answer_accuracy × токены" in text
-    assert "Число вызовов mcp_query, шт." in text
+    assert "Число вызовов mcp_query, шт." not in text
     assert "Время выполнения, с" in text
     assert "Медиана total_tokens, токены" in text
     assert "Answer_accuracy, %" in text
@@ -60,6 +62,15 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert "Нажмите на точку" in text
     assert "Любой skill загружен" in text
     assert "Expected skill загружен" in text
+    assert "Медиана шагов" in text
+    assert "Шаги агента, шт." in text
+    assert text.count('type: "scatter3d"') == 1
+    assert 'type: "scatter"' in text
+    assert 'x: runs.map(row => row.iterations)' in text
+    assert 'mcp_query: %{customdata[5]}' in text
+    assert 'dragmode: "orbit"' in text
+    assert '"iterations":7' in text
+    assert '"median_iterations":5.0' in text
     assert '"method":"compact"' in text
     assert '"detail":"medium"' in text
     assert '"median_latency_s":3.0' in text
@@ -89,3 +100,4 @@ def test_old_result_files_backfill_skill_metrics(tmp_path) -> None:
 
     assert '"any_skill_loaded":1' in text
     assert '"expected_skill_loaded":1' in text
+    assert '"median_iterations":null' in text
