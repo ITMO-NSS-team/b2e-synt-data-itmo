@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>B2E benchmark report</title>
+  <style>$styles</style>
+</head>
+<body>
+  <main class="page">
+    <h1>B2E benchmark</h1>
+    <div id="eval" class="muted"></div>
+    <section class="cards" id="cards"></section>
+
+    <section class="charts">
+      <article class="panel">
+        <div class="chart-title">
+          <h2>Время × шаги</h2>
+          <button class="expand" type="button">Развернуть</button>
+        </div>
+        <div class="muted">Одна точка — один run; цвет — режим, форма — детализация, контур — верность. Значение mcp_query видно при наведении или нажатии на точку.</div>
+        <div id="efficiency" class="plot" aria-label="График времени и шагов"></div>
+        <div id="efficiency-legend" class="legend"></div>
+        <div id="efficiency-selection" class="selection">Нажмите на точку, чтобы увидеть конкретный run.</div>
+      </article>
+
+      <article class="panel">
+        <div class="chart-title">
+          <h2>Answer_accuracy × токены × шаги</h2>
+          <button class="expand" type="button">Развернуть</button>
+        </div>
+        <div class="muted">Одна точка — агрегированная конфигурация; цвет — режим, форма — детализация.</div>
+        <div id="quality-cost" class="plot" aria-label="График Answer_accuracy, числа токенов и медианы шагов"></div>
+        <div id="quality-legend" class="legend"></div>
+        <div id="quality-selection" class="selection">Нажмите на точку, чтобы увидеть агрегированные значения.</div>
+      </article>
+    </section>
+
+    <article class="panel metrics-panel">
+      <h2>Агрегированные метрики</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>Режим</th><th>Метод</th><th>Детализация</th><th>Runs</th>
+            <th>Accuracy</th><th>Δ к existing, п.п.</th>
+            <th>Любой skill загружен</th><th>Expected skill загружен</th>
+            <th>Медиана времени</th><th>Медиана mcp_query</th><th>Медиана шагов</th><th>Медиана токенов</th>
+          </tr></thead>
+          <tbody id="metrics"></tbody>
+        </table>
+      </div>
+    </article>
+  </main>
+
+  <script id="report-data" type="application/json">$payload</script>
+  <script>$plotly</script>
+  <script>$script</script>
+</body>
+</html>

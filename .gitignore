@@ -72,8 +72,5 @@ b2e-skill-benchmark/
 
 # Local benchmark runs and reproducible condition snapshots.
 benchmarking/results/
-var/benchmark-live-config.json
-var/benchmark-catalog-snapshots/
-var/benchmark-generated-plans/
-var/empty-generated-skills/
-var/benchmark-subsets/*
+benchmarking/reports/
+var/

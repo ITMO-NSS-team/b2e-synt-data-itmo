@@ -114,11 +114,14 @@ class ResultWriter:
         Returns:
             Path of ``summary.json``.
         """
-        summary = summarize_results(results)
+        rows = list(results)
+        summary = summarize_results(rows)
         if extra:
             summary.update(extra)
         path = self.root / "summary.json"
         path.write_text(_pretty_json(summary) + "\n", encoding="utf-8")
+        from .report import write_report
+        write_report(self.root, rows)
         return path
 
 
@@ -190,7 +193,8 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
                 name: _mean(metric.get(name) for metric in metrics)
                 for name in (
                     "answer_accuracy", "exact_match", "outcome_accuracy",
-                    "correct_refusal", "generated_skill_loaded",
+                    "correct_refusal", "any_skill_loaded",
+                    "expected_skill_loaded", "generated_skill_loaded",
                     *OPERATIONAL_METRICS,
                 )
             },
@@ -234,7 +238,8 @@ def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
     output: dict[str, Any] = {}
     for name in (
         "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
-        "generated_skill_loaded", *OPERATIONAL_METRICS,
+        "any_skill_loaded", "expected_skill_loaded", "generated_skill_loaded",
+        *OPERATIONAL_METRICS,
     ):
         a, b = target.get(name), baseline.get(name)
         if a is None or b is None:
@@ -280,7 +285,8 @@ def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     rows = list(metrics)
     names = (
         "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
-        "generated_skill_loaded", *OPERATIONAL_METRICS,
+        "any_skill_loaded", "expected_skill_loaded", "generated_skill_loaded",
+        *OPERATIONAL_METRICS,
     )
     return {
         name: _mean(row.get(name) for row in rows)

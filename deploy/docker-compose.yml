@@ -67,6 +67,7 @@ services:
       - "${BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-8080}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../benchmarking/reports:/srv/benchmark-reports:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
@@ -375,6 +376,7 @@ services:
     environment:
       PYTHONPATH: /app
       HOME: /tmp
+      BENCHMARK_REPORT_DIR: /app/benchmarking/reports
       PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
       OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-}
@@ -385,6 +387,7 @@ services:
       - ../heimdall:/app/heimdall:ro
       - ../benchmarking:/app/benchmarking:ro
       - ../benchmarking/results:/app/benchmarking/results
+      - ../benchmarking/reports:/app/benchmarking/reports
       - ${BENCHMARK_REPO_DIR:-../b2e-skill-benchmark}:/app/b2e-skill-benchmark:ro
       - ../heimdall-skills:/app/heimdall-skills:ro
       - ${GENERATED_SKILLS_DIR:-../var/empty-generated-skills}:/app/generated-skills:ro
