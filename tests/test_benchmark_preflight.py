@@ -7,9 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from heimdall.catalog.model import Catalog
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import CommonConditions, build_modes
-from sim.benchmark.preflight import preflight_case
+from sim.benchmark.preflight import preflight_case, validate_skill_catalog
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE, MODEL_CATALOG, SCHEMA
 
 
@@ -68,6 +69,55 @@ def data_snapshot(path: Path, snapshot_id: str = "heimdall-sandbox@test") -> Pat
     )
     (path / "truth" / "people.json").write_text("{}", encoding="utf-8")
     return path
+
+
+@pytest.mark.parametrize("date_from,date_to", [
+    ("<D>", "<D + 1 день>"),
+    ("<ДАТА РАСЧЁТА>", "<СЛЕДУЮЩИЙ ДЕНЬ>"),
+    ("2026-01-01", "<D + 1 день>"),
+    ("<D>", "2026-01-02"),
+])
+def test_reference_date_templates_compile_without_changing_skill(
+    tmp_path: Path, date_from: str, date_to: str,
+) -> None:
+    query = {
+        "schema": "dm_core", "logic_model": "employee",
+        "columns": ["vacation_days_balance"],
+        "time_dimensions": [{
+            "name": "report_date", "granularity": "day",
+            "range": {"type": "absolute", "from": date_from, "to": date_to},
+        }],
+    }
+    path = tmp_path / "SKILL.md"
+    content = (
+        "---\nname: date_template\ntitle: Date template\nkind: reference\n"
+        "domain: general\ndescription: A parameterized query example\n---\n"
+        "```json\n" + json.dumps(query, ensure_ascii=False) + "\n```\n"
+    )
+    path.write_text(content, encoding="utf-8")
+    validate_skill_catalog(tmp_path, Catalog.load(MODEL_CATALOG))
+    assert path.read_text(encoding="utf-8") == content
+
+    # A template date must not hide invalid fields elsewhere in the query.
+    path.write_text(content.replace(
+        '"vacation_days_balance"', '"does_not_exist"',
+    ), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid mcp_query"):
+        validate_skill_catalog(tmp_path, Catalog.load(MODEL_CATALOG))
+
+
+def test_reference_invalid_literal_date_is_still_rejected(tmp_path: Path) -> None:
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: invalid_date\ntitle: Invalid date\nkind: reference\n"
+        "domain: general\ndescription: An invalid literal date\n---\n"
+        '```json\n{"schema":"dm_core","logic_model":"employee",'
+        '"columns":["vacation_days_balance"],"time_dimensions":[{'
+        '"name":"report_date","granularity":"day","range":{'
+        '"type":"absolute","from":"2026-02-30","to":"<D>"}}]}\n```\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid mcp_query"):
+        validate_skill_catalog(tmp_path, Catalog.load(MODEL_CATALOG))
 
 
 def test_preflight_skips_draft_and_generated_mock_without_llm(tmp_path: Path) -> None:

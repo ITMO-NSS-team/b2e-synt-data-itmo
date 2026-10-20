@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator
 
 from .path_lib import RESPONSE_PROMPT_PATH
 
-PROMPT_RENDERER_VERSION = "benchmark-response-prompt@1"
+PROMPT_RENDERER_VERSION = "benchmark-response-prompt@2"
 _QUERY_PLACEHOLDER = "{{query}}"
 _SCHEMA_PLACEHOLDER = "{{schema}}"
 

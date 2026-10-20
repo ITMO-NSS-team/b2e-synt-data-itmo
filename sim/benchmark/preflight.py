@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -19,6 +21,7 @@ from .modes import ModeConfig, ModeConfigs, _loaded_registry
 
 _JSON_FENCE = re.compile(r"[\x60]{3}(json|jsonc)\s*\n(.*?)\n[\x60]{3}", re.IGNORECASE | re.DOTALL)
 _PINNED_VERSION = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
+_DATE_PARAMETER = re.compile(r"<[^<>\r\n]+>")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +53,29 @@ def _check_query(body: dict, catalog: Catalog, label: str) -> None:
         raise ValueError(f"{label}: invalid mcp_query: {exc}") from exc
 
 
+def _check_reference_query(body: dict, catalog: Catalog, label: str) -> None:
+    """Compile documented templates with sample dates, without editing the skill."""
+    example = deepcopy(body)
+    dimensions = example.get("time_dimensions")
+    for dimension in dimensions if isinstance(dimensions, list) else []:
+        if not isinstance(dimension, dict):
+            continue
+        bounds = dimension.get("range")
+        if not isinstance(bounds, dict):
+            continue
+        for boundary, other, offset in (("from", "to", -1), ("to", "from", 1)):
+            value = bounds.get(boundary)
+            if not isinstance(value, str) or not _DATE_PARAMETER.fullmatch(value):
+                continue
+            try:
+                anchor = date.fromisoformat(bounds.get(other, ""))
+            except (TypeError, ValueError):
+                bounds[boundary] = "2000-01-01" if boundary == "from" else "2000-01-02"
+            else:
+                bounds[boundary] = (anchor + timedelta(days=offset)).isoformat()
+    _check_query(example, catalog, label)
+
+
 def validate_skill_catalog(root: str | Path, model_catalog: Catalog) -> Registry:
     """Check loading, kind, declared models and all executable query examples.
 
@@ -58,7 +84,8 @@ def validate_skill_catalog(root: str | Path, model_catalog: Catalog) -> Registry
         model_catalog: Compiled information-service model catalog used to compile queries.
 
     Returns:
-        Loaded skill registry after every recipe and JSON example compiles.
+        Loaded registry after recipes and examples compile. Reference date
+        parameters such as ``<D>`` are checked with sample dates only in memory.
 
     Raises:
         ValueError: If a snapshot was mutated or a skill/query is invalid.
@@ -91,7 +118,7 @@ def validate_skill_catalog(root: str | Path, model_catalog: Catalog) -> Registry
                 # jsonc snippets are illustrations and may contain placeholders.
                 # A JSON filter fragment is documentation, not a full query.
                 if isinstance(example, dict) and {"schema", "logic_model"} <= example.keys():
-                    _check_query(example, model_catalog, f"{label} example {index}")
+                    _check_reference_query(example, model_catalog, f"{label} example {index}")
         else:
             raise ValueError(f"{label}: unsupported kind {skill.kind}")
     return registry

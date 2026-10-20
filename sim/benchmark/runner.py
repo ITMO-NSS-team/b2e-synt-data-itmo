@@ -41,7 +41,7 @@ class BenchmarkRunner:
     activator: ModeActivator
     executor: SessionExecutor
     writer: ResultWriter | None = None
-    scorer_version: str = "benchmark-scorer@1"
+    scorer_version: str = "benchmark-scorer@2"
     mode_labels: Mapping[str, str] | None = None
 
     def run(
@@ -196,12 +196,14 @@ class BenchmarkRunner:
         normalized = normalize_answer(turn.answer, case.raw["gold_contract"])
         status, review_reason = _classify_turn(checked, turn, normalized)
         metrics = calculate_metrics(case, mode, normalized, observations)
-        # Contract/format failures are model failures and remain scored as 0.
+        # Unrecoverable contract/format failures remain scored as 0. Strict
+        # accuracy separately counts syntax recovery as a formatting failure.
         # Only invalid experimental conditions and infrastructure failures are
         # excluded from quality metrics.
         if status in {"condition_invalid", "unscored"}:
             for name in (
-                "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
+                "answer_accuracy", "strict_answer_accuracy", "exact_match",
+                "outcome_accuracy", "correct_refusal",
             ):
                 metrics[name] = None
         response = {
@@ -236,6 +238,7 @@ class BenchmarkRunner:
             "run_id": run_id,
             "scorer_version": self.scorer_version,
             "normalized_answer": normalized.value,
+            "normalization_repair": normalized.repair,
             "metrics": metrics,
             "llm_judge": {
                 "applicable": False,

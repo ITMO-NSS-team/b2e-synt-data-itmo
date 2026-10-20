@@ -25,9 +25,11 @@ class NormalizedAnswer:
     Attributes:
         value: Object matching the public response schema, or ``None``.
         error: Why extraction or schema validation failed, or ``None``.
+        repair: Syntax-only recovery applied after strict extraction failed.
     """
     value: dict[str, Any] | None
     error: str | None
+    repair: str | None = None
 
 
 def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAnswer:
@@ -36,7 +38,8 @@ def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAn
     This deterministic normalizer does not call an LLM. It accepts a direct
     JSON answer, a fenced JSON object, or the first decodable object embedded
     in prose. An unstructured answer is retained raw but receives no fabricated
-    normalized value.
+    normalized value. If the only missing token is the final root-object brace,
+    it may be restored; the recovered object must still satisfy the schema.
 
     Args:
         answer: Raw final text from the agent turn.
@@ -58,6 +61,9 @@ def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAn
         errors = list(validator.iter_errors(candidate))
         if not errors:
             return NormalizedAnswer(candidate, None)
+    for candidate in _missing_root_brace_candidates(answer):
+        if validator.is_valid(candidate):
+            return NormalizedAnswer(candidate, None, "missing_final_object_brace")
     if not parsed:
         return NormalizedAnswer(None, "final answer contains no JSON object")
     first_error = next(validator.iter_errors(parsed[0]), None)
@@ -127,12 +133,42 @@ def calculate_metrics(
     )
     return {
         "answer_accuracy": answer_accuracy,
+        "strict_answer_accuracy": 0 if normalized.repair else answer_accuracy,
+        "response_schema_valid_without_repair": int(actual is not None and not normalized.repair),
+        "normalization_repaired": int(normalized.repair is not None),
         "exact_match": exact_match,
         "outcome_accuracy": outcome_accuracy,
         "correct_refusal": correct_refusal,
         "generated_skill_loaded": generated_loaded,
         **{name: observations.get(name) for name in OPERATIONAL_METRICS},
     }
+
+
+def _missing_root_brace_candidates(text: str):
+    """Close one root object at EOF without completing strings or data values.
+
+    Only whole direct/fenced responses are considered. A complete JSON value
+    must precede EOF; numeric literals are excluded because truncation could
+    have changed their value. Nested omissions still fail ``json.loads``.
+    No gold values are inspected by this syntax recovery.
+    """
+    for attempt in [text.strip(), *(_FENCED_JSON.findall(text))]:
+        attempt = attempt.strip()
+        if not attempt.startswith("{") or not attempt.endswith(("}", "]", '"')):
+            continue
+        try:
+            json.loads(attempt)
+        except json.JSONDecodeError as exc:
+            if exc.pos != len(attempt):
+                continue
+        else:
+            continue
+        try:
+            value = json.loads(attempt + "}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            yield value
 
 
 def _json_candidates(text: str):

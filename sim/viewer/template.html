@@ -255,6 +255,11 @@ details summary:hover{color:var(--text-primary)}
   .barrow .lbl{grid-area:l}.barrow .val{grid-area:v}.barrow .track{grid-area:t}
   .detail{margin-left:0}
 }
+.live-controls{padding:10px 18px;border-bottom:1px solid var(--grid);display:flex;gap:12px;align-items:end;flex-wrap:wrap;font-size:12px}
+.live-controls[hidden],.loading-warning[hidden]{display:none}
+.live-controls label{display:flex;flex-direction:column;gap:4px}
+.live-controls input{padding:6px;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--grid);border-radius:4px}
+.loading-warning{padding:10px 18px;border-left:4px solid var(--serious);font-size:13px}
 </style>
 </head>
 <body>
@@ -267,6 +272,15 @@ details summary:hover{color:var(--text-primary)}
   <button class="hbtn" id="btnTheme">Theme</button>
   <input type="file" id="file" accept=".json,application/json" hidden>
 </header>
+
+<form id="liveControls" class="live-controls" action="explorer" method="get" hidden>
+  <label>Recent traces (max 1000)<input id="liveLimit" name="limit" type="number" min="1" max="1000" required></label>
+  <label>Span budget (max 100000)<input id="liveSpanLimit" name="span_limit" type="number" min="1" max="100000" required></label>
+  <label>Or open a trace ID<input id="liveTraceId" name="trace_id" size="34" pattern="[0-9a-fA-F]{32}" placeholder="32-character trace ID"></label>
+  <label><span>Reconstructed prompts (larger page)</span><input id="liveInputMessages" name="input_messages" type="checkbox" value="true"></label>
+  <button class="hbtn" type="submit">Load from Phoenix</button>
+</form>
+<div id="loadingWarning" class="loading-warning" role="status" hidden></div>
 
 <div class="layout">
   <aside>
@@ -839,6 +853,8 @@ function renderTrace(){
   const forb = Array.isArray(t._forbidden) ? t._forbidden : [];
 
   document.getElementById("main").innerHTML = `
+  ${ABOUT.live ? `<p><a href="explorer?trace_id=${encodeURIComponent(t.trace_id)}&span_limit=${ABOUT.loading?.span_limit||50000}">Open this trace separately</a></p>` : ""}
+  ${t.span_limit_reached ? `<div class="note bad">The page reached its loading budget. This trace may be incomplete. Open it separately to load all its spans.</div>` : ""}
   <div class="card">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <h2 style="margin:0">Trace #${t._id}</h2>
@@ -1248,7 +1264,7 @@ function renderNav(){
         ${pillFor(t, "#"+t._id)}
         <span>${esc((t.started_utc||"").replace("T"," ").replace("Z",""))}</span>
       </div>
-      <div class="ttl">${esc(t._prompt || "(no prompt)")}</div>
+      <div class="ttl">${esc(t._prompt || (t.span_limit_reached ? "(spans not loaded — limit reached)" : "(no prompt)"))}</div>
       <div class="meta">
         <span>${fmtS(t._dur)}</span><span>${t._calls} calls</span><span>${fmtUsd(t._cost)}</span>
         ${t._denials?`<span style="color:var(--critical)">${t._denials} denied</span>`:""}
@@ -1314,7 +1330,18 @@ document.addEventListener("keydown", e => {
 
 function boot(src){
   TRACES = prepare(DB);
-  SEL = "overview";
+  const loading = ABOUT.loading || {};
+  document.getElementById("liveControls").hidden = !ABOUT.live;
+  document.getElementById("liveLimit").value = loading.trace_limit || 100;
+  document.getElementById("liveSpanLimit").value = loading.span_limit || 50000;
+  document.getElementById("liveTraceId").value = loading.trace_id || "";
+  document.getElementById("liveInputMessages").checked = !!loading.include_input_messages;
+  const warning = document.getElementById("loadingWarning");
+  warning.hidden = !loading.span_limit_reached;
+  warning.textContent = loading.span_limit_reached
+    ? `Loaded ${loading.loaded_spans} spans; ${loading.page_size_limit_reached ? 'the 128 MiB page size budget' : 'the span budget'} was reached. Some traces are incomplete. ${loading.page_size_limit_reached ? '' : 'Increase the span budget or '}open the required trace by ID.`
+    : "";
+  SEL = ABOUT.live && loading.trace_id && TRACES.length === 1 ? 0 : "overview";
   document.getElementById("navFindings").hidden = !FINDINGS.length;
   const win = ANALYSIS && ANALYSIS.corpus && ANALYSIS.corpus.window_utc;
   document.getElementById("hSub").textContent =

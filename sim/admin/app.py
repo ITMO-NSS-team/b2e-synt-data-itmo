@@ -12,8 +12,8 @@ in, and why a payload of agent-authored text cannot escape its container.
 
 Panels: system prompt editor with diff and version history; skill registry with
 the approval queue; model parameters; traps and latency toggles; a session list
-that deep-links into Phoenix; the trace explorer, which shows the last hundred
-turns in full — fingerprint, iterations, reasoning, tool calls and the Heimdall
+that deep-links into Phoenix; the trace explorer, which loads a configurable
+number of recent turns or one trace by ID — fingerprint, reasoning and the Heimdall
 layer — read live from Phoenix; and the audit log.
 
 Every mutation is versioned and appended. Nothing is edited in place.
@@ -27,9 +27,9 @@ import os
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import (
-    HTMLResponse, JSONResponse, RedirectResponse, Response,
+    HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse,
 )
 
 from sim import traceview
@@ -89,10 +89,8 @@ NAV = [(".", "Overview"), ("prompt", "System prompt"), ("skills", "Skills"),
        ("config", "Model"), ("emulator", "Traps &amp; latency"),
        ("traces", "Traces"), ("explorer", "Trace explorer"), ("audit", "Audit")]
 
-#: How many traces the explorer tab loads. A hundred turns of this agent is on
-#: the order of five thousand spans; the page holds them because the
-#: reconstructed prompts — which are quadratic in a turn's length — are left out
-#: of the live view and named as left out.
+#: Default trace count. The page exposes separate trace/span budgets and can
+#: fetch one trace by ID. Reconstructed prompts are omitted by default.
 EXPLORER_TRACES = 100
 
 
@@ -615,7 +613,9 @@ traps-off label.</p>
 
     @app.get("/explorer", response_class=HTMLResponse)
     def explorer_page(request: Request, response: Response,
-                      limit: int = EXPLORER_TRACES,
+                      limit: int = Query(EXPLORER_TRACES, ge=1, le=1000),
+                      span_limit: int = Query(50000, ge=1, le=100000),
+                      trace_id: str = Query("", pattern=r"^(?:[0-9a-fA-F]{32})?$"),
                       input_messages: bool = False,
                       actor: str = Depends(require_admin)) -> HTMLResponse:
         """The standalone trace viewer, served live off Phoenix.
@@ -628,10 +628,10 @@ traps-off label.</p>
         import datetime as dt
 
         token = _csrf(request, response)
-        limit = max(1, min(int(limit), 500))
         try:
             document = traceview.from_phoenix(
                 state.phoenix, limit=limit, project=state.phoenix_project,
+                span_limit=span_limit, trace_id=trace_id.lower() or None,
                 source=f"Arize Phoenix REST at {state.phoenix_api_url}, "
                        f"project '{state.phoenix_project}'",
                 include_input_messages=bool(input_messages),
@@ -653,19 +653,22 @@ live there; this page is a view, not a second copy.</p>
         if not document["traces"]:
             body = """
 <h2>Trace explorer</h2>
-<p class=mut>No traces recorded yet. Ask the agent something and reload.</p>
+<p class=mut>No traces recorded yet, or the requested trace was not found in this project.</p>
+<p><a href="explorer">Open recent traces</a></p>
 """
             return HTMLResponse(page("Trace explorer", body, token),
                                 headers=dict(response.headers))
 
-        return HTMLResponse(traceview.render(document),
-                            headers=dict(response.headers))
+        return StreamingResponse(traceview.render_chunks(document), media_type="text/html",
+                                 headers=dict(response.headers))
 
     @app.get("/explorer.json")
     def explorer_json(request: Request, response: Response,
-                      limit: int = EXPLORER_TRACES,
+                      limit: int = Query(EXPLORER_TRACES, ge=1, le=1000),
+                      span_limit: int = Query(50000, ge=1, le=100000),
+                      trace_id: str = Query("", pattern=r"^(?:[0-9a-fA-F]{32})?$"),
                       input_messages: bool = False,
-                      actor: str = Depends(require_admin)) -> JSONResponse:
+                      actor: str = Depends(require_admin)) -> Response:
         """The same document as JSON.
 
         So the page's own 'Load JSON…' button has something to eat, and so a
@@ -673,16 +676,16 @@ live there; this page is a view, not a second copy.</p>
         """
         import datetime as dt
 
-        limit = max(1, min(int(limit), 500))
         try:
             document = traceview.from_phoenix(
                 state.phoenix, limit=limit, project=state.phoenix_project,
+                span_limit=span_limit, trace_id=trace_id.lower() or None,
                 include_input_messages=bool(input_messages),
                 exported_at=dt.datetime.now(dt.timezone.utc)
                 .strftime("%Y-%m-%dT%H:%M:%SZ"))
         except Exception as exc:
             raise HTTPException(503, f"Phoenix unavailable: {exc}") from exc
-        return JSONResponse(document)
+        return StreamingResponse(traceview.json_chunks(document), media_type="application/json")
 
     # ---------------------------------------------------------------- audit
 

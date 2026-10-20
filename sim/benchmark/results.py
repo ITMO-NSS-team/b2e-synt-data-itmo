@@ -221,7 +221,9 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             **{
                 name: _mean(metric.get(name) for metric in metrics)
                 for name in (
-                    "answer_accuracy", "exact_match", "outcome_accuracy",
+                    "answer_accuracy", "strict_answer_accuracy",
+                    "response_schema_valid_without_repair", "normalization_repaired",
+                    "exact_match", "outcome_accuracy",
                     "correct_refusal", "generated_skill_loaded",
                     *OPERATIONAL_METRICS,
                 )
@@ -265,7 +267,9 @@ def _review_reason(row: RunResult) -> str | None:
 def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
     output: dict[str, Any] = {}
     for name in (
-        "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
+        "answer_accuracy", "strict_answer_accuracy",
+        "response_schema_valid_without_repair", "normalization_repaired",
+        "exact_match", "outcome_accuracy", "correct_refusal",
         "generated_skill_loaded", *OPERATIONAL_METRICS,
     ):
         a, b = target.get(name), baseline.get(name)
@@ -311,7 +315,9 @@ def _paired_compare(
 def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     rows = list(metrics)
     names = (
-        "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
+        "answer_accuracy", "strict_answer_accuracy",
+        "response_schema_valid_without_repair", "normalization_repaired",
+        "exact_match", "outcome_accuracy", "correct_refusal",
         "generated_skill_loaded", *OPERATIONAL_METRICS,
     )
     return {

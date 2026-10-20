@@ -94,3 +94,7 @@ sim/benchmark/.env.bak-*
 
 # Keep the benchmark configuration guide alongside its example.
 !sim/benchmark/README.md
+
+# Private factory experiment inputs, credentials and run artifacts.
+var/factory-experiments/
+var/factory-experiment-current.txt
