@@ -394,6 +394,7 @@ def test_result_writer_keeps_trace_separate_and_writes_summary(tmp_path: Path) -
     assert summary["by_mode"]["existing_skills"]["n_runs"] == 1
     assert summary["by_mode"]["existing_skills"]["n_completed"] == 1
     assert summary["by_mode"]["existing_skills"]["n_scored"] == 1
+    assert (writer.root / "report.html").is_file()
     assert summary["by_mode"]["existing_skills"]["cache_read_tokens"] == 280
     assert summary["by_mode"]["existing_skills"]["ttft_ms"] == 100
     assert summary["by_mode"]["existing_skills"]["cost_usd"] == 0.03

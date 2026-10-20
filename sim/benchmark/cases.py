@@ -25,6 +25,7 @@ _COMPARISON_DEFAULTS = {
     "row_key": [],
     "allow_extra_rows": False,
     "numeric_absolute_tolerance": 0,
+    "refusal_evidence": "backend_403",
 }
 
 
@@ -77,11 +78,14 @@ def _resolve_comparison(comparison: Any) -> dict[str, Any]:
     """Expand the v2 ``simple_comparison`` shorthand without mutating input."""
     if not isinstance(comparison, dict):
         raise ValueError("gold_comparison must be an object")
-    if "template" not in comparison:
-        return dict(comparison)
-    if comparison["template"] != "simple_comparison":
-        raise ValueError("gold_comparison.template is unknown")
-    overrides = {key: value for key, value in comparison.items() if key != "template"}
+    if "template" in comparison:
+        if comparison["template"] != "simple_comparison":
+            raise ValueError("gold_comparison.template is unknown")
+        overrides = {
+            key: value for key, value in comparison.items() if key != "template"
+        }
+    else:
+        overrides = comparison
     if set(overrides) - set(_COMPARISON_DEFAULTS):
         raise ValueError("gold_comparison has unknown fields")
     return {**_COMPARISON_DEFAULTS, **overrides}
@@ -122,6 +126,7 @@ def _resolve_schema(value: Any, base: Path, stack: tuple = ()) -> Any:
 def _validate_comparison(comparison: Any) -> None:
     fields = {
         "ordered", "row_key", "allow_extra_rows", "numeric_absolute_tolerance",
+        "refusal_evidence",
     }
     if not isinstance(comparison, dict) or set(comparison) != fields:
         raise ValueError("gold_comparison has missing or unknown fields")
@@ -137,6 +142,10 @@ def _validate_comparison(comparison: Any) -> None:
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or tolerance < 0:
         raise ValueError(
             "gold_comparison.numeric_absolute_tolerance must be >= 0"
+        )
+    if comparison["refusal_evidence"] not in {"backend_403", "policy_refusal"}:
+        raise ValueError(
+            "gold_comparison.refusal_evidence must be backend_403 or policy_refusal"
         )
 
 

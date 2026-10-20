@@ -79,6 +79,7 @@ def test_v2_loader_resolves_local_contract_and_comparison_template(tmp_path: Pat
         "row_key": ["grade"],
         "allow_extra_rows": False,
         "numeric_absolute_tolerance": 0,
+        "refusal_evidence": "backend_403",
     }
 
 

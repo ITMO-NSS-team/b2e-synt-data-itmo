@@ -65,6 +65,9 @@ def capture_live_config(
             "existing_plus_generated", pinned["existing_skills"],
         ),
     }
+    for mode in (BenchmarkMode.DOCS_ONLY, BenchmarkMode.EXISTING_SKILLS_NO_DOCS):
+        if mode.value in pinned:
+            refs[mode.value] = pinned[mode.value]
     configs: dict[str, dict[str, Any]] = {}
     prompt_versions: dict[str, str] = {}
     for ref in refs.values():
