@@ -25,6 +25,7 @@ _HASHED_SKILL = re.compile(
     r"^(?P<base>.+)-(?P<method>no-context|compact|full)-"
     r"(?P<prompt_hash>[0-9a-f]{10})(?:-(?P<generation_hash>[0-9a-f]{10}))?$"
 )
+_VERSIONED_SKILL = re.compile(r"(?P<logical>.+)-v[0-9]+-[0-9]+-[0-9]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +86,8 @@ def build_generated_plan(
     variant gets an individual generated phase. When
     ``existing_plus_generated`` is requested, the plan also prepares a catalog
     containing the standard Heimdall skills plus that one generated artifact.
-    A generated skill whose name matches a standard skill replaces it.
+    The generated artifact is added alongside the standard catalog. An exact
+    name collision is rejected because both skills must remain available.
     """
     if limit is not None and limit < 1:
         raise ValueError("case limit must be >= 1")
@@ -243,10 +245,18 @@ def _discover_artifacts(
                 f"generated variant {variant_id} did not load as one active skill: "
                 f"{item.name}"
             )
+        expected_skill = _expected_skill(str(item.name))
+        versioned_name = _VERSIONED_SKILL.fullmatch(expected_skill)
+        logical_name = versioned_name.group("logical") if versioned_name else expected_skill
+        actual_version = isolated.get(str(item.name)).version
+        expected_skill = f"{logical_name}-v{actual_version.replace('.', '-')}"
         combined_catalog_path = None
         replaces_existing = False
         if base_catalog_path is not None:
-            replaces_existing = str(item.name) in base_names
+            if str(item.name) in base_names:
+                raise ValueError(
+                    f"existing_plus_generated requires a distinct generated skill name: {item.name}"
+                )
             combined_catalog_path = _combined_catalog(
                 base_catalog_path,
                 catalog.parent,
@@ -255,7 +265,7 @@ def _discover_artifacts(
             )
         artifacts.append(GeneratedArtifact(
             skill_name=str(item.name),
-            expected_skill=_expected_skill(str(item.name)),
+            expected_skill=expected_skill,
             variant_id=variant_id,
             catalog_path=str(catalog.parent),
             combined_catalog_path=combined_catalog_path,
@@ -285,10 +295,6 @@ def _combined_catalog(
 ) -> str:
     """Copy the standard catalog and exactly one generated artifact."""
     shutil.copytree(base_catalog, target)
-    # Otherwise _loaded_registry rejects two files that share one skill name.
-    for item in Registry.load(target).files():
-        if item.ok and item.name == generated_skill_name:
-            item.path.unlink()
     for source in sorted(generated_catalog.rglob("*")):
         relative = source.relative_to(generated_catalog)
         destination = target / relative
