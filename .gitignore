@@ -72,21 +72,6 @@ b2e-skill-benchmark/
 
 # Local benchmark runs and reproducible condition snapshots.
 benchmarking/results/
-var/benchmark-live-config.json
-var/benchmark-catalog-snapshots/
-var/benchmark-generated-plans/
-var/empty-generated-skills/
-var/benchmark-subsets/*
-
-# Local uv bootstrap and DNS runtime marker.
-var/uv-package/
-var/uv/
-var/.resolv-recreate-required
-
-var/benchmark-stand.lock
-
-# Local snapshots of reverted infrastructure edits.
-var/infrastructure-rollback/
 
 # Benchmark configuration is independent from deployment secrets.
 sim/benchmark/.env
@@ -95,6 +80,5 @@ sim/benchmark/.env.bak-*
 # Keep the benchmark configuration guide alongside its example.
 !sim/benchmark/README.md
 
-# Private factory experiment inputs, credentials and run artifacts.
-var/factory-experiments/
-var/factory-experiment-current.txt
+benchmarking/reports/
+var/

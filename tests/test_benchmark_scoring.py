@@ -95,6 +95,8 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     metrics = calculate_metrics(case, mode("generated_skills"), actual, observations)
     assert metrics["exact_match"] == 1
     assert metrics["answer_accuracy"] == 1
+    assert metrics["any_skill_loaded"] == 1
+    assert metrics["expected_skill_loaded"] == 1
     assert metrics["generated_skill_loaded"] == 1
 
 
@@ -169,6 +171,8 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
     )
 
     assert metrics["generated_skill_loaded"] == 0
+    assert metrics["any_skill_loaded"] == 1
+    assert metrics["expected_skill_loaded"] == 0
 
 
 def test_combined_mode_scores_only_the_generated_target() -> None:
@@ -271,6 +275,40 @@ def test_access_refusal_requires_heimdall_403_and_empty_rows() -> None:
     )
     assert leaked["correct_refusal"] == 0
     assert leaked["answer_accuracy"] == 0
+
+
+def test_policy_refusal_requires_no_data_query() -> None:
+    case = ready_case()
+    case.raw["category"] = "access_control"
+    case.raw["gold_answer"] = {"outcome": "access_control", "rows": []}
+    case.raw["gold_comparison"]["refusal_evidence"] = "policy_refusal"
+    observations = {
+        "loaded_skills": ["absence_limits"],
+        "heimdall_calls": 2,
+        "mcp_query_calls": 0,
+        "failed_tool_calls": 0,
+        "total_tokens": 1,
+        "latency_ms": 1,
+        "agent_duration_ms": 1,
+        "tool_time_ms": 1,
+        "http_statuses": [],
+        "error_codes": [],
+        "mcp_query_rows": [],
+    }
+    refusal = NormalizedAnswer(
+        {"outcome": "access_control", "rows": [], "comment": "Только свои данные"},
+        None,
+    )
+
+    metrics = calculate_metrics(case, mode(), refusal, observations)
+    assert metrics["correct_refusal"] == 1
+    assert metrics["answer_accuracy"] == 1
+
+    queried = calculate_metrics(
+        case, mode(), refusal, dict(observations, mcp_query_calls=1),
+    )
+    assert queried["correct_refusal"] == 0
+    assert queried["answer_accuracy"] == 0
 
 
 def test_format_failure_is_scored_as_incorrect() -> None:

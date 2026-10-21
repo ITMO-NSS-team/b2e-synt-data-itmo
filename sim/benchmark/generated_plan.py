@@ -36,6 +36,7 @@ class GeneratedArtifact:
     variant_id: str
     catalog_path: str
     combined_catalog_path: str | None
+    replaces_existing: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,7 @@ class GeneratedGroup:
     cases_path: str
     catalog_path: str
     combined_catalog_path: str | None
+    replaces_existing: bool
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -61,6 +63,7 @@ class GeneratedGroup:
             "cases_path": self.cases_path,
             "catalog_path": self.catalog_path,
             "combined_catalog_path": self.combined_catalog_path,
+            "replaces_existing": self.replaces_existing,
         }
 
 
@@ -82,6 +85,7 @@ def build_generated_plan(
     variant gets an individual generated phase. When
     ``existing_plus_generated`` is requested, the plan also prepares a catalog
     containing the standard Heimdall skills plus that one generated artifact.
+    A generated skill whose name matches a standard skill replaces it.
     """
     if limit is not None and limit < 1:
         raise ValueError("case limit must be >= 1")
@@ -176,6 +180,7 @@ def build_generated_plan(
                 cases_path=_workspace_path(cases_path),
                 catalog_path=artifact.catalog_path,
                 combined_catalog_path=artifact.combined_catalog_path,
+                replaces_existing=artifact.replaces_existing,
             ))
 
     payload = {
@@ -205,8 +210,9 @@ def _discover_artifacts(
     base_catalog_path: Path | None,
 ) -> list[GeneratedArtifact]:
     """Load physical variants while allowing repeated canonical skill names."""
-    if base_catalog_path is not None:
-        _loaded_registry(base_catalog_path)
+    base_registry = (
+        _loaded_registry(base_catalog_path) if base_catalog_path is not None else None
+    )
     registry = Registry.load(source)
     errors = [item for item in registry.files() if not item.ok]
     if errors:
@@ -220,6 +226,7 @@ def _discover_artifacts(
     artifacts: list[GeneratedArtifact] = []
     used_variant_ids: set[str] = set()
     used_slugs: set[str] = set()
+    base_names = set(base_registry.all_names()) if base_registry is not None else set()
     for item in files:
         variant_id = _variant_id(item, source)
         if variant_id in used_variant_ids:
@@ -237,7 +244,9 @@ def _discover_artifacts(
                 f"{item.name}"
             )
         combined_catalog_path = None
+        replaces_existing = False
         if base_catalog_path is not None:
+            replaces_existing = str(item.name) in base_names
             combined_catalog_path = _combined_catalog(
                 base_catalog_path,
                 catalog.parent,
@@ -250,6 +259,7 @@ def _discover_artifacts(
             variant_id=variant_id,
             catalog_path=str(catalog.parent),
             combined_catalog_path=combined_catalog_path,
+            replaces_existing=replaces_existing,
         ))
     return sorted(artifacts, key=lambda item: (item.skill_name, item.variant_id))
 
@@ -275,6 +285,10 @@ def _combined_catalog(
 ) -> str:
     """Copy the standard catalog and exactly one generated artifact."""
     shutil.copytree(base_catalog, target)
+    # Otherwise _loaded_registry rejects two files that share one skill name.
+    for item in Registry.load(target).files():
+        if item.ok and item.name == generated_skill_name:
+            item.path.unlink()
     for source in sorted(generated_catalog.rglob("*")):
         relative = source.relative_to(generated_catalog)
         destination = target / relative

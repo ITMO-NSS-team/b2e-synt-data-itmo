@@ -5,10 +5,13 @@ from collections import deque
 from typing import Any, Mapping
 
 from sim.benchmark.openlit_dashboard import (
+    ACCURACY_CHART_QUERY,
     BOARD_TITLE,
+    LATENCY_CHART_QUERY,
     MODE_COMPARISON_QUERY,
     MODE_SUMMARY_QUERY,
     RUNS_QUERY,
+    SKILL_LOADING_CHART_QUERY,
     WIDGETS,
     _render_query,
     provision_dashboard,
@@ -41,20 +44,19 @@ def _tables() -> list[dict[str, str]]:
 
 
 def test_provision_creates_board_widgets_and_links() -> None:
-    store = FakeStore([_tables(), [], [], [], [], [], [], []])
+    store = FakeStore([_tables(), [], *([[]] * (len(WIDGETS) * 2))])
 
-    result = provision_dashboard(store, ui_url="http://openlit.example/")
+    result = provision_dashboard(
+        store,
+        ui_url="http://openlit.example/",
+        reports_url="https://stand.example/benchmark-reports/",
+    )
 
     assert result.created_board is True
-    assert result.created_widgets == 3
+    assert result.created_widgets == len(WIDGETS)
     assert [table for table, _ in store.inserts] == [
         "openlit_board",
-        "openlit_widget",
-        "openlit_board_widget",
-        "openlit_widget",
-        "openlit_board_widget",
-        "openlit_widget",
-        "openlit_board_widget",
+        *(["openlit_widget", "openlit_board_widget"] * len(WIDGETS)),
     ]
     board = store.inserts[0][1]
     assert board["title"] == BOARD_TITLE
@@ -64,48 +66,64 @@ def test_provision_creates_board_widgets_and_links() -> None:
     runs = next(row for row in widget_rows if row["title"] == "Benchmark runs")
     assert "http://openlit.example" in runs["config"]
     assert "/telemetry/traces/" in runs["config"]
+    assert "https://stand.example/benchmark-reports" in runs["config"]
+    charts = [row for row in widget_rows if row["widget_type"] == "BAR_CHART"]
+    assert len(charts) == 3
+    assert all('"xAxis"' in row["properties"] for row in charts)
+    assert all('"yAxis"' in row["properties"] for row in charts)
 
 
 def test_provision_updates_existing_resources_without_duplicates() -> None:
-    store = FakeStore([
-        _tables(),
-        [{"id": "00000000-0000-0000-0000-000000000001"}],
-        [{"id": "00000000-0000-0000-0000-000000000002"}],
-        [{"id": "00000000-0000-0000-0000-000000000003"}],
-        [{"id": "00000000-0000-0000-0000-000000000004"}],
-        [{"id": "00000000-0000-0000-0000-000000000005"}],
-        [{"id": "00000000-0000-0000-0000-000000000006"}],
-        [{"id": "00000000-0000-0000-0000-000000000007"}],
-    ])
+    existing = [
+        [{"id": f"00000000-0000-0000-0000-{index:012d}"}]
+        for index in range(1, 2 + len(WIDGETS) * 2)
+    ]
+    store = FakeStore([_tables(), *existing])
 
     result = provision_dashboard(store)
 
     assert result.created_board is False
     assert result.created_widgets == 0
     assert store.inserts == []
-    assert len(store.executions) == 7
+    assert len(store.executions) == 1 + len(WIDGETS) * 2
     assert all("mutations_sync = 1" in query for query, _ in store.executions)
 
 
 def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
-    rendered = _render_query(RUNS_QUERY, "http://localhost:3000/")
+    rendered = _render_query(
+        RUNS_QUERY,
+        "http://localhost:3000/",
+        "https://localhost:8443/benchmark-reports/",
+    )
 
     assert "http://localhost:3000" in rendered
     assert "/telemetry/traces/" in rendered
+    assert "https://localhost:8443/benchmark-reports" in rendered
     assert "SpanId" in rendered
-    assert all("/telemetry/traces/" in widget.query for widget in WIDGETS)
     assert "skills_disabled" in MODE_COMPARISON_QUERY
     assert "existing_skills" in MODE_COMPARISON_QUERY
     assert "generated_skills" in MODE_COMPARISON_QUERY
     assert "general_knowledge" in MODE_COMPARISON_QUERY
-    assert "accuracy_delta_vs_general_knowledge_pct" in MODE_COMPARISON_QUERY
-    assert "accuracy_delta_vs_skills_disabled_pct" in MODE_COMPARISON_QUERY
-    assert "accuracy_delta_vs_existing_skills_pct" in MODE_COMPARISON_QUERY
+    assert "accuracy_delta_vs_existing_skills_pp" in MODE_COMPARISON_QUERY
     assert "('generated_skills', 'existing_plus_generated')" in MODE_COMPARISON_QUERY
-    assert "expected_modes" not in MODE_COMPARISON_QUERY
+    assert "quantileExactInclusive(0.5)(latency_ms)" in MODE_COMPARISON_QUERY
+    assert "quantileExactInclusive(0.5)(mcp_queries)" in MODE_COMPARISON_QUERY
+    assert "latest_eval" in MODE_COMPARISON_QUERY
+    assert "share_pct" in ACCURACY_CHART_QUERY
+    assert "correct" in ACCURACY_CHART_QUERY
+    assert "incorrect" in ACCURACY_CHART_QUERY
+    assert "median_latency_s" in LATENCY_CHART_QUERY
+    assert "target_skill_loaded_pct" in SKILL_LOADING_CHART_QUERY
     assert all(
         "b2e.benchmark.final" in query
-        for query in (RUNS_QUERY, MODE_SUMMARY_QUERY, MODE_COMPARISON_QUERY)
+        for query in (
+            RUNS_QUERY,
+            MODE_SUMMARY_QUERY,
+            MODE_COMPARISON_QUERY,
+            ACCURACY_CHART_QUERY,
+            LATENCY_CHART_QUERY,
+            SKILL_LOADING_CHART_QUERY,
+        )
     )
 
 

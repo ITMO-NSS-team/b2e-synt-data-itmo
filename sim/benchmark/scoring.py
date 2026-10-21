@@ -109,15 +109,26 @@ def calculate_metrics(
         )
     correct_refusal: int | None = None
     if expected_outcome == "access_control":
-        # A disabled tool surface is not an ACL refusal.  The run must reach
-        # Heimdall, receive an actual 403 and return no protected rows.
-        correct_refusal = int(
+        refusal_evidence = case.raw["gold_comparison"].get(
+            "refusal_evidence", "backend_403"
+        )
+        refused_without_rows = (
             actual is not None
             and observed_outcome == "access_control"
             and actual.get("rows") == []
-            and observations.get("heimdall_calls", 0) > 0
-            and 403 in observations.get("http_statuses", ())
         )
+        if refusal_evidence == "policy_refusal":
+            correct_refusal = int(
+                refused_without_rows
+                and observations.get("mcp_query_calls", 0) == 0
+            )
+        else:
+            # A disabled tool surface is not proof that backend ACLs denied access.
+            correct_refusal = int(
+                refused_without_rows
+                and observations.get("heimdall_calls", 0) > 0
+                and 403 in observations.get("http_statuses", ())
+            )
     elif expected_outcome in _REFUSAL_OUTCOMES:
         correct_refusal = outcome_accuracy
     if expected_outcome == "answer":
@@ -131,6 +142,8 @@ def calculate_metrics(
         case.raw["expected_skills"],
         observations["loaded_skills"],
     )
+    loaded_skills = set(observations["loaded_skills"])
+    expected_skills = set(case.raw["expected_skills"])
     return {
         "answer_accuracy": answer_accuracy,
         "strict_answer_accuracy": 0 if normalized.repair else answer_accuracy,
@@ -139,6 +152,8 @@ def calculate_metrics(
         "exact_match": exact_match,
         "outcome_accuracy": outcome_accuracy,
         "correct_refusal": correct_refusal,
+        "any_skill_loaded": int(bool(loaded_skills)),
+        "expected_skill_loaded": int(bool(loaded_skills & expected_skills)),
         "generated_skill_loaded": generated_loaded,
         **{name: observations.get(name) for name in OPERATIONAL_METRICS},
     }

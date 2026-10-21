@@ -97,7 +97,7 @@ prepare-resolv:
 
 up: prepare-resolv  ## поднять весь стек одной командой; PROFILE=telegram добавит бота
 	@test -f deploy/.env || { echo "нет deploy/.env — скопируйте deploy/.env.example"; exit 1; }
-	@mkdir -p var/empty-generated-skills
+	@mkdir -p var/empty-generated-skills "$(BENCHMARK_REPORT_DIR)"
 	@test -d "$(GENERATED_SKILLS_DIR)" || { echo "нет каталога skills: $(GENERATED_SKILLS_DIR)"; exit 1; }
 	@force_recreate=""; \
 	if test -f "$(RESOLV_RECREATE_MARKER)"; then \
@@ -165,11 +165,13 @@ BENCH_GENERATED_SKILLS_HOST := $(if $(BENCH_GENERATED_SKILLS_SETTING),$(if $(fil
 GENERATED_SKILLS_INPUT := $(or $(MAKE_GENERATED_SKILLS_DIR),$(BENCH_GENERATED_SKILLS_HOST))
 override GENERATED_SKILLS_DIR := $(abspath $(or $(GENERATED_SKILLS_INPUT),var/empty-generated-skills))
 export GENERATED_SKILLS_DIR
+
 BENCH_COMPOSE = BENCHMARK_REPO_DIR="$(BENCH_REPO_HOST)" $(COMPOSE)
 BENCH_DEFAULT_MODES := general_knowledge,skills_disabled,existing_skills
 BENCH_MODES ?= $(or $(call benchmark_env,BENCH_MODES),$(BENCH_DEFAULT_MODES))
 BENCH_REPETITIONS ?= $(or $(call benchmark_env,BENCH_REPETITIONS),1)
 BENCH_RESULTS ?= $(or $(call benchmark_env,BENCH_RESULTS),benchmarking/results)
+
 BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
 BENCH_MODEL ?= $(call benchmark_env,BENCH_MODEL)
 BENCH_EVAL_ID ?= $(call benchmark_env,BENCH_EVAL_ID)
@@ -262,8 +264,10 @@ define BENCHMARK_PREPARE
 			exit 1; \
 		fi; \
 	fi
+
 	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" var/benchmark-catalog-snapshots
 	$(BENCH_COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
+
 		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
 endef
 

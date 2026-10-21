@@ -67,6 +67,7 @@ def test_plan_selects_covered_cases_once_and_expands_generated_variants(tmp_path
     for group in plan["groups"]:
         assert group["skill_names"] == ["alpha"]
         assert group["expected_skills"] == ["alpha"]
+        assert group["replaces_existing"] is False
         assert group["case_ids"] == [
             "case-0101-00", "case-0101-01", "case-0104-00",
         ]
@@ -170,5 +171,43 @@ def test_plan_builds_existing_plus_one_generated_catalog(
     assert plan["generated_modes"] == ["generated_skills", "existing_plus_generated"]
     assert len(plan["groups"]) == 1
     group = plan["groups"][0]
+    assert group["replaces_existing"] is False
     assert Registry.load(group["catalog_path"]).active() == ["alpha"]
     assert Registry.load(group["combined_catalog_path"]).active() == ["alpha", "standard"]
+
+
+def test_combined_catalog_replaces_same_name_standard_skill(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", ["standard"])
+    generated = tmp_path / "generated"
+    _skill(generated, "standard")
+    base = tmp_path / "base"
+    (base / "org").mkdir(parents=True)
+    (base / "org" / "standard.yaml").write_text(
+        "name: standard\n"
+        "title: Standard\n"
+        "kind: recipe\n"
+        "domain: org\n"
+        "description: Base standard skill\n"
+        "query: {schema: dm_core, logic_model: employee_actual, metrics: [fact_count]}\n",
+        encoding="utf-8",
+    )
+
+    plan = build_generated_plan(
+        cases, generated, tmp_path / "work", schema_path=SCHEMA,
+        base_catalog_path=base,
+        generated_modes=("existing_plus_generated",),
+    )
+
+    assert len(plan["groups"]) == 1
+    group = plan["groups"][0]
+    assert group["replaces_existing"] is True
+    assert group["skill_names"] == ["standard"]
+    combined = Path(group["combined_catalog_path"])
+    assert not (combined / "org" / "standard.yaml").exists()
+    registry = Registry.load(combined)
+    assert registry.active() == ["standard"]
+    assert registry.get("standard").kind == "reference"
+    assert registry.get("standard").description == "Generated standard"
+    assert registry.duplicates() == {}
