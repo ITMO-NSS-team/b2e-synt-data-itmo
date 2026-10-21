@@ -322,6 +322,7 @@ services:
       python3.12 -m uvicorn --factory sim.admin.app:create_app
               --host 0.0.0.0 --port 8084 --workers 1
     environment:
+      ADMIN_EXPLORER_TRACES_MAX_BYTES: ${ADMIN_EXPLORER_TRACES_MAX_BYTES:-134217728}
       B2E_REGISTRY_DB: /app/registry/registry.db
       HEIMDALL_URL: http://heimdall-emulator:8081
       B2E_AGENT_URL: http://b2e-agent:8082

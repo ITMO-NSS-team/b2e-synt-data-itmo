@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import (
     GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
@@ -96,6 +98,57 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     assert metrics["any_skill_loaded"] == 1
     assert metrics["expected_skill_loaded"] == 1
     assert metrics["generated_skill_loaded"] == 1
+
+
+@pytest.mark.parametrize("fenced", [False, True])
+def test_normalizer_recovers_only_missing_root_brace_and_records_strict_failure(fenced) -> None:
+    case = ready_case()
+    answer = json.dumps(case.raw["gold_answer"])[:-1]
+    if fenced:
+        answer = "\x60\x60\x60json\n" + answer + "\n\x60\x60\x60"
+    normalized = normalize_answer(answer, case.raw["gold_contract"])
+    assert normalized.value == case.raw["gold_answer"]
+    assert normalized.repair == "missing_final_object_brace"
+    metrics = calculate_metrics(case, mode(), normalized, {"loaded_skills": []})
+    assert metrics["answer_accuracy"] == 1
+    assert metrics["strict_answer_accuracy"] == 0
+    assert metrics["response_schema_valid_without_repair"] == 0
+    assert metrics["normalization_repaired"] == 1
+
+
+@pytest.mark.parametrize("answer", [
+    '{"outcome":"answer","rows":[{"grade":10,"employee_count":',
+    '{"outcome":"answer","rows":[{"grade":10,"employee_count":3',
+    '{"outcome":"answer","rows":[{"grade":10,"employee_count":3}',
+    '{"outcome":"answer","rows":[],"comment":"unfinished',
+    '{"outcome":"answer","rows":[],',
+    '{"outcome":"answer","rows":[] followed by prose',
+    '{"outcome":"answer","unknown":[]',
+    '{"outcome":"answer","rows":[{"grade":"wrong type","employee_count":3}]',
+])
+def test_normalizer_does_not_repair_missing_data_or_contract_mismatch(answer) -> None:
+    normalized = normalize_answer(answer, ready_case().raw["gold_contract"])
+    assert normalized.value is None
+    assert normalized.repair is None
+
+
+def test_syntax_recovery_does_not_make_wrong_facts_correct() -> None:
+    case = ready_case()
+    wrong = {"outcome": "answer", "rows": [{"grade": 10, "employee_count": 999}]}
+    normalized = normalize_answer(json.dumps(wrong)[:-1], case.raw["gold_contract"])
+    assert normalized.value == wrong
+    metrics = calculate_metrics(case, mode(), normalized, {"loaded_skills": []})
+    assert metrics["answer_accuracy"] == 0
+    assert metrics["strict_answer_accuracy"] == 0
+
+
+def test_valid_json_needs_no_repair() -> None:
+    case = ready_case()
+    normalized = normalize_answer(json.dumps(case.raw["gold_answer"]), case.raw["gold_contract"])
+    assert normalized.repair is None
+    metrics = calculate_metrics(case, mode(), normalized, {"loaded_skills": []})
+    assert metrics["strict_answer_accuracy"] == 1
+    assert metrics["response_schema_valid_without_repair"] == 1
 
 
 def test_generated_routing_requires_skill_expected_by_case() -> None:

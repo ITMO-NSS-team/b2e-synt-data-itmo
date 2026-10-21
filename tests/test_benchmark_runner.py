@@ -296,6 +296,7 @@ def test_runner_marks_fingerprint_drift_without_failing_the_cell_as_wrong() -> N
     assert result.status == "condition_invalid"
     assert result.response["response"]["error"].endswith("model_id")
     assert result.score["metrics"]["answer_accuracy"] is None
+    assert result.score["metrics"]["strict_answer_accuracy"] is None
     assert summary["n_condition_invalid"] == 1
     assert summary["n_runs"] == 1
     assert summary["n_completed"] == 0
@@ -319,6 +320,7 @@ def test_runner_keeps_the_full_executor_traceback() -> None:
     error = result.response["response"]["error"]
     assert result.status == "unscored"
     assert result.score["metrics"]["answer_accuracy"] is None
+    assert result.score["metrics"]["strict_answer_accuracy"] is None
     assert "Traceback (most recent call last)" in error
     assert "stand exploded " + ("z" * 80) in error
     assert "RuntimeError" in error

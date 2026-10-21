@@ -278,6 +278,16 @@ def test_the_shipped_template_has_a_placeholder_to_fill():
     assert traceview.PLACEHOLDER in traceview.TEMPLATE.read_text(encoding="utf-8")
 
 
+def test_large_streamed_viewer_keeps_json_and_script_escaping():
+    document = {"rows": [{"text": "я" * 1000 + "</script>"} for _ in range(150)]}
+    chunks = list(traceview.render_chunks(document, template="<html>__DATA__</html>"))
+    assert len(chunks) > 3
+    page = "".join(chunks)
+    assert "</script>" not in page
+    assert json.loads(page[len("<html>"):-len("</html>")]) == document
+    assert json.loads("".join(traceview.json_chunks(document))) == document
+
+
 # ------------------------------------------------------ the CSP exception
 
 
@@ -312,11 +322,17 @@ class _FakePhoenix:
 
     def __init__(self, traces=None, error=None):
         self._traces, self._error = traces or [], error
+        self.calls = []
 
-    def latest_traces(self, *, limit=100, span_cap=20000):
+    def latest_traces(self, *, limit=100, span_cap=20000, include_input_messages=True, max_bytes=None):
+        self.calls.append(("latest", limit, span_cap, include_input_messages))
         if self._error:
             raise self._error
         return self._traces[:limit]
+
+    def spans_for_trace(self, trace_id, *, limit=20000, include_input_messages=True, max_bytes=None):
+        self.calls.append(("single", trace_id, limit, include_input_messages))
+        return next((t["spans"] for t in self._traces if t["trace_id"] == trace_id), [])
 
 
 def _rest_trace(trace_id="t1"):
@@ -436,3 +452,42 @@ def test_the_json_endpoint_returns_the_same_document(client):
     body = c.get("/explorer.json", auth=AUTH).json()
     assert body["_analysis"]["corpus"]["traces"] == 1
     assert body["traces"][0]["reasoning"]["reasoning_blocks"] == 1
+
+
+def test_explorer_can_raise_both_loading_limits(client):
+    c, state = client
+    state._phoenix = _FakePhoenix([_rest_trace()])
+    response = c.get("/explorer.json?limit=1000&span_limit=100000", auth=AUTH)
+    assert response.status_code == 200
+    assert state._phoenix.calls == [("latest", 1000, 100000, False)]
+    assert response.json()["_about"]["loading"]["loaded_spans"] == 3
+
+
+@pytest.mark.parametrize("endpoint", ["/explorer", "/explorer.json"])
+def test_explorer_opens_old_trace_by_id_without_loading_recent_history(client, endpoint):
+    c, state = client
+    trace_id = "b5851addcc7434ae5eaf61a4294e5ce9"
+    state._phoenix = _FakePhoenix([_rest_trace(trace_id)])
+    response = c.get(endpoint + "?trace_id=" + trace_id, auth=AUTH)
+    assert response.status_code == 200
+    assert state._phoenix.calls == [("single", trace_id, 50000, False)]
+    assert "сколько витрин?" in response.text
+    if endpoint.endswith(".json"):
+        assert response.json()["traces"][0]["final_answer"] == "три"
+
+
+def test_incomplete_bulk_load_is_explicit_instead_of_claiming_all_spans():
+    trace = _rest_trace()
+    trace.update(spans=[], span_limit_reached=True)
+    document = traceview.from_phoenix(_FakePhoenix([trace]), span_limit=1)
+    assert document["_about"]["loading"]["span_limit_reached"] is True
+    assert document["traces"][0]["span_limit_reached"] is True
+    assert any("incomplete" in c for c in document["_about"]["caveats"])
+    assert "all spans" not in document["_about"]["selection"]
+
+
+@pytest.mark.parametrize("query", ["limit=1001", "span_limit=100001", "span_limit=0", "trace_id=invalid"])
+@pytest.mark.parametrize("endpoint", ["/explorer", "/explorer.json"])
+def test_explorer_rejects_invalid_loading_parameters(client, query, endpoint):
+    c, _ = client
+    assert c.get(endpoint + "?" + query, auth=AUTH).status_code == 422

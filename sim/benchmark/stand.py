@@ -8,6 +8,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from .path_lib import ENV_PATH
 from .trace import retrieved_skills, root_span_id
 from .types import EvalCase, SessionSpec, TurnResult
 
@@ -45,7 +46,7 @@ class StandClient:
         self,
         public_url: str | None = None,
         public_host: str | None = None,
-        env_file: str = "deploy/.env",
+        env_file: str = str(ENV_PATH),
         timeout: float = 180.0,
         trace_attempts: int = 12,
         trace_backend: str = "research",

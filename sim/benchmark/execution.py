@@ -183,6 +183,8 @@ class PinnedConfigActivator:
     the benchmark dispatcher before the runner starts.
     """
 
+    supports_concurrent = True
+
     def __init__(
         self,
         config_refs: Mapping[str, str],

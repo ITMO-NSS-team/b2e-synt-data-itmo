@@ -14,6 +14,7 @@ move — see ``docs/observability.md`` §6.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -44,15 +45,18 @@ class PhoenixClient:
 
     # ---------------------------------------------------------------- spans
 
-    def spans_for_trace(self, trace_id: str, *, limit: int = 20000) -> list[dict[str, Any]]:
+    def spans_for_trace(self, trace_id: str, *, limit: int = 20000,
+                        include_input_messages: bool = True,
+                        max_bytes: int | None = None) -> list[dict[str, Any]]:
         """Fetch one complete trace; reject truncated or looping pagination."""
         spans: dict[str, dict[str, Any]] = {}
         scanned = 0
+        buffered_bytes = 0
         cursor: str | None = None
         seen_cursors: set[str] = set()
         try:
             while True:
-                params = {"trace_id": trace_id, "limit": 1000}
+                params = {"trace_id": trace_id, "limit": 1000 if include_input_messages else 100}
                 if cursor:
                     params["cursor"] = cursor
                 response = self._client.get(
@@ -68,6 +72,12 @@ class PhoenixClient:
                         span_id = context.get("span_id") or span.get("span_id")
                         if not span_id:
                             raise PhoenixUnavailable("Phoenix span has no span_id")
+                        if not include_input_messages:
+                            _omit_input_messages(span)
+                        if max_bytes is not None:
+                            buffered_bytes += len(json.dumps(span, ensure_ascii=False).encode("utf-8"))
+                            if buffered_bytes > max_bytes:
+                                raise PhoenixUnavailable("Trace exceeds page size budget; use an offline export for this trace")
                         spans[str(span_id)] = span
                 cursor = body.get("next_cursor") if isinstance(body, dict) else None
                 if scanned > limit:
@@ -153,7 +163,9 @@ class PhoenixClient:
             raise PhoenixUnavailable(str(exc)) from exc
 
     def latest_traces(self, *, limit: int = 100,
-                      span_cap: int = 20000) -> list[dict[str, Any]]:
+                      span_cap: int = 20000,
+                      include_input_messages: bool = True,
+                      max_bytes: int | None = None) -> list[dict[str, Any]]:
         """The newest ``limit`` traces, each with all of its spans.
 
         Two calls, not one. ``/traces?include_spans=true`` returns the spans
@@ -185,9 +197,14 @@ class PhoenixClient:
 
             ids = [t.get("trace_id") for t in traces if t.get("trace_id")]
             spans: list[dict[str, Any]] = []
+            omitted: dict[str, int] = {}
+            seen_cursors: set[str] = set()
+            buffered_bytes = 0
+            size_limit_reached = False
             cursor = None
             while len(spans) < span_cap:
-                params: list[tuple[str, Any]] = [("limit", 1000)]
+                page_size = 1000 if include_input_messages else 100
+                params: list[tuple[str, Any]] = [("limit", min(page_size, span_cap - len(spans)))]
                 params += [("trace_id", i) for i in ids]
                 if cursor:
                     params.append(("cursor", cursor))
@@ -198,10 +215,24 @@ class PhoenixClient:
                         f"Phoenix returned {page.status_code} fetching spans")
                 body = page.json()
                 batch = _as_span_list(body)
-                spans.extend(batch)
+                for span in batch:
+                    if not include_input_messages and _omit_input_messages(span):
+                        trace_id = (span.get("context") or {}).get("trace_id")
+                        omitted[trace_id] = omitted.get(trace_id, 0) + 1
+                    if max_bytes is not None:
+                        buffered_bytes += len(json.dumps(span, ensure_ascii=False).encode("utf-8"))
+                        if buffered_bytes > max_bytes:
+                            size_limit_reached = True
+                            break
+                    spans.append(span)
+                if size_limit_reached:
+                    break
                 cursor = body.get("next_cursor") if isinstance(body, dict) else None
                 if not cursor or not batch:
                     break
+                if cursor in seen_cursors:
+                    raise PhoenixUnavailable("Phoenix pagination cursor repeated")
+                seen_cursors.add(cursor)
         except httpx.HTTPError as exc:
             raise PhoenixUnavailable(str(exc)) from exc
 
@@ -212,6 +243,9 @@ class PhoenixClient:
                 by_trace.setdefault(trace_id, []).append(span)
         for trace in traces:
             trace["spans"] = by_trace.get(trace.get("trace_id"), [])
+            trace["span_limit_reached"] = bool(cursor) or size_limit_reached
+            trace["load_limit_reason"] = "page_size" if size_limit_reached else "span_count" if cursor else None
+            trace["input_messages_omitted_spans"] = omitted.get(trace.get("trace_id"), 0)
         return traces
 
     # ----------------------------------------------------------- annotations
@@ -247,6 +281,23 @@ def _as_span_list(payload: Any) -> list[dict[str, Any]]:
             if isinstance(payload.get(key), list):
                 return payload[key]
     return []
+
+
+def _omit_input_messages(span: dict[str, Any]) -> bool:
+    """Drop quadratic conversation reconstructions before buffering a live page."""
+    attributes = span.get("attributes") or {}
+    removed = False
+    for key in list(attributes):
+        if key == "llm.input_messages" or key.startswith("llm.input_messages."):
+            attributes.pop(key)
+            removed = True
+    llm = attributes.get("llm")
+    if isinstance(llm, dict) and "input_messages" in llm:
+        llm.pop("input_messages")
+        removed = True
+    if removed:
+        span["_input_messages_omitted"] = True
+    return removed
 
 
 def _attr(span: dict[str, Any], key: str) -> Any:

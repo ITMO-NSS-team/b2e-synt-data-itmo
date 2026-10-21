@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import traceback
+import contextvars
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
@@ -48,6 +50,8 @@ class BenchmarkRunner:
         modes: ModeConfigs | Mapping[str, ModeConfig] | Iterable[ModeConfig],
         *,
         repetitions: int = 1,
+        workers: int = 1,
+        max_consecutive_unscored: int | None = None,
     ) -> list[RunResult]:
         """Execute every case × mode × repetition in a fixed order.
 
@@ -64,17 +68,63 @@ class BenchmarkRunner:
         """
         if repetitions < 1:
             raise ValueError("repetitions must be >= 1")
+        if workers < 1:
+            raise ValueError("workers must be >= 1")
+        if workers > 1 and not getattr(self.activator, "supports_concurrent", False):
+            raise ValueError("parallel execution requires a read-only, concurrent-safe activator")
         selected_modes = _mode_list(modes)
-        results: list[RunResult] = []
-        for case in cases:
-            for repetition in range(1, repetitions + 1):
-                for mode in selected_modes:
-                    result = self.run_one(case, mode, repetition)
-                    results.append(result)
-                    if self.writer is not None:
-                        self.writer.write(result)
+        cells = [(case, mode, repetition) for case in cases
+                 for repetition in range(1, repetitions + 1) for mode in selected_modes]
+        labels = self.mode_labels or {}
+        expected = {(case.case_id, labels.get(mode.name, mode.name), repetition)
+                    for case, mode, repetition in cells}
+        results = self.writer.read_checkpoint() if self.writer is not None else []
+        saved = {(row.case_id, row.mode, row.repetition) for row in results}
+        if saved - expected:
+            raise ValueError("checkpoint includes cells outside the requested matrix")
+        pending = [(case, mode, repetition) for case, mode, repetition in cells
+                   if (case.case_id, labels.get(mode.name, mode.name), repetition) not in saved]
+        failures = 0
+        stop_reason = None
+        def record(result):
+            nonlocal failures, stop_reason
+            results.append(result)
+            if self.writer is not None:
+                self.writer.write(result)
+            print(f"benchmark {len(results)}/{len(cells)} {result.run_id}: {result.status}", flush=True)
+            if max_consecutive_unscored is not None:
+                failures = failures + 1 if result.status == "unscored" else 0
+                if result.status == "condition_invalid":
+                    stop_reason = "live conditions changed"
+                elif failures >= max_consecutive_unscored:
+                    stop_reason = f"{failures} consecutive infrastructure failures"
+        if workers == 1:
+            for case, mode, repetition in pending:
+                record(self.run_one(case, mode, repetition))
+                if stop_reason:
+                    break
+        else:
+            iterator = iter(pending)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                def submit_next():
+                    cell = next(iterator, None)
+                    return pool.submit(contextvars.copy_context().run, self.run_one, *cell) if cell else None
+                inflight = {future for _ in range(workers) if (future := submit_next()) is not None}
+                while inflight:
+                    done, inflight = wait(inflight, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        record(future.result())
+                    if not stop_reason:
+                        for _ in done:
+                            if (future := submit_next()) is not None:
+                                inflight.add(future)
+        order = {(case.case_id, labels.get(mode.name, mode.name), repetition): index
+                 for index, (case, mode, repetition) in enumerate(cells)}
+        results.sort(key=lambda row: order[(row.case_id, row.mode, row.repetition)])
         if self.writer is not None:
             self.writer.write_summary(results)
+        if stop_reason:
+            raise RuntimeError(f"benchmark stopped: {stop_reason}; saved cells can be resumed")
         return results
 
     def run_one(
@@ -146,12 +196,14 @@ class BenchmarkRunner:
         normalized = normalize_answer(turn.answer, case.raw["gold_contract"])
         status, review_reason = _classify_turn(checked, turn, normalized)
         metrics = calculate_metrics(case, mode, normalized, observations)
-        # Contract/format failures are model failures and remain scored as 0.
+        # Unrecoverable contract/format failures remain scored as 0. Strict
+        # accuracy separately counts syntax recovery as a formatting failure.
         # Only invalid experimental conditions and infrastructure failures are
         # excluded from quality metrics.
         if status in {"condition_invalid", "unscored"}:
             for name in (
-                "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
+                "answer_accuracy", "strict_answer_accuracy", "exact_match",
+                "outcome_accuracy", "correct_refusal",
             ):
                 metrics[name] = None
         response = {
@@ -186,6 +238,7 @@ class BenchmarkRunner:
             "run_id": run_id,
             "scorer_version": self.scorer_version,
             "normalized_answer": normalized.value,
+            "normalization_repair": normalized.repair,
             "metrics": metrics,
             "llm_judge": {
                 "applicable": False,
