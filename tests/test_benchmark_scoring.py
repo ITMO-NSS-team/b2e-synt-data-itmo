@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from sim.benchmark.cases import BenchmarkCase
@@ -120,6 +121,42 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
     assert metrics["generated_skill_loaded"] == 0
     assert metrics["any_skill_loaded"] == 1
     assert metrics["expected_skill_loaded"] == 0
+
+
+def test_existing_skill_load_matches_catalog_version_only(tmp_path: Path) -> None:
+    (tmp_path / "compare_people.md").write_text(
+        "---\nname: compare_people\ntitle: Compare people\nkind: reference\n"
+        "domain: general\ndescription: Compare employees\nversion: 1.0.0\n"
+        "status: active\n---\n\nCompare two people.\n",
+        encoding="utf-8",
+    )
+    case = ready_case()
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    observations = {"loaded_skills": ["compare_people"]}
+    existing = replace(mode(), catalog_path=str(tmp_path))
+
+    case.raw["expected_skills"] = ["compare_people-v1-0-0"]
+    assert calculate_metrics(
+        case, existing, actual, observations,
+    )["expected_skill_loaded"] == 1
+
+    case.raw["expected_skills"] = ["compare_people-v1-0-1"]
+    assert calculate_metrics(
+        case, existing, actual, observations,
+    )["expected_skill_loaded"] == 0
+
+    versioned_dir = tmp_path / "versioned"
+    versioned_dir.mkdir()
+    (versioned_dir / "skill.md").write_text(
+        "---\nname: compare_people-v1-0-1\ntitle: Compare people\nkind: reference\n"
+        "domain: general\ndescription: Compare employees\nversion: 1.0.0\n"
+        "status: active\n---\n\nCompare two people.\n",
+        encoding="utf-8",
+    )
+    observations["loaded_skills"] = ["compare_people-v1-0-1"]
+    assert calculate_metrics(
+        case, replace(existing, catalog_path=str(versioned_dir)), actual, observations,
+    )["expected_skill_loaded"] == 0
 
 
 def test_combined_mode_scores_only_the_generated_target() -> None:
