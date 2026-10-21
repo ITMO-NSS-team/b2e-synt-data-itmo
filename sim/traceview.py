@@ -25,6 +25,7 @@ as objects: the message layout is an indexed sequence, and a viewer handed
 from __future__ import annotations
 
 import json
+import os
 import statistics
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,20 @@ PLACEHOLDER = "__DATA__"
 
 
 # ------------------------------------------------------------------ reshaping
+
+def _admin_explorer_traces_max_bytes() -> int | None:
+    """Read the admin setting supplied by deployment environment (0 = unlimited)."""
+    key = "ADMIN_EXPLORER_TRACES_MAX_BYTES"
+    value = os.environ.get(key)
+    try:
+        limit = int(value if value is not None else "134217728")
+    except ValueError as exc:
+        raise ValueError(f"{key} must be a non-negative integer (0 = unlimited)") from exc
+    if limit < 0:
+        raise ValueError(f"{key} must be a non-negative integer (0 = unlimited)")
+    return limit or None
+
+ADMIN_EXPLORER_TRACES_MAX_BYTES = _admin_explorer_traces_max_bytes()
 
 
 def unflatten(flat: dict[str, Any]) -> dict[str, Any]:
@@ -486,14 +501,14 @@ def from_phoenix(client: Any, *, limit: int = 100, project: str = "b2e-sim",
     if trace_id:
         selected = client.spans_for_trace(trace_id, limit=span_limit,
                                          include_input_messages=include_input_messages,
-                                         max_bytes=128 * 1024 * 1024)
+                                         max_bytes=ADMIN_EXPLORER_TRACES_MAX_BYTES)
         raw = [{"trace_id": trace_id, "spans": selected,
                 "start_time": min((s["start_time"] for s in selected if s.get("start_time")), default=None),
                 "end_time": max((s["end_time"] for s in selected if s.get("end_time")), default=None)}] if selected else []
     else:
         raw = client.latest_traces(limit=limit, span_cap=span_limit,
                                    include_input_messages=include_input_messages,
-                                   max_bytes=128 * 1024 * 1024)
+                                   max_bytes=ADMIN_EXPLORER_TRACES_MAX_BYTES)
     traces = []
     inputs_omitted_while_loading = False
     for entry in raw:
@@ -529,7 +544,7 @@ def from_phoenix(client: Any, *, limit: int = 100, project: str = "b2e-sim",
         "loading": {"trace_limit": limit, "span_limit": span_limit,
                     "trace_id": trace_id or "", "include_input_messages": include_input_messages,
                     "loaded_spans": sum(len(t["spans"]) for t in traces),
-                    "page_size_limit_mb": 128,
+                    "page_size_limit_mb": ADMIN_EXPLORER_TRACES_MAX_BYTES / (1024 * 1024) if ADMIN_EXPLORER_TRACES_MAX_BYTES is not None else None,
                     "page_size_limit_reached": any(t.get("load_limit_reason") == "page_size" for t in raw),
                     "span_limit_reached": any(t["span_limit_reached"] for t in traces)},
         "format": "the span tree in docs/span-schema.md for harness=claude_code: "
