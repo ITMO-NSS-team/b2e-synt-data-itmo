@@ -71,6 +71,35 @@ def test_merge_phases_writes_one_summary_and_keeps_shared_group(tmp_path: Path) 
     assert len(manifest["catalog_phases"]) == 2
 
 
+@pytest.mark.parametrize("check_only", [False, True])
+def test_zero_coverage_writes_report_without_run_cells(tmp_path: Path, check_only: bool) -> None:
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({
+        "cases_source": "/cases",
+        "source_case_ids": ["case-0001-00"],
+        "eligible_case_ids": [], "selected_case_ids": [], "groups": [],
+        "excluded": [{"case_id": "case-0001-00", "status": "generated_skill_unavailable_excluded"}],
+        "unmatched_artifacts": [{"skill_name": "alpha", "source": "baseline", "version": "1.0.0"}],
+    }), encoding="utf-8")
+
+    results, writer, is_check = merge_phases(
+        [], results_root=tmp_path / "results", eval_id="eval-1",
+        generated_plan=plan, check_only=check_only,
+    )
+
+    assert results == []
+    assert is_check == check_only
+    if check_only:
+        assert json.loads((writer.root / "preflight.json").read_text()) == []
+    else:
+        assert json.loads((writer.root / "summary.json").read_text())["selection"]["n_unmatched_artifacts"] == 1
+        assert "alpha" in (writer.root / "report.html").read_text()
+    assert merge_phases(
+        [], results_root=tmp_path / "results", eval_id="eval-1",
+        generated_plan=plan, check_only=check_only, resume=True,
+    )[0] == []
+
+
 def test_merge_check_only_combines_preflight(tmp_path: Path) -> None:
     base = _phase(tmp_path, "base", "existing_skills", check_only=True)
     generated = _phase(tmp_path, "generated", "generated_skills", check_only=True)
@@ -197,6 +226,7 @@ def test_merge_reports_generated_selection_without_creating_fake_runs(tmp_path: 
         "n_selected_cases": 1,
         "n_excluded_cases": 1,
         "n_partially_covered_cases": 0,
+            "n_unmatched_artifacts": 0,
         "coverage_rate": 0.5,
         "excluded_by_reason": {"generated_skill_unavailable_excluded": 1},
     }

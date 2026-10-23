@@ -227,7 +227,7 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
                     "answer_accuracy", "strict_answer_accuracy",
                     "response_schema_valid_without_repair", "normalization_repaired",
                     "exact_match", "outcome_accuracy",
-                    "correct_refusal", "generated_skill_loaded", "any_skill_loaded", "expected_skill_loaded"
+                    "correct_refusal", "generated_skill_loaded", "any_skill_loaded", "expected_skill_loaded",
                     *OPERATIONAL_METRICS,
                 )
             },

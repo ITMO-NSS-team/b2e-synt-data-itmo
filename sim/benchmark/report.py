@@ -78,12 +78,26 @@ def _add_skill_metrics(metrics: dict[str, Any], response: dict[str, Any]) -> Non
 
 def _write(root: Path, rows: list[dict[str, Any]]) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    points = [_point(row) for row in rows]
+    plan = {}
+    if (root / "run-manifest.json").is_file():
+        plan = json.loads((root / "run-manifest.json").read_text(encoding="utf-8")).get("generated_plan") or {}
+    groups = {
+        f"{mode}@{group['variant_id']}": group
+        for group in plan.get("groups", [])
+        for mode in plan.get("generated_modes", [])
+    }
+    points = [_point(row, groups.get(str(row["mode"]))) for row in rows]
     payload = json.dumps(
         {
             "eval_id": root.name,
             "runs": points,
             "aggregates": _aggregate(points),
+            "coverage": {
+                "source_cases": len(plan.get("source_case_ids", [])),
+                "selected_cases": len(plan.get("selected_case_ids", [])),
+                "excluded": plan.get("excluded", []),
+                "unmatched_artifacts": plan.get("unmatched_artifacts", []),
+            } if plan else None,
             "counts": {
                 "runs": len(rows),
                 "scored": sum(point["accuracy"] is not None for point in points),
@@ -111,14 +125,30 @@ def _asset(name: str) -> str:
     return (_ASSETS / name).read_text(encoding="utf-8")
 
 
-def _point(row: dict[str, Any]) -> dict[str, Any]:
+def _point(row: dict[str, Any], group: dict[str, Any] | None = None) -> dict[str, Any]:
     mode, method, detail = _mode_parts(str(row["mode"]))
+    variant = str(row["mode"]).partition("@")[2] or "—"
+    source = "—"
+    skill = "—"
+    if group:
+        if source_path := group.get("source_path"):
+            directories = Path(source_path).parent.parts
+            method = next((part for part in reversed(directories)
+                           if part in {"no-context", "compact", "full"}), "—")
+            detail = next((part for part in reversed(directories)
+                           if part in {"abstract", "medium", "detailed"}), "—")
+        source = group.get("source", "—")
+        variant = group["variant_id"]
+        skill = ", ".join(group.get("skill_names", []))
     metrics = row["metrics"]
     latency = metrics.get("latency_ms")
     return {
         "run_id": row["run_id"],
         "case_id": row["case_id"],
         "mode": mode,
+        "source": source,
+        "variant": variant,
+        "skill": skill,
         "method": method,
         "detail": detail,
         "repetition": row["repetition"],
@@ -149,34 +179,35 @@ def _mode_parts(value: str) -> tuple[str, str, str]:
 
 
 def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for point in points:
-        groups[(point["mode"], point["method"], point["detail"])].append(point)
-    existing = [
-        point["accuracy"] for point in points
+        groups[(point["mode"], point["variant"])].append(point)
+    existing = {
+        (point["case_id"], point["repetition"]): point["accuracy"]
+        for point in points
         if point["mode"] == "existing_skills" and point["accuracy"] is not None
-    ]
-    baseline = sum(existing) / len(existing) if existing else None
+    }
     output = []
-    detail_order = {"—": 0, "abstract": 1, "medium": 2, "detailed": 3}
-    for (mode, method, detail), group in sorted(
-        groups.items(),
-        key=lambda item: (
-            item[0][0], item[0][1], detail_order.get(item[0][2], 99),
-        ),
-    ):
+    for (mode, variant), group in sorted(groups.items()):
+        first = group[0]
         accuracy = _mean(point["accuracy"] for point in group)
+        pairs = [
+            (point["accuracy"], existing[(point["case_id"], point["repetition"])])
+            for point in group
+            if point["accuracy"] is not None
+            and (point["case_id"], point["repetition"]) in existing
+        ] if mode != "existing_skills" else []
         output.append({
             "mode": mode,
-            "method": method,
-            "detail": detail,
+            "source": first["source"],
+            "variant": variant,
+            "skill": first["skill"],
+            "method": first["method"],
+            "detail": first["detail"],
             "runs": len(group),
             "accuracy": accuracy,
-            "delta_pp": (
-                (accuracy - baseline) * 100
-                if accuracy is not None and baseline is not None
-                and mode != "existing_skills" else None
-            ),
+            "n_pairs": len(pairs),
+            "delta_pp": 100 * _mean(a - b for a, b in pairs) if pairs else None,
             "any_skill_loaded": _mean(
                 point["any_skill_loaded"] for point in group
             ),

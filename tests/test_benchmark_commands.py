@@ -103,6 +103,8 @@ def test_mixed_benchmark_splits_catalogs_and_merges_results() -> None:
     assert "sim.benchmark.merge" in source
     assert "--phase-telemetry" in source
     assert "sim.benchmark.publish" in source
+    assert "command -v flock" in source and "exec lockf -t 0" in source
+    assert 'if ! test -s "$$group_list"' in source
 
 
 def test_data_dir_override_is_used_by_preflight() -> None:

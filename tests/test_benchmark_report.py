@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from sim.benchmark.report import write_report, write_report_from_files
@@ -101,3 +102,39 @@ def test_old_result_files_backfill_skill_metrics(tmp_path) -> None:
     assert '"any_skill_loaded":1' in text
     assert '"expected_skill_loaded":1' in text
     assert '"median_iterations":null' in text
+
+
+def test_report_keeps_variants_separate_and_compares_matching_cases(tmp_path) -> None:
+    root = tmp_path / "eval-paired"
+    root.mkdir()
+    groups = [
+        {"variant_id": variant, "source": "baseline", "path_labels": ["medium"],
+         "source_path": f"/runs/compact/medium/{variant}/SKILL.md", "skill_names": ["alpha"]}
+        for variant in ("baseline--first", "baseline--second")
+    ]
+    (root / "run-manifest.json").write_text(json.dumps({"generated_plan": {
+        "groups": groups, "generated_modes": ["existing_plus_generated"],
+        "source_case_ids": ["case-a", "case-b"],
+        "selected_case_ids": ["case-a", "case-b"],
+        "excluded": [], "unmatched_artifacts": [],
+    }}), encoding="utf-8")
+    first = _result("existing-a", "existing_skills", 1, 1000, 1, 1)
+    first.case_id = "case-a"
+    second = _result("existing-b", "existing_skills", 0, 1000, 1, 1)
+    second.case_id = "case-b"
+    generated = [
+        _result("generated-first", "existing_plus_generated@baseline--first", 1, 1000, 1, 1),
+        _result("generated-second", "existing_plus_generated@baseline--second", 0, 1000, 1, 1),
+    ]
+    generated[0].case_id = "case-a"
+    generated[1].case_id = "case-b"
+
+    text = write_report(root, [first, second, *generated]).read_text(encoding="utf-8")
+
+    assert '"source":"baseline"' in text
+    assert '"method":"compact"' in text
+    assert '"detail":"medium"' in text
+    assert '"variant":"baseline--first"' in text
+    assert '"variant":"baseline--second"' in text
+    assert text.count('"n_pairs":1') == 2
+    assert text.count('"delta_pp":0.0') == 2

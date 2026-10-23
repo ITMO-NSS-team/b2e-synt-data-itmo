@@ -72,6 +72,8 @@ WITH
     scores AS (
         SELECT
             SpanAttributes['b2e.benchmark.eval_id'] AS eval_id,
+            SpanAttributes['b2e.benchmark.case_id'] AS case_id,
+            toUInt32OrZero(SpanAttributes['b2e.benchmark.repetition']) AS repetition,
             splitByChar('@', SpanAttributes['b2e.benchmark.mode'])[1] AS mode,
             splitByChar('@', SpanAttributes['b2e.benchmark.mode'])[2] AS variant,
             toFloat64OrNull(nullIf(
@@ -95,47 +97,49 @@ WITH
         SELECT
             eval_id,
             mode,
-            multiIf(
-                variant = '', '—',
-                length(splitByString('--', variant)) >= 2,
-                    splitByString('--', variant)[1],
-                position(variant, '-no-context-') > 0, 'no-context',
-                position(variant, '-compact-') > 0, 'compact',
-                'unknown'
-            ) AS method,
-            multiIf(
-                variant = '', '—',
-                length(splitByString('--', variant)) >= 2,
-                    splitByString('--', variant)[2],
-                'unknown'
-            ) AS detail,
+            if(variant = '', '—', variant) AS configuration,
             avg(answer_score) AS answer_accuracy,
             avg(skill_loaded_score) AS target_skill_loaded,
             quantileExactInclusive(0.5)(latency_ms) / 1000 AS median_latency_s,
             quantileExactInclusive(0.5)(mcp_queries) AS median_mcp_queries
         FROM scores
-        GROUP BY eval_id, mode, method, detail
+        GROUP BY eval_id, mode, configuration
     ),
     baseline AS (
         SELECT
             eval_id,
-            countIf(mode = 'existing_skills') AS existing_present,
-            anyIf(answer_accuracy, mode = 'existing_skills') AS existing_accuracy
+            countIf(mode = 'existing_skills') AS existing_present
         FROM grouped
         GROUP BY eval_id
+    ),
+    paired AS (
+        SELECT
+            generated.eval_id AS eval_id,
+            generated.mode AS mode,
+            generated.variant AS variant,
+            avg(generated.answer_score - existing.answer_score) * 100 AS delta_pp
+        FROM scores AS generated
+        INNER JOIN scores AS existing
+            ON generated.eval_id = existing.eval_id
+            AND generated.case_id = existing.case_id
+            AND generated.repetition = existing.repetition
+        WHERE existing.mode = 'existing_skills'
+            AND generated.mode != 'existing_skills'
+            AND generated.answer_score IS NOT NULL
+            AND existing.answer_score IS NOT NULL
+        GROUP BY generated.eval_id, generated.mode, generated.variant
     )
 """.strip()
 
 MODE_COMPARISON_QUERY = _LATEST_SCORE_CTES + "\n" + """
 SELECT
     g.mode AS mode,
-    g.method AS method,
-    g.detail AS detail,
+    g.configuration AS configuration,
     round(g.answer_accuracy * 100, 1) AS answer_accuracy_pct,
     if(
         g.mode = 'existing_skills' OR b.existing_present = 0,
         NULL,
-        round((g.answer_accuracy - b.existing_accuracy) * 100, 1)
+        round(p.delta_pp, 1)
     ) AS accuracy_delta_vs_existing_skills_pp,
     if(
         g.mode IN ('generated_skills', 'existing_plus_generated'),
@@ -146,14 +150,15 @@ SELECT
     round(g.median_mcp_queries, 1) AS median_mcp_queries
 FROM grouped AS g
 LEFT JOIN baseline AS b ON b.eval_id = g.eval_id
+LEFT JOIN paired AS p ON p.eval_id = g.eval_id
+    AND p.mode = g.mode AND if(p.variant = '', '—', p.variant) = g.configuration
 ORDER BY indexOf([
     'general_knowledge',
     'skills_disabled',
     'existing_skills',
     'generated_skills',
     'existing_plus_generated'
-], g.mode), g.method, g.detail
-LIMIT 50
+], g.mode), g.configuration
 """.strip()
 
 ACCURACY_CHART_QUERY = _LATEST_SCORE_CTES + "\n" + """
@@ -163,11 +168,11 @@ SELECT
 FROM grouped
 ARRAY JOIN [
     tuple(
-        concat(if(method = '—', mode, concat(method, ' / ', detail)), ' · correct'),
+        concat(if(configuration = '—', mode, concat(mode, ' / ', configuration)), ' · correct'),
         round(answer_accuracy * 100, 1)
     ),
     tuple(
-        concat(if(method = '—', mode, concat(method, ' / ', detail)), ' · incorrect'),
+        concat(if(configuration = '—', mode, concat(mode, ' / ', configuration)), ' · incorrect'),
         round((1 - answer_accuracy) * 100, 1)
     )
 ] AS result
@@ -177,10 +182,10 @@ ORDER BY answer_result
 
 LATENCY_CHART_QUERY = _LATEST_SCORE_CTES + "\n" + """
 SELECT
-    if(method = '—', mode, concat(method, ' / ', detail)) AS configuration,
-    round(median_latency_s, 1) AS median_latency_s
-FROM grouped
-WHERE median_latency_s IS NOT NULL
+    if(g.configuration = '—', g.mode, concat(g.mode, ' / ', g.configuration)) AS configuration,
+    round(g.median_latency_s, 1) AS median_latency_s
+FROM grouped AS g
+WHERE g.median_latency_s IS NOT NULL
 ORDER BY median_latency_s DESC, configuration
 """.strip()
 
@@ -189,12 +194,12 @@ MODE_SUMMARY_QUERY = LATENCY_CHART_QUERY
 
 SKILL_LOADING_CHART_QUERY = _LATEST_SCORE_CTES + "\n" + """
 SELECT
-    concat(method, ' / ', detail) AS configuration,
-    round(target_skill_loaded * 100, 1) AS target_skill_loaded_pct
-FROM grouped
+    concat(g.mode, ' / ', g.configuration) AS configuration,
+    round(g.target_skill_loaded * 100, 1) AS target_skill_loaded_pct
+FROM grouped AS g
 WHERE
-    mode IN ('generated_skills', 'existing_plus_generated')
-    AND target_skill_loaded IS NOT NULL
+    g.mode IN ('generated_skills', 'existing_plus_generated')
+    AND g.target_skill_loaded IS NOT NULL
 ORDER BY target_skill_loaded_pct DESC, configuration
 """.strip()
 
@@ -240,7 +245,8 @@ WIDGETS = (
         description=(
             "Последний benchmark в выбранном интервале: accuracy, прирост к "
             "existing_skills, загрузка целевого generated skill и медианы "
-            "времени и mcp_query. Метод и детализация извлекаются из variant_id."
+            "времени и mcp_query. Вариант показывается целиком; прирост считается "
+            "только по одинаковым кейсам и повторам."
         ),
         query=MODE_COMPARISON_QUERY,
         position={"x": 0, "y": 4, "w": 4, "h": 3},

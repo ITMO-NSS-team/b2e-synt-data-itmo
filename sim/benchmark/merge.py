@@ -15,26 +15,30 @@ def merge_phases(
     results_root: str | Path,
     eval_id: str,
     generated_plan: str | Path | None = None,
+    check_only: bool = False,
+    resume: bool = False,
 ) -> tuple[list[RunResult], ResultWriter, bool]:
     """Combine disjoint mode phases that share one logical evaluation id."""
     phases = [Path(path).resolve() for path in phase_dirs]
+    plan = _read_json(Path(generated_plan)) if generated_plan else None
     if not phases:
-        raise ValueError("at least one benchmark phase directory is required")
+        if not plan or plan.get("selected_case_ids") or plan.get("groups"):
+            raise ValueError("at least one benchmark phase directory is required")
+        writer = ResultWriter(results_root, eval_id, resume=resume)
+        writer.write_manifest({
+            "schema_version": "1.1", "eval_id": eval_id,
+            "check_only": check_only, "cases_path": plan["cases_source"],
+            "case_ids": [], "modes": [], "repetitions": 0,
+            "live_stand": {}, "generated_plan": plan, "catalog_phases": [],
+        })
+        if check_only:
+            (writer.root / "preflight.json").write_text("[]\n", encoding="utf-8")
+        else:
+            writer.write_summary([], extra=_selection_summary(plan))
+        return [], writer, check_only
     manifests = [_read_json(path / "run-manifest.json") for path in phases]
     _validate_manifests(manifests, eval_id)
-    plan = _read_json(Path(generated_plan)) if generated_plan else None
     _validate_generated_plan_execution(manifests, plan)
-    if plan and plan.get("experiment") == "prompt_detail":
-        common = manifests[0]["modes"][0]["common"]
-        registry = manifests[0]["live_stand"]["skill_registry_hash"]
-        for manifest in manifests:
-            if any(mode["common"] != common for mode in manifest["modes"]):
-                raise ValueError("detail phases have different model/prompt/snapshot/access conditions")
-            if manifest["live_stand"]["skill_registry_hash"] != registry:
-                raise ValueError("detail phase executable registry drift")
-            if manifest.get("workers", 1) != manifests[0].get("workers", 1):
-                raise ValueError("detail phase concurrency changed")
-
     writer = ResultWriter(results_root, eval_id)
     combined_manifest = dict(manifests[0])
     combined_manifest["schema_version"] = "1.1"
@@ -191,6 +195,7 @@ def _selection_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
             "n_selected_cases": len(selected),
             "n_excluded_cases": len(excluded),
             "n_partially_covered_cases": len(partially_covered),
+            "n_unmatched_artifacts": len(plan.get("unmatched_artifacts", [])),
             "coverage_rate": len(eligible) / len(source) if source else None,
             "excluded_by_reason": reasons,
         }
@@ -211,10 +216,12 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Merge catalog-isolated benchmark phases")
-    result.add_argument("--phase", action="append", required=True)
+    result.add_argument("--phase", action="append", default=[])
     result.add_argument("--results", required=True)
     result.add_argument("--eval-id", required=True)
     result.add_argument("--generated-plan")
+    result.add_argument("--check-only", action="store_true")
+    result.add_argument("--resume", action="store_true")
     return result
 
 
@@ -223,7 +230,8 @@ def main(argv: list[str] | None = None) -> int:
         args = parser().parse_args(argv)
         results, writer, check_only = merge_phases(
             args.phase, results_root=args.results, eval_id=args.eval_id,
-            generated_plan=args.generated_plan,
+            generated_plan=args.generated_plan, check_only=args.check_only,
+            resume=args.resume,
         )
         if check_only:
             report = {

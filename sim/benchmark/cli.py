@@ -264,7 +264,7 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
     if reference_path:
         reference = json.loads(Path(reference_path).read_text(encoding="utf-8"))
         if json.loads(json.dumps(asdict(common))) != reference["modes"][0]["common"]:
-            raise ValueError("detail conditions changed before this phase: model/prompt/snapshot/access")
+            raise ValueError("benchmark conditions changed before this phase: model/prompt/snapshot/access")
         if live["skill_registry_hash"] != reference["live_stand"]["skill_registry_hash"]:
             raise ValueError("executable registry changed before this phase")
         if getattr(args, "workers", 1) != reference.get("workers", 1):

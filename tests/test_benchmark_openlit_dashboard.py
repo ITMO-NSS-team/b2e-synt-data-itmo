@@ -109,6 +109,10 @@ def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
     assert "quantileExactInclusive(0.5)(latency_ms)" in MODE_COMPARISON_QUERY
     assert "quantileExactInclusive(0.5)(mcp_queries)" in MODE_COMPARISON_QUERY
     assert "latest_eval" in MODE_COMPARISON_QUERY
+    assert "g.configuration AS configuration" in MODE_COMPARISON_QUERY
+    assert "generated.case_id = existing.case_id" in MODE_COMPARISON_QUERY
+    assert "generated.repetition = existing.repetition" in MODE_COMPARISON_QUERY
+    assert "AS method" not in MODE_COMPARISON_QUERY
     assert "share_pct" in ACCURACY_CHART_QUERY
     assert "correct" in ACCURACY_CHART_QUERY
     assert "incorrect" in ACCURACY_CHART_QUERY

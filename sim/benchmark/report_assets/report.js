@@ -12,7 +12,7 @@ const num = value => value == null ? "—" : Number(value).toFixed(1);
 const esc = value => String(value).replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[char]);
-const configName = row => [row.mode, row.method, row.detail]
+const configName = row => [row.mode, row.source, row.method, row.detail, row.variant]
   .filter(value => value && value !== "—").join(" / ");
 
 document.getElementById("eval").textContent = data.eval_id;
@@ -23,9 +23,18 @@ document.getElementById("cards").innerHTML = [
   ["Требуют проверки", data.counts.review],
 ].map(([label, value]) => `<div class="card"><span class="muted">${label}</span><strong>${value}</strong></div>`).join("");
 
+if (data.coverage) {
+  const coverage = data.coverage;
+  const section = document.getElementById("coverage");
+  section.hidden = false;
+  section.innerHTML = `<h2>Покрытие каталогами</h2><p>Кейсов выбрано: ${coverage.selected_cases} из ${coverage.source_cases}; без подходящего skill: ${coverage.excluded.length}; skills без подходящих кейсов: ${coverage.unmatched_artifacts.length}.</p>
+    <details><summary>Непокрытые кейсы и skills</summary><ul>${coverage.excluded.map(row => `<li>${esc(row.case_id)} — ${esc(row.reason)}</li>`).join("")}${coverage.unmatched_artifacts.map(row => `<li>${esc(row.source)} / ${esc(row.skill_name)} (${esc(row.version)}) — нет подходящих кейсов среди выбранных</li>`).join("")}</ul></details>`;
+}
+
 document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
-  <td>${esc(row.mode)}</td><td>${esc(row.method)}</td><td>${esc(row.detail)}</td><td>${row.runs}</td>
+  <td>${esc(row.mode)}</td><td>${esc(row.source)}</td><td>${esc(row.method)}</td><td>${esc(row.detail)}</td><td>${esc(row.skill)}</td><td>${esc(row.variant)}</td><td>${row.runs}</td>
   <td>${pct(row.accuracy)}</td>
+  <td>${row.n_pairs || "—"}</td>
   <td>${row.delta_pp == null ? "—" : `${row.delta_pp > 0 ? "+" : ""}${row.delta_pp.toFixed(1)}`}</td>
   <td>${pct(row.any_skill_loaded)}</td><td>${pct(row.expected_skill_loaded)}</td>
   <td>${row.median_latency_s == null ? "—" : `${num(row.median_latency_s)} с`}</td>

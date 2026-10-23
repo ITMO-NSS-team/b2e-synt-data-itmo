@@ -32,8 +32,7 @@ SMOKE_DATA ?= $(STAND_DATA_PATH)
         up down logs ps seed seed-traps-off smoke check-docs hash-password openapi \
         rebuild sim-test demo benchmarking benchmarking-check benchmarking-smoke \
         benchmarking-generated benchmarking-existing-plus-generated \
-        openlit-dashboard prepare-resolv _benchmarking-single \
-        benchmarking-detail benchmarking-detail-check benchmarking-detail-smoke
+        openlit-dashboard prepare-resolv _benchmarking-single
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
@@ -161,6 +160,7 @@ BENCH_CASES_HOST := $(if $(filter /%,$(CASES)),$(CASES),$(if $(filter b2e-skill-
 BENCH_CASES_CONTAINER := $(if $(filter $(BENCH_REPO_HOST)/%,$(BENCH_CASES_HOST)),/app/b2e-skill-benchmark/$(patsubst $(BENCH_REPO_HOST)/%,%,$(BENCH_CASES_HOST)),/app/$(patsubst $(CURDIR)/%,%,$(BENCH_CASES_HOST)))
 MAKE_GENERATED_SKILLS_DIR := $(GENERATED_SKILLS_DIR)
 BENCH_GENERATED_SKILLS_SETTING := $(call benchmark_env,GENERATED_SKILLS_DIR)
+BENCH_SKILL_CATALOGS ?= $(call benchmark_env,BENCH_SKILL_CATALOGS)
 BENCH_GENERATED_SKILLS_HOST := $(if $(BENCH_GENERATED_SKILLS_SETTING),$(if $(filter /%,$(BENCH_GENERATED_SKILLS_SETTING)),$(BENCH_GENERATED_SKILLS_SETTING),$(BENCH_GENERATED_SKILLS_SETTING)))
 GENERATED_SKILLS_INPUT := $(or $(MAKE_GENERATED_SKILLS_DIR),$(BENCH_GENERATED_SKILLS_HOST))
 override GENERATED_SKILLS_DIR := $(abspath $(or $(GENERATED_SKILLS_INPUT),var/empty-generated-skills))
@@ -189,20 +189,9 @@ BENCH_MAX_UNSCORED ?=
 BENCH_WORKERS ?= $(or $(call benchmark_env,BENCH_WORKERS),1)
 BENCH_RESUME ?=
 BENCH_REFERENCE_MANIFEST ?=
-BENCH_GENERATED_GROUPING ?= artifact
-BENCH_DETAIL_DEFAULT_METHODS := no-context,compact
-BENCH_DETAIL_METHODS ?= $(or $(call benchmark_env,BENCH_DETAIL_METHODS),$(BENCH_DETAIL_DEFAULT_METHODS))
-BENCH_DETAIL_DEFAULT_LEVELS := abstract,medium,detailed
-BENCH_DETAIL_LEVELS ?= $(or $(call benchmark_env,BENCH_DETAIL_LEVELS),$(BENCH_DETAIL_DEFAULT_LEVELS))
-BENCH_DETAIL_BASELINES ?= $(or $(call benchmark_env,BENCH_DETAIL_BASELINES),skills_disabled)
-BENCH_DETAIL_WORKERS ?= $(or $(call benchmark_env,BENCH_DETAIL_WORKERS),4)
-BENCH_DETAIL_CASES_PER_SKILL ?= $(call benchmark_env,BENCH_DETAIL_CASES_PER_SKILL)
-BENCH_DETAIL_SEED ?= $(or $(call benchmark_env,BENCH_DETAIL_SEED),17)
-BENCH_PLAN_MODULE = $(if $(filter detail,$(BENCH_GENERATED_GROUPING)),sim.benchmark.detail_plan,sim.benchmark.generated_plan)
 BENCH_LOCK_HELD ?=
-export BENCH_MAX_UNSCORED BENCH_MODES BENCH_WORKERS BENCH_GENERATED_GROUPING BENCH_CHECK_ONLY BENCH_LIMIT
-export BENCH_REPETITIONS BENCH_EVAL_PREFIX BENCH_EVAL_ID BENCH_DETAIL_METHODS BENCH_DETAIL_LEVELS
-export BENCH_DETAIL_BASELINES BENCH_DETAIL_SEED BENCH_DETAIL_CASES_PER_SKILL BENCH_RESUME
+export BENCH_MAX_UNSCORED BENCH_MODES BENCH_WORKERS BENCH_CHECK_ONLY BENCH_LIMIT
+export BENCH_REPETITIONS BENCH_EVAL_PREFIX BENCH_EVAL_ID BENCH_SKILL_CATALOGS BENCH_RESUME
 empty :=
 space := $(empty) $(empty)
 comma := ,
@@ -308,12 +297,15 @@ _benchmarking-single:
 benchmarking:  ## полный прогон; generated skills изолируются по expected_skills кейса
 	@mkdir -p var
 	@if test -z "$(BENCH_LOCK_HELD)"; then \
-		exec flock -n var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+		if command -v flock >/dev/null 2>&1; then \
+			exec flock -n var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+		fi; \
+		exec lockf -t 0 var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
 	fi; \
 	if test -n "$(BENCH_GENERATED_MODE_LIST)"; then \
 		set -e; \
-		test -n "$(GENERATED_SKILLS_INPUT)" || { \
-			echo "для generated_skills задайте непустой GENERATED_SKILLS_DIR"; \
+		test -n "$(BENCH_SKILL_CATALOGS)$(GENERATED_SKILLS_INPUT)" || { \
+			echo "для generated_skills задайте BENCH_SKILL_CATALOGS или GENERATED_SKILLS_DIR в sim/benchmark/.env"; \
 			exit 2; \
 		}; \
 		test -z "$(BENCH_RESUME)" || test -n "$(BENCH_EVAL_ID)" || { echo "BENCH_RESUME requires the original BENCH_EVAL_ID"; exit 2; }; \
@@ -325,16 +317,24 @@ benchmarking:  ## полный прогон; generated skills изолируют
 		phase_list="$$plan_root/phases.txt"; \
 		group_list="$$plan_root/groups.tsv"; \
 		$(if $(BENCH_CHECK_ONLY),true,$(MAKE) --no-print-directory openlit-dashboard); \
-		$(PY) -m $(BENCH_PLAN_MODULE) \
+		$(PY) -m sim.benchmark.generated_plan \
 			--cases "$(BENCH_CASES_HOST)" \
-			--generated-skills "$(GENERATED_SKILLS_DIR)" \
+			$(if $(GENERATED_SKILLS_INPUT),--generated-skills "$(GENERATED_SKILLS_DIR)",) \
 			--base-skills "$(abspath heimdall-skills)" \
 			--modes "$(BENCH_GENERATED_MODE_CSV)" \
 			--output "$$plan_root" \
-			$(if $(filter detail,$(BENCH_GENERATED_GROUPING)),--methods "$(BENCH_DETAIL_METHODS)" --levels "$(BENCH_DETAIL_LEVELS)" --seed "$(BENCH_DETAIL_SEED)" $(if $(BENCH_DETAIL_CASES_PER_SKILL),--cases-per-skill "$(BENCH_DETAIL_CASES_PER_SKILL)",) $(if $(BENCH_RESUME),--resume,),) \
+			$(if $(BENCH_RESUME),--resume,) \
 			$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",); \
 		covered_cases="$$($(PY) -c 'import json,sys; print(json.load(open(sys.argv[1]))["covered_cases_path"])' "$$plan")"; \
 		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["combined_catalog_path"] or "-",",".join(g["skill_names"]),g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
+		if ! test -s "$$group_list"; then \
+			echo "Нет кейсов для доступных generated skills; сохраняю отчёт о покрытии без вызовов агента"; \
+			$(PY) -m sim.benchmark.merge --generated-plan "$$plan" \
+				--results "$(BENCH_RESULTS)" --eval-id "$$eval_id" \
+				$(if $(BENCH_CHECK_ONLY),--check-only,) \
+				$(if $(BENCH_RESUME),--resume,); \
+			exit $$?; \
+		fi; \
 		: > "$$phase_list"; \
 		if test -n "$(BENCH_BASELINE_MODE_LIST)"; then \
 			echo "Baseline-фаза: $(BENCH_BASELINE_MODES) — один раз для покрытых кейсов $$covered_cases"; \
@@ -378,9 +378,6 @@ benchmarking:  ## полный прогон; generated skills изолируют
 			--generated-plan "$$plan" \
 			--results "$(BENCH_RESULTS)" --eval-id "$$eval_id"; \
 		fi; \
-		if test "$(BENCH_GENERATED_GROUPING)" = detail && test -z "$(BENCH_CHECK_ONLY)"; then \
-			$(PY) -m sim.benchmark.detail_report --result-dir "$(BENCH_RESULTS)/$$eval_id"; \
-		fi; \
 		if test -z "$(BENCH_CHECK_ONLY)"; then \
 			$(BENCH_COMPOSE) --profile benchmark run --rm --no-deps \
 				--user "$$(id -u):$$(id -g)" benchmark-runner \
@@ -406,23 +403,8 @@ benchmarking-smoke: benchmarking  ## первый verified-кейс, один п
 
 benchmarking-generated: BENCH_MODES := generated_skills
 benchmarking-generated: BENCH_EVAL_PREFIX := generated
-benchmarking-generated: benchmarking  ## прогон только с каталогом GENERATED_SKILLS_DIR
+benchmarking-generated: benchmarking  ## прогон только с каталогами BENCH_SKILL_CATALOGS
 
 benchmarking-existing-plus-generated: BENCH_MODES := existing_plus_generated
 benchmarking-existing-plus-generated: BENCH_EVAL_PREFIX := existing-plus-generated
 benchmarking-existing-plus-generated: benchmarking  ## Heimdall skills плюс один generated skill на фазу
-
-# A separate full catalog for each method/detail arm, matched cases and seeded order.
-benchmarking-detail: BENCH_GENERATED_GROUPING := detail
-benchmarking-detail: BENCH_MAX_UNSCORED := 3
-benchmarking-detail: BENCH_MODES = $(if $(BENCH_DETAIL_BASELINES),$(BENCH_DETAIL_BASELINES)$(comma),)generated_skills
-benchmarking-detail: BENCH_WORKERS = $(BENCH_DETAIL_WORKERS)
-benchmarking-detail: BENCH_EVAL_PREFIX := detail
-benchmarking-detail: benchmarking  ## compare abstract/medium/detailed within each generation method
-
-benchmarking-detail-check: BENCH_CHECK_ONLY := 1
-benchmarking-detail-check: benchmarking-detail  ## preflight of the detail experiment without LLM calls
-
-benchmarking-detail-smoke: BENCH_LIMIT := 1
-benchmarking-detail-smoke: BENCH_REPETITIONS := 1
-benchmarking-detail-smoke: benchmarking-detail  ## one matched case in all detail catalogs
