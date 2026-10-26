@@ -63,6 +63,10 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert "Нажмите на точку" in text
     assert "Любой skill загружен" in text
     assert "Expected skill загружен" in text
+    assert "position: sticky" in text
+    assert "td:nth-child(4)" in text
+    assert 'existing_plus_generated: "existing + gen"' in text
+    assert 'title="${esc(row.mode)}"' in text
     assert "Медиана шагов" in text
     assert "Шаги агента, шт." in text
     assert text.count('type: "scatter3d"') == 1

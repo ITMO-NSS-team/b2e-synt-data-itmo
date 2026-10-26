@@ -489,11 +489,14 @@ def _update_widget(store: DashboardStore, row: Mapping[str, Any]) -> None:
         "ALTER TABLE openlit_widget UPDATE "
         "title = {title:String}, description = {description:String}, "
         "widget_type = {widget_type:String}, properties = {properties:String}, "
-        "config = {config:String}, updated_at = now() "
+        "config = unhex({config_hex:String}), updated_at = now() "
         "WHERE id = toUUID({id:String}) SETTINGS mutations_sync = 1",
-        {key: str(row[key]) for key in (
-            "id", "title", "description", "widget_type", "properties", "config",
-        )},
+        {
+            **{key: str(row[key]) for key in (
+                "id", "title", "description", "widget_type", "properties",
+            )},
+            "config_hex": str(row["config"]).encode("utf-8").hex(),
+        },
     )
 
 

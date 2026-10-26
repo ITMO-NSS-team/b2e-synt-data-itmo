@@ -327,7 +327,7 @@ benchmarking:  ## полный прогон; generated skills изолируют
 		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["combined_catalog_path"] or "-",",".join(g["skill_names"]),g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
 		if ! test -s "$$group_list"; then \
 			echo "Нет кейсов для доступных generated skills; сохраняю отчёт о покрытии без вызовов агента"; \
-			$(PY) -m sim.benchmark.merge --generated-plan "$$plan" \
+			BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.merge --generated-plan "$$plan" \
 				--results "$(BENCH_RESULTS)" --eval-id "$$eval_id" \
 				$(if $(BENCH_CHECK_ONLY),--check-only,) \
 				$(if $(BENCH_RESUME),--resume,); \
@@ -372,9 +372,11 @@ benchmarking:  ## полный прогон; generated skills изолируют
 		merge_args=""; \
 		while IFS= read -r phase; do merge_args="$$merge_args --phase $$phase"; done < "$$phase_list"; \
 		if test -z "$(BENCH_RESUME)" || ! test -f "$(BENCH_RESULTS)/$$eval_id/summary.json"; then \
-		$(PY) -m sim.benchmark.merge $$merge_args \
-			--generated-plan "$$plan" \
-			--results "$(BENCH_RESULTS)" --eval-id "$$eval_id"; \
+			BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.merge $$merge_args \
+				--generated-plan "$$plan" \
+				--results "$(BENCH_RESULTS)" --eval-id "$$eval_id"; \
+		else \
+			BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.report "$(BENCH_RESULTS)/$$eval_id"; \
 		fi; \
 		if test -z "$(BENCH_CHECK_ONLY)"; then \
 			$(BENCH_COMPOSE) --profile benchmark run --rm --no-deps \

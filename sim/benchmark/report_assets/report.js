@@ -12,6 +12,13 @@ const num = value => value == null ? "—" : Number(value).toFixed(1);
 const esc = value => String(value).replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[char]);
+const shortMode = {
+  general_knowledge: "general",
+  skills_disabled: "disabled",
+  existing_skills: "existing",
+  generated_skills: "generated",
+  existing_plus_generated: "existing + gen",
+};
 const configName = row => [row.mode, row.source, row.method, row.detail, row.variant]
   .filter(value => value && value !== "—").join(" / ");
 
@@ -32,7 +39,7 @@ if (data.coverage) {
 }
 
 document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
-  <td>${esc(row.mode)}</td><td>${esc(row.source)}</td><td>${esc(row.method)}</td><td>${esc(row.detail)}</td><td>${esc(row.skill)}</td><td>${esc(row.variant)}</td><td>${row.runs}</td>
+  <td title="${esc(row.mode)}">${esc(shortMode[row.mode] || row.mode)}</td><td title="${esc(row.source)}">${esc(row.source)}</td><td title="${esc(row.method)}">${esc(row.method)}</td><td title="${esc(row.detail)}">${esc(row.detail)}</td><td>${esc(row.skill)}</td><td>${esc(row.variant)}</td><td>${row.runs}</td>
   <td>${pct(row.accuracy)}</td>
   <td>${row.n_pairs || "—"}</td>
   <td>${row.delta_pp == null ? "—" : `${row.delta_pp > 0 ? "+" : ""}${row.delta_pp.toFixed(1)}`}</td>

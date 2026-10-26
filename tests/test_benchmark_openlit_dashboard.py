@@ -1,6 +1,7 @@
 """Automatic OpenLIT benchmark dashboard provisioning."""
 from __future__ import annotations
 
+import json
 from collections import deque
 from typing import Any, Mapping
 
@@ -87,6 +88,12 @@ def test_provision_updates_existing_resources_without_duplicates() -> None:
     assert store.inserts == []
     assert len(store.executions) == 1 + len(WIDGETS) * 2
     assert all("mutations_sync = 1" in query for query, _ in store.executions)
+    widget_update = next(
+        (query, params) for query, params in store.executions
+        if "ALTER TABLE openlit_widget UPDATE" in query
+    )
+    assert "config = unhex({config_hex:String})" in widget_update[0]
+    assert "query" in json.loads(bytes.fromhex(widget_update[1]["config_hex"]))
 
 
 def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
