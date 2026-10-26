@@ -7,7 +7,8 @@ const colors = {
   existing_plus_generated: "#12b76a",
 };
 const symbols = { abstract: "circle", medium: "square", detailed: "diamond", "—": "cross" };
-const pct = value => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+const pct = (value, count, total) => value == null ? "—" :
+  `${(value * 100).toFixed(1)}%${total ? ` (${count}/${total})` : ""}`;
 const num = value => value == null ? "—" : Number(value).toFixed(1);
 const esc = value => String(value).replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -40,12 +41,12 @@ if (data.coverage) {
 
 document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
   <td title="${esc(row.mode)}">${esc(shortMode[row.mode] || row.mode)}</td><td title="${esc(row.source)}">${esc(row.source)}</td><td title="${esc(row.method)}">${esc(row.method)}</td><td title="${esc(row.detail)}">${esc(row.detail)}</td><td>${esc(row.skill)}</td><td>${esc(row.variant)}</td><td>${row.runs}</td>
-  <td>${pct(row.accuracy)}</td>
+  <td>${pct(row.accuracy, row.accuracy_correct, row.accuracy_total)}</td>
   <td>${row.n_pairs || "—"}</td>
   <td>${row.delta_pp == null ? "—" : `${row.delta_pp > 0 ? "+" : ""}${row.delta_pp.toFixed(1)}`}</td>
-  <td>${pct(row.any_skill_loaded)}</td><td>${pct(row.expected_skill_loaded)}</td>
+  <td>${pct(row.any_skill_loaded, row.any_skill_loaded_count, row.any_skill_loaded_total)}</td><td>${pct(row.expected_skill_loaded, row.expected_skill_loaded_count, row.expected_skill_loaded_total)}</td>
   <td>${row.median_latency_s == null ? "—" : `${num(row.median_latency_s)} с`}</td>
-  <td>${num(row.median_mcp_queries)}</td><td>${num(row.median_iterations)}</td><td>${num(row.median_total_tokens)}</td>
+  <td>${num(row.median_mcp_queries)}</td><td>${num(row.median_iterations)}</td><td>${num(row.median_input_tokens)}</td><td>${num(row.median_output_tokens)}</td>
 </tr>`).join("");
 
 const plotConfig = {

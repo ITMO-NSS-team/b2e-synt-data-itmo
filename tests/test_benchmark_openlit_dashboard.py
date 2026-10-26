@@ -115,6 +115,10 @@ def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
     assert "('generated_skills', 'existing_plus_generated')" in MODE_COMPARISON_QUERY
     assert "quantileExactInclusive(0.5)(latency_ms)" in MODE_COMPARISON_QUERY
     assert "quantileExactInclusive(0.5)(mcp_queries)" in MODE_COMPARISON_QUERY
+    assert "quantileExactInclusive(0.5)(input_tokens)" in MODE_COMPARISON_QUERY
+    assert "quantileExactInclusive(0.5)(output_tokens)" in MODE_COMPARISON_QUERY
+    assert "toString(g.answer_correct), '/', toString(g.answer_scored)" in MODE_COMPARISON_QUERY
+    assert "toString(g.target_loaded), '/', toString(g.target_eligible)" in MODE_COMPARISON_QUERY
     assert "latest_eval" in MODE_COMPARISON_QUERY
     assert "g.configuration AS configuration" in MODE_COMPARISON_QUERY
     assert "generated.case_id = existing.case_id" in MODE_COMPARISON_QUERY

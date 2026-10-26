@@ -82,7 +82,11 @@ WITH
             toFloat64OrNull(nullIf(
                 SpanAttributes['b2e.metric.latency_ms'], '')) AS latency_ms,
             toFloat64OrNull(nullIf(
-                SpanAttributes['b2e.metric.mcp_query_calls'], '')) AS mcp_queries
+                SpanAttributes['b2e.metric.mcp_query_calls'], '')) AS mcp_queries,
+            toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.prompt_tokens'], '')) AS input_tokens,
+            toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.completion_tokens'], '')) AS output_tokens
         FROM otel_traces
         WHERE
             ServiceName = 'b2e-benchmark-runner'
@@ -98,9 +102,15 @@ WITH
             mode,
             if(variant = '', '—', variant) AS configuration,
             avg(answer_score) AS answer_accuracy,
+            count(answer_score) AS answer_scored,
+            countIf(answer_score = 1) AS answer_correct,
             avg(skill_loaded_score) AS target_skill_loaded,
+            count(skill_loaded_score) AS target_eligible,
+            countIf(skill_loaded_score = 1) AS target_loaded,
             quantileExactInclusive(0.5)(latency_ms) / 1000 AS median_latency_s,
-            quantileExactInclusive(0.5)(mcp_queries) AS median_mcp_queries
+            quantileExactInclusive(0.5)(mcp_queries) AS median_mcp_queries,
+            quantileExactInclusive(0.5)(input_tokens) AS median_input_tokens,
+            quantileExactInclusive(0.5)(output_tokens) AS median_output_tokens
         FROM scores
         GROUP BY eval_id, mode, configuration
     ),
@@ -134,19 +144,26 @@ MODE_COMPARISON_QUERY = _LATEST_SCORE_CTES + "\n" + """
 SELECT
     g.mode AS mode,
     g.configuration AS configuration,
-    round(g.answer_accuracy * 100, 1) AS answer_accuracy_pct,
+    if(g.answer_scored = 0, NULL, concat(
+        toString(round(g.answer_accuracy * 100, 1)), '% (',
+        toString(g.answer_correct), '/', toString(g.answer_scored), ')'
+    )) AS answer_accuracy_pct,
     if(
         g.mode = 'existing_skills' OR b.existing_present = 0,
         NULL,
         round(p.delta_pp, 1)
     ) AS accuracy_delta_vs_existing_skills_pp,
     if(
-        g.mode IN ('generated_skills', 'existing_plus_generated'),
-        round(g.target_skill_loaded * 100, 1),
+        g.mode IN ('generated_skills', 'existing_plus_generated')
+            AND g.target_eligible > 0,
+        concat(toString(round(g.target_skill_loaded * 100, 1)), '% (',
+            toString(g.target_loaded), '/', toString(g.target_eligible), ')'),
         NULL
     ) AS target_skill_loaded_pct,
     round(g.median_latency_s, 1) AS median_latency_s,
-    round(g.median_mcp_queries, 1) AS median_mcp_queries
+    round(g.median_mcp_queries, 1) AS median_mcp_queries,
+    round(g.median_input_tokens, 1) AS median_input_tokens,
+    round(g.median_output_tokens, 1) AS median_output_tokens
 FROM grouped AS g
 LEFT JOIN baseline AS b ON b.eval_id = g.eval_id
 LEFT JOIN paired AS p ON p.eval_id = g.eval_id

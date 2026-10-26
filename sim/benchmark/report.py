@@ -159,6 +159,8 @@ def _point(row: dict[str, Any], group: dict[str, Any] | None = None) -> dict[str
         "latency_s": latency / 1000 if latency is not None else None,
         "mcp_queries": metrics.get("mcp_query_calls"),
         "iterations": metrics.get("iterations"),
+        "prompt_tokens": metrics.get("prompt_tokens"),
+        "completion_tokens": metrics.get("completion_tokens"),
         "total_tokens": metrics.get("total_tokens"),
     }
 
@@ -190,7 +192,10 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     output = []
     for (mode, variant), group in sorted(groups.items()):
         first = group[0]
-        accuracy = _mean(point["accuracy"] for point in group)
+        accuracy_values = [point["accuracy"] for point in group if point["accuracy"] is not None]
+        any_skill_values = [point["any_skill_loaded"] for point in group if point["any_skill_loaded"] is not None]
+        expected_values = [point["expected_skill_loaded"] for point in group if point["expected_skill_loaded"] is not None]
+        accuracy = _mean(accuracy_values)
         pairs = [
             (point["accuracy"], existing[(point["case_id"], point["repetition"])])
             for point in group
@@ -206,17 +211,21 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "detail": first["detail"],
             "runs": len(group),
             "accuracy": accuracy,
+            "accuracy_correct": sum(accuracy_values),
+            "accuracy_total": len(accuracy_values),
             "n_pairs": len(pairs),
             "delta_pp": 100 * _mean(a - b for a, b in pairs) if pairs else None,
-            "any_skill_loaded": _mean(
-                point["any_skill_loaded"] for point in group
-            ),
-            "expected_skill_loaded": _mean(
-                point["expected_skill_loaded"] for point in group
-            ),
+            "any_skill_loaded": _mean(any_skill_values),
+            "any_skill_loaded_count": sum(any_skill_values),
+            "any_skill_loaded_total": len(any_skill_values),
+            "expected_skill_loaded": _mean(expected_values),
+            "expected_skill_loaded_count": sum(expected_values),
+            "expected_skill_loaded_total": len(expected_values),
             "median_latency_s": _median(point["latency_s"] for point in group),
             "median_mcp_queries": _median(point["mcp_queries"] for point in group),
             "median_iterations": _median(point["iterations"] for point in group),
+            "median_input_tokens": _median(point["prompt_tokens"] for point in group),
+            "median_output_tokens": _median(point["completion_tokens"] for point in group),
             "median_total_tokens": _median(point["total_tokens"] for point in group),
         })
     return output

@@ -15,6 +15,8 @@ def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int, ste
             "latency_ms": latency,
             "mcp_query_calls": calls,
             "iterations": steps,
+            "prompt_tokens": 80 * calls,
+            "completion_tokens": 20 * calls,
             "total_tokens": 100 * calls,
         }},
         response={
@@ -68,6 +70,8 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert 'existing_plus_generated: "existing + gen"' in text
     assert 'title="${esc(row.mode)}"' in text
     assert "Медиана шагов" in text
+    assert "Входные токены, медиана" in text
+    assert "Выходные токены, медиана" in text
     assert "Шаги агента, шт." in text
     assert text.count('type: "scatter3d"') == 1
     assert 'type: "scatter"' in text
@@ -80,6 +84,12 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert '"detail":"medium"' in text
     assert '"median_latency_s":3.0' in text
     assert '"median_total_tokens":400.0' in text
+    assert '"median_input_tokens":320.0' in text
+    assert '"median_output_tokens":80.0' in text
+    assert '"accuracy_correct":2' in text
+    assert '"accuracy_total":2' in text
+    assert '"expected_skill_loaded_count":2' in text
+    assert '"expected_skill_loaded_total":2' in text
     assert '"expected_skill_loaded":1.0' in text
     assert '"delta_pp":100.0' in text
     assert (public / "eval-1" / "report.html").read_text() == text
