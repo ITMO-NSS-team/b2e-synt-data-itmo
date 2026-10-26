@@ -15,7 +15,7 @@
 
 Generated-режимы запускаются с именованными каталогами готовых skills из
 `BENCH_SKILL_CATALOGS` в `sim/benchmark/.env`. Например:
-`BENCH_SKILL_CATALOGS=baseline=/abs/baseline/run,skillfactory=/abs/sf/output`.
+`BENCH_SKILL_CATALOGS=baseline=../skill-factory/baseline/runs/my-run,skillfactory=var/sf-output`.
 Допустимы вложенные каталоги и плоские наборы `.md`/`.yaml`-файлов; имена и
 версии skills берутся из содержимого файлов, а не из их путей. Связь кейса со skill задаётся полем
 `expected_skills`. Эксперимент ограничивается кейсами, для которых найден хотя бы
@@ -263,10 +263,10 @@ skills, режимы, повторы, параллельность, тайм-а�
 `BENCH_EVAL_ID` лучше оставить незаданным, чтобы каждый запуск получил новый
 идентификатор. Для продолжения прерванного запуска укажите прежний
 `BENCH_EVAL_ID` и `BENCH_RESUME=1`; затем уберите их для нового запуска.
-`CASES`, `BENCHMARK_REPO_DIR` и пути в `BENCH_SKILL_CATALOGS` в `sim/benchmark/.env`
-задаются относительно корня репозитория. `DATA_DIR` остаётся настройкой
+Относительные пути `CASES`, `BENCHMARK_REPO_DIR` и `BENCH_SKILL_CATALOGS` в
+`sim/benchmark/.env` отсчитываются от корня репозитория. `DATA_DIR` остаётся настройкой
 стенда в `deploy/.env` и задаётся относительно `deploy/`.
-Например: `BENCH_SKILL_CATALOGS=baseline=generated-skills/all-methods,skillfactory=/abs/sf/output`.
+Например: `BENCH_SKILL_CATALOGS=baseline=../skill-factory/baseline/runs/my-run,skillfactory=var/sf-output`.
 `GENERATED_SKILLS_DIR` сохраняется как совместимость для одного каталога.
 
 Локальное окружение устанавливается через `uv pip install -e ".[serve]"`;
@@ -452,7 +452,7 @@ benchmarking/results/<eval_id>/
 ```dotenv
 BENCHMARK_REPO_DIR=../b2e-skill-benchmark
 CASES=b2e-skill-benchmark/gold_dataset
-BENCH_SKILL_CATALOGS=baseline=/abs/baseline/run,skillfactory=/abs/sf/output
+BENCH_SKILL_CATALOGS=baseline=../skill-factory/baseline/runs/my-run,skillfactory=var/sf-output
 BENCH_MODES=skills_disabled,existing_skills,generated_skills,existing_plus_generated
 BENCH_REPETITIONS=1
 ```

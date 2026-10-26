@@ -22,7 +22,7 @@ make benchmarking
 стенда. Для отдельного репозитория кейсов укажите
 `BENCHMARK_REPO_DIR=../b2e-skill-benchmark` и
 `CASES=b2e-skill-benchmark/gold_dataset`. Для generated-режимов добавьте, например,
-`BENCH_SKILL_CATALOGS=baseline=/abs/run,skillfactory=/abs/output` и перечислите
+`BENCH_SKILL_CATALOGS=baseline=../skill-factory/baseline/runs/my-run,skillfactory=var/sf-output` и перечислите
 нужные режимы в `BENCH_MODES`. Для нового многокаталожного запуска с
 generated-режимами `BENCH_SKILL_CATALOGS` должен быть заполнен.
 Каждый готовый skill-файл из этих каталогов получает отдельный вариант прогона;
