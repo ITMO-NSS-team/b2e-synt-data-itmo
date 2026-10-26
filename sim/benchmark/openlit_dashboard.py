@@ -18,7 +18,6 @@ from typing import Any, Mapping, Protocol
 import httpx
 
 from .env import load_env
-from .path_lib import ENV_RELATIVE
 
 
 BOARD_TITLE = "B2E Benchmark"
@@ -500,14 +499,14 @@ def _update_widget(store: DashboardStore, row: Mapping[str, Any]) -> None:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Provision the B2E benchmark dashboard in OpenLIT")
-    result.add_argument("--env-file", default=ENV_RELATIVE)
+    result.add_argument("--env-file", default="deploy/.env")
     result.add_argument("--required", action="store_true", help="fail if OpenLIT dashboard access is not configured")
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    load_env(args.env_file)
+    load_env(args.env_file, override=True)
     config = DashboardConfig.from_env()
     if config is None:
         message = "OPENLIT_CLICKHOUSE_URL is empty; dashboard provisioning skipped"

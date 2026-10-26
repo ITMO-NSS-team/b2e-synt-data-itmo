@@ -167,6 +167,8 @@ def test_load_env_reads_local_file_and_process_overrides(tmp_path, monkeypatch) 
     monkeypatch.setenv("HEIMDALL_URL", "http://from-process:2")
     load_env(env_file)
     assert os.getenv("HEIMDALL_URL") == "http://from-process:2"
+    load_env(env_file, override=True)
+    assert os.getenv("HEIMDALL_URL") == "http://from-file:1"
 
 
 def test_require_env_refuses_blank_instead_of_docker_defaults(monkeypatch) -> None:

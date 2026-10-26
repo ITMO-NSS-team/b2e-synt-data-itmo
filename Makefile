@@ -96,7 +96,7 @@ prepare-resolv:
 
 up: prepare-resolv  ## поднять весь стек одной командой; PROFILE=telegram добавит бота
 	@test -f deploy/.env || { echo "нет deploy/.env — скопируйте deploy/.env.example"; exit 1; }
-	@mkdir -p var/empty-generated-skills "$(BENCHMARK_REPORT_DIR)"
+	@mkdir -p var/empty-generated-skills benchmarking/reports
 	@test -d "$(GENERATED_SKILLS_DIR)" || { echo "нет каталога skills: $(GENERATED_SKILLS_DIR)"; exit 1; }
 	@force_recreate=""; \
 	if test -f "$(RESOLV_RECREATE_MARKER)"; then \
@@ -147,20 +147,21 @@ rebuild:  ## пересобрать образы без кэша
 # ============================================================ benchmark
 
 # Benchmark settings live separately from the deployment environment.
-# Explicit Make arguments and process variables retain precedence.
+# The benchmark .env overrides inherited shell variables; recursive phase
+# arguments still override it.
 BENCH_ENV_FILE := sim/benchmark/.env
 benchmark_env = $(shell awk -F= '/^$(1)=/{print substr($$0,index($$0,"=")+1); exit}' $(BENCH_ENV_FILE) 2>/dev/null)
 
 BENCH_CASES_SETTING := $(call benchmark_env,CASES)
-CASES ?= $(BENCH_CASES_SETTING)
+CASES := $(BENCH_CASES_SETTING)
 BENCH_REPO_SETTING := $(call benchmark_env,BENCHMARK_REPO_DIR)
 BENCH_REPO_HOST := $(abspath $(or $(BENCH_REPO_SETTING),b2e-skill-benchmark))
 BENCH_REPO_HOST := $(if $(filter /%,$(BENCH_REPO_SETTING)),$(BENCH_REPO_SETTING),$(BENCH_REPO_HOST))
 BENCH_CASES_HOST := $(if $(filter /%,$(CASES)),$(CASES),$(if $(filter b2e-skill-benchmark/%,$(CASES)),$(BENCH_REPO_HOST)/$(patsubst b2e-skill-benchmark/%,%,$(CASES)),$(abspath $(CASES))))
 BENCH_CASES_CONTAINER := $(if $(filter $(BENCH_REPO_HOST)/%,$(BENCH_CASES_HOST)),/app/b2e-skill-benchmark/$(patsubst $(BENCH_REPO_HOST)/%,%,$(BENCH_CASES_HOST)),/app/$(patsubst $(CURDIR)/%,%,$(BENCH_CASES_HOST)))
-MAKE_GENERATED_SKILLS_DIR := $(GENERATED_SKILLS_DIR)
+MAKE_GENERATED_SKILLS_DIR := $(if $(filter command line,$(origin GENERATED_SKILLS_DIR)),$(GENERATED_SKILLS_DIR),)
 BENCH_GENERATED_SKILLS_SETTING := $(call benchmark_env,GENERATED_SKILLS_DIR)
-BENCH_SKILL_CATALOGS ?= $(call benchmark_env,BENCH_SKILL_CATALOGS)
+BENCH_SKILL_CATALOGS := $(call benchmark_env,BENCH_SKILL_CATALOGS)
 BENCH_GENERATED_SKILLS_HOST := $(if $(BENCH_GENERATED_SKILLS_SETTING),$(if $(filter /%,$(BENCH_GENERATED_SKILLS_SETTING)),$(BENCH_GENERATED_SKILLS_SETTING),$(BENCH_GENERATED_SKILLS_SETTING)))
 GENERATED_SKILLS_INPUT := $(or $(MAKE_GENERATED_SKILLS_DIR),$(BENCH_GENERATED_SKILLS_HOST))
 override GENERATED_SKILLS_DIR := $(abspath $(or $(GENERATED_SKILLS_INPUT),var/empty-generated-skills))
@@ -168,26 +169,25 @@ export GENERATED_SKILLS_DIR
 
 BENCH_COMPOSE = BENCHMARK_REPO_DIR="$(BENCH_REPO_HOST)" $(COMPOSE)
 BENCH_DEFAULT_MODES := general_knowledge,skills_disabled,existing_skills
-BENCH_MODES ?= $(or $(call benchmark_env,BENCH_MODES),$(BENCH_DEFAULT_MODES))
-BENCH_REPETITIONS ?= $(or $(call benchmark_env,BENCH_REPETITIONS),1)
-BENCH_RESULTS ?= $(or $(call benchmark_env,BENCH_RESULTS),benchmarking/results)
+BENCH_MODES := $(or $(call benchmark_env,BENCH_MODES),$(BENCH_DEFAULT_MODES))
+BENCH_REPETITIONS := $(or $(call benchmark_env,BENCH_REPETITIONS),1)
+BENCH_RESULTS := $(or $(call benchmark_env,BENCH_RESULTS),benchmarking/results)
 
 BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
-BENCH_MODEL ?= $(call benchmark_env,BENCH_MODEL)
-BENCH_EVAL_ID ?= $(call benchmark_env,BENCH_EVAL_ID)
-BENCH_TIMEOUT ?= $(or $(call benchmark_env,BENCH_TIMEOUT),1800)
-BENCH_TRACE_TIMEOUT ?= $(or $(call benchmark_env,BENCH_TRACE_TIMEOUT),300)
-BENCH_HEALTH_TIMEOUT ?= $(or $(call benchmark_env,BENCH_HEALTH_TIMEOUT),60)
-BENCH_LIMIT ?= $(call benchmark_env,BENCH_LIMIT)
+BENCH_EVAL_ID := $(call benchmark_env,BENCH_EVAL_ID)
+BENCH_TIMEOUT := $(or $(call benchmark_env,BENCH_TIMEOUT),1800)
+BENCH_TRACE_TIMEOUT := $(or $(call benchmark_env,BENCH_TRACE_TIMEOUT),300)
+BENCH_HEALTH_TIMEOUT := $(or $(call benchmark_env,BENCH_HEALTH_TIMEOUT),60)
+BENCH_LIMIT := $(call benchmark_env,BENCH_LIMIT)
 BENCH_REQUIRED_SERVICES := admin-ui b2e-agent phoenix heimdall-emulator
 BENCH_EVAL_PREFIX ?= benchmark
 BENCH_CHECK_ONLY ?=
 BENCH_SKIP_OPENLIT ?=
 BENCH_PHASE_TELEMETRY ?=
 BENCH_GENERATED_VARIANT_ID ?=
-BENCH_MAX_UNSCORED ?=
-BENCH_WORKERS ?= $(or $(call benchmark_env,BENCH_WORKERS),1)
-BENCH_RESUME ?=
+BENCH_MAX_UNSCORED := $(call benchmark_env,BENCH_MAX_UNSCORED)
+BENCH_WORKERS := $(or $(call benchmark_env,BENCH_WORKERS),1)
+BENCH_RESUME := $(call benchmark_env,BENCH_RESUME)
 BENCH_REFERENCE_MANIFEST ?=
 BENCH_LOCK_HELD ?=
 export BENCH_MAX_UNSCORED BENCH_MODES BENCH_WORKERS BENCH_CHECK_ONLY BENCH_LIMIT
@@ -255,13 +255,11 @@ define BENCHMARK_PREPARE
 	fi
 
 	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" var/benchmark-catalog-snapshots
-	$(BENCH_COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
-
-		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
+	$(BENCH_COMPOSE) exec -T admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
 endef
 
 openlit-dashboard:  ## создать/обновить dashboard результатов в OpenLIT; без URL безопасно пропускается
-	cd "$(CURDIR)" && $(PY) -m sim.benchmark.openlit_dashboard --env-file $(BENCH_ENV_FILE)
+	cd "$(CURDIR)" && $(PY) -m sim.benchmark.openlit_dashboard --env-file deploy/.env
 
 _benchmarking-single:
 	$(BENCHMARK_PREPARE)

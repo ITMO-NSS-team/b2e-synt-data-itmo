@@ -17,6 +17,25 @@ def _make(*arguments: str) -> str:
     return result.stdout
 
 
+def test_benchmark_env_overrides_inherited_shell(monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("BENCH_MODES", "stale")
+    monkeypatch.setenv("BENCH_SKILL_CATALOGS", "stale")
+    monkeypatch.setenv("CASES", "stale")
+    monkeypatch.setenv("BENCH_WORKERS", "99")
+    monkeypatch.setenv("GENERATED_SKILLS_DIR", "/tmp/stale")
+    result = subprocess.run(
+        ["make", "-s", "-f", "Makefile", "-f", "-", "print-bench-config",
+         "BENCH_ENV_FILE=sim/benchmark/.env.example"],
+        input='print-bench-config:\n\t@printf "%s|%s|%s|%s|%s" "$(BENCH_MODES)" "$(BENCH_SKILL_CATALOGS)" "$(CASES)" "$(BENCH_WORKERS)" "$(GENERATED_SKILLS_DIR)"\n',
+        cwd=root, text=True, capture_output=True, check=True,
+    )
+    assert result.stdout == (
+        "general_knowledge,skills_disabled,existing_skills||"
+        f"b2e-skill-benchmark/gold_dataset|1|{root}/var/empty-generated-skills"
+    )
+
+
 def test_benchmarking_uses_internal_agent_and_phoenix() -> None:
     output = _make("benchmarking", "CASES=benchmarking/cases")
 
@@ -31,6 +50,10 @@ def test_benchmarking_uses_internal_agent_and_phoenix() -> None:
     assert '--modes "general_knowledge,skills_disabled,existing_skills"' in output
     assert 'HEIMDALL_SKILLS_ROOT="/app/heimdall-skill-catalog/existing"' in output
     assert "ssh" not in output
+
+
+def test_openlit_dashboard_uses_stand_env() -> None:
+    assert "--env-file deploy/.env" in _make("openlit-dashboard")
 
 
 def test_prepare_resolv_repairs_docker_created_directory() -> None:

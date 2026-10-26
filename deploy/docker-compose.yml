@@ -334,7 +334,7 @@ services:
       # has no route to — so the trace explorer would fail in the deployment it
       # exists for while working fine on a laptop.
       PHOENIX_URL: http://phoenix:6006
-      PHOENIX_PROJECT: b2e-itmo
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       # Runtime source of truth; bootstrap also mirrors these into fresh rows.
