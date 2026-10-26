@@ -11,7 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Iterator, Mapping
 
-from heimdall.skills.registry import EXTENSIONS, Registry
+from heimdall.skills.registry import BENCHMARK_GENERATED_PREFIX, EXTENSIONS, Registry
 from sim.fingerprint import VALID_LATENCY_PROFILES
 
 GENERAL_KNOWLEDGE_TOOLS: tuple[str, ...] = ()
@@ -114,8 +114,7 @@ class ModeConfig:
             It is generated-only for ``generated_skills`` and combined for
             ``existing_plus_generated``.
         generated_skills_hash: Content hash of that source catalog.
-        generated_skill_names: Active names in that source catalog. The planner
-            narrows each generated phase to one target through ``expected_skills``.
+        generated_skill_names: Generated target names in that source catalog.
         common: Shared conditions copied into every arm.
         skills_enabled: Whether ``find_skills``/``get_skill`` are in the subset.
         is_mock: True when generated skills were not supplied.
@@ -209,7 +208,7 @@ class ModeStrategy:
         targets = set(expected_skills) & set(config.generated_skill_names)
         if not targets:
             return None
-        return int(targets <= set(loaded_skills))
+        return int(bool(targets & set(loaded_skills)))
 
 
 _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
@@ -446,8 +445,12 @@ def build_modes(
         generated_registry = _loaded_registry(generated)
         if not _skill_files(generated):
             raise ValueError("generated-skill mode requires at least one active skill")
-        names = tuple(generated_registry.active())
-        if len(names) != len(generated_registry.all_names()):
+        target_files = [item for item in generated_registry.files()
+                        if item.ok and item.name
+                        and item.path.relative_to(generated).parts[0].startswith(
+                            BENCHMARK_GENERATED_PREFIX)]
+        names = tuple(item.name for item in target_files) or tuple(generated_registry.active())
+        if len(generated_registry.active()) != len(generated_registry.all_names()):
             raise ValueError("generated skills must be active")
         generated_path = str(generated)
         generated_hash = catalog_hash(generated)

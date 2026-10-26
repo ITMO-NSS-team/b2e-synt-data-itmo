@@ -20,11 +20,23 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+from unittest.mock import Mock
 
 import pytest
 
+from sim.agent.tools import HeimdallTools
+
 BRIDGE = pathlib.Path("heimdall/bridge.py")
 SKILLS = pathlib.Path("heimdall-skills")
+
+
+def test_get_skill_encodes_benchmark_instance_address() -> None:
+    client = object.__new__(HeimdallTools)
+    client._call = Mock(return_value={})
+    client.get_skill("standard@1.0.0#generated")
+    assert client._call.call_args.args[1] == (
+        "/api/v2/mcp/skills/standard%401.0.0%23generated/"
+    )
 
 
 @pytest.fixture(scope="module")

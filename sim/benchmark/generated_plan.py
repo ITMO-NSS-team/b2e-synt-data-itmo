@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from heimdall.skills.registry import Registry, SkillFile, parse_text
+from heimdall.skills.registry import BENCHMARK_GENERATED_PREFIX, Registry, SkillFile, parse_text
 
 from .cli import load_cases_path
 from .env import load_env
@@ -31,6 +31,7 @@ _HASHED_SKILL = re.compile(
     r"^(?P<base>.+)-(?P<method>no-context|compact|full)-"
     r"(?P<prompt_hash>[0-9a-f]{10})(?:-(?P<generation_hash>[0-9a-f]{10}))?$"
 )
+_VERSIONED_SKILL = re.compile(r"(?P<logical>.+)-v[0-9]+-[0-9]+-[0-9]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +47,7 @@ class GeneratedArtifact:
     variant_id: str
     catalog_path: str
     combined_catalog_path: str | None
-    replaces_existing: bool
+    shares_name_with_existing: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +66,7 @@ class GeneratedGroup:
     cases_path: str
     catalog_path: str
     combined_catalog_path: str | None
-    replaces_existing: bool
+    shares_name_with_existing: bool
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -81,7 +82,7 @@ class GeneratedGroup:
             "cases_path": self.cases_path,
             "catalog_path": self.catalog_path,
             "combined_catalog_path": self.combined_catalog_path,
-            "replaces_existing": self.replaces_existing,
+            "shares_name_with_existing": self.shares_name_with_existing,
         }
 
 
@@ -105,7 +106,8 @@ def build_generated_plan(
     variant gets an individual generated phase. When
     ``existing_plus_generated`` is requested, the plan also prepares a catalog
     containing the standard Heimdall skills plus that one generated artifact.
-    A generated skill whose name matches a standard skill replaces it.
+    The generated artifact remains available alongside the standard skills,
+    including another version of a skill with the same logical name.
     """
     if limit is not None and limit < 1:
         raise ValueError("case limit must be >= 1")
@@ -234,20 +236,25 @@ def build_generated_plan(
                 f"generated variant {artifact.variant_id} did not load as one active skill: "
                 f"{artifact.skill_name}"
             )
+        runtime_names = ()
         if artifact.combined_catalog_path is not None:
-            _combined_catalog(
+            runtime_names = _combined_catalog(
                 Path(base_catalog_path).resolve(), catalog,
                 Path(artifact.combined_catalog_path), artifact.skill_name,
+                artifact.version,
             )
         slug = _slug(artifact.variant_id, used_group_slugs)
         used_group_slugs.add(slug)
         cases_path = root / "cases" / f"{slug}.jsonl"
-        _write_cases(cases_path, skill_cases, expected_skills=(artifact.skill_name,))
+        matched_expected = tuple(sorted({name for case in skill_cases
+                                         for name in case.raw["expected_skills"]
+                                         if name in artifact.expected_skills}))
+        _write_cases(cases_path, skill_cases, expected_skills=tuple(dict.fromkeys(
+            (*matched_expected, artifact.skill_name, *runtime_names)
+        )))
         groups.append(GeneratedGroup(
             skill_names=(artifact.skill_name,),
-            expected_skills=tuple(sorted({name for case in skill_cases
-                                           for name in case.raw["expected_skills"]
-                                           if name in artifact.expected_skills})),
+            expected_skills=matched_expected,
             variant_id=artifact.variant_id,
             source=artifact.source,
             source_path=artifact.source_path,
@@ -258,7 +265,7 @@ def build_generated_plan(
             cases_path=_workspace_path(cases_path),
             catalog_path=artifact.catalog_path,
             combined_catalog_path=artifact.combined_catalog_path,
-            replaces_existing=artifact.replaces_existing,
+            shares_name_with_existing=artifact.shares_name_with_existing,
         ))
 
     payload = {
@@ -309,7 +316,10 @@ def _discover_artifacts(
     artifacts: list[GeneratedArtifact] = []
     used_variant_ids: set[str] = set()
     used_slugs: set[str] = set()
-    base_names = set(base_registry.all_names()) if base_registry is not None else set()
+    base_names = (
+        {base_registry.get(name).name for name in base_registry.all_names()}
+        if base_registry is not None else set()
+    )
     for item in files:
         variant_id = variant_prefix + _variant_id(item, source)
         if variant_id in used_variant_ids:
@@ -321,11 +331,11 @@ def _discover_artifacts(
         if skill.status != "active":
             raise ValueError(
                 f"generated variant {variant_id} did not load as one active skill: "
-                f"{item.name}"
+                f"{skill.name}"
             )
         artifacts.append(GeneratedArtifact(
-            skill_name=str(item.name),
-            expected_skills=_expected_names(str(item.name), skill.version),
+            skill_name=skill.name,
+            expected_skills=_expected_names(skill.name, skill.version),
             source=source_label,
             source_path=str(item.path),
             path_labels=tuple(item.path.relative_to(source).parts[:-2]),
@@ -336,7 +346,7 @@ def _discover_artifacts(
                 str(catalogs_root / "existing-plus-generated" / slug)
                 if base_catalog_path is not None else None
             ),
-            replaces_existing=str(item.name) in base_names,
+            shares_name_with_existing=skill.name in base_names,
         ))
     return sorted(artifacts, key=lambda item: (item.skill_name, item.variant_id))
 
@@ -359,29 +369,24 @@ def _combined_catalog(
     generated_catalog: Path,
     target: Path,
     generated_skill_name: str,
-) -> str:
+    generated_version: str,
+) -> tuple[str, ...]:
     """Copy the standard catalog and exactly one generated artifact."""
     shutil.copytree(base_catalog, target)
-    # Otherwise _loaded_registry rejects two files that share one skill name.
-    for item in Registry.load(target).files():
-        if item.ok and item.name == generated_skill_name:
-            item.path.unlink()
-    for source in sorted(generated_catalog.rglob("*")):
-        relative = source.relative_to(generated_catalog)
-        destination = target / relative
-        if source.is_dir():
-            destination.mkdir(parents=True, exist_ok=True)
-            continue
-        if destination.exists():
-            raise ValueError(f"combined catalog path collision: {relative}")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+    index = 1
+    while (target / f"{BENCHMARK_GENERATED_PREFIX}{index}").exists():
+        index += 1
+    generated_copy = target / f"{BENCHMARK_GENERATED_PREFIX}{index}"
+    shutil.copytree(generated_catalog, generated_copy)
     registry = _loaded_registry(target)
-    if generated_skill_name not in registry.active():
+    if not any(item.ok and item.path.is_relative_to(generated_copy)
+               for item in registry.files()):
         raise ValueError(
             f"combined catalog did not load generated skill: {generated_skill_name}"
         )
-    return str(target)
+    return tuple(name for name in registry.active()
+                 if registry.get(name).name == generated_skill_name
+                 and registry.get(name).version == generated_version)
 
 
 def _exclude(case_id: str, expected: tuple[str, ...], status: str, reason: str) -> dict[str, Any]:

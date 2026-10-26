@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -73,6 +74,32 @@ def test_modes_pin_same_common_conditions(
     }
     assert modes.generated_skills.generated_skill_names == ("generated",)
     assert modes.existing_plus_generated.generated_skill_names == ("generated",)
+
+
+def test_combined_mode_targets_only_generated_copy(
+    tmp_path: Path, catalogs: tuple[Path, Path], common: CommonConditions,
+) -> None:
+    base, _ = catalogs
+    combined = tmp_path / "combined"
+    shutil.copytree(base, combined)
+    generated = combined / "benchmark-generated-1" / "org" / "standard.yaml"
+    generated.parent.mkdir(parents=True)
+    generated.write_text(skill_yaml("standard"), encoding="utf-8")
+
+    modes = build_modes(common, base, combined, snapshots_root=tmp_path / "snapshots")
+    assert modes.existing_plus_generated.generated_skill_names == (
+        "standard@0.0.0#generated",
+    )
+    assert modes.existing_plus_generated.catalog_hash == catalog_hash(combined)
+
+
+def test_regular_catalog_still_rejects_duplicate_name_and_version(
+    catalogs: tuple[Path, Path], common: CommonConditions,
+) -> None:
+    base, _ = catalogs
+    (base / "org" / "duplicate.yaml").write_text(skill_yaml("standard"), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicates"):
+        build_modes(common, base)
 
 
 def test_mode_behavior_comes_from_registered_strategies() -> None:

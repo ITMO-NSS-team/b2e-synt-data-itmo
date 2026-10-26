@@ -11,7 +11,10 @@ from sim.benchmark.generated_plan import _expected_skill, build_generated_plan
 from tests.fixtures.constants import EXAMPLE, SCHEMA
 
 
-def _skill(root: Path, name: str, *, variant_id: str | None = None, version: str = "0.1.0") -> None:
+def _skill(
+    root: Path, name: str, *, variant_id: str | None = None,
+    version: str = "0.1.0",
+) -> None:
     path = root / (variant_id or name) / "SKILL.md"
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -43,11 +46,11 @@ def _case(
 def test_plan_selects_covered_cases_once_and_expands_generated_variants(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["alpha"])
-    _case(cases, "case-0101-01", ["alpha"])
-    _case(cases, "case-0102-00", ["missing"])
+    _case(cases, "case-0101-00", ["alpha-v0-1-0"])
+    _case(cases, "case-0101-01", ["alpha-v0-1-0"])
+    _case(cases, "case-0102-00", ["missing-v0-1-0"])
     _case(cases, "case-0103-00", [])
-    _case(cases, "case-0104-00", ["alpha", "beta"])
+    _case(cases, "case-0104-00", ["alpha-v0-1-0", "beta-v0-1-0"])
     generated = tmp_path / "generated"
     _skill(generated, "alpha", variant_id="alpha_1")
     _skill(generated, "alpha", variant_id="alpha_2")
@@ -68,8 +71,8 @@ def test_plan_selects_covered_cases_once_and_expands_generated_variants(tmp_path
     assert [group["variant_id"] for group in plan["groups"]] == ["alpha_1", "alpha_2"]
     for group in plan["groups"]:
         assert group["skill_names"] == ["alpha"]
-        assert group["expected_skills"] == ["alpha"]
-        assert group["replaces_existing"] is False
+        assert group["expected_skills"] == ["alpha-v0-1-0"]
+        assert group["shares_name_with_existing"] is False
         assert group["case_ids"] == [
             "case-0101-00", "case-0101-01", "case-0104-00",
         ]
@@ -84,8 +87,8 @@ def test_plan_selects_covered_cases_once_and_expands_generated_variants(tmp_path
     ]
     assert plan["partially_covered"] == [{
         "case_id": "case-0104-00",
-        "available_skills": ["alpha"],
-        "unavailable_skills": ["beta"],
+        "available_skills": ["alpha-v0-1-0"],
+        "unavailable_skills": ["beta-v0-1-0"],
     }]
 
 
@@ -158,9 +161,9 @@ def test_plan_resume_checks_catalog_content(tmp_path: Path) -> None:
 def test_limit_is_applied_after_generated_coverage_filter(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["missing"])
-    _case(cases, "case-0102-00", ["alpha"])
-    _case(cases, "case-0103-00", ["beta"])
+    _case(cases, "case-0101-00", ["missing-v0-1-0"])
+    _case(cases, "case-0102-00", ["alpha-v0-1-0"])
+    _case(cases, "case-0103-00", ["beta-v0-1-0"])
     generated = tmp_path / "generated"
     _skill(generated, "alpha")
     _skill(generated, "beta")
@@ -178,7 +181,7 @@ def test_limit_is_applied_after_generated_coverage_filter(tmp_path: Path) -> Non
 def test_plan_matches_hashed_skill_by_its_logical_name(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["alpha"])
+    _case(cases, "case-0101-00", ["alpha-v0-1-0"])
 
     generated_name = "alpha-compact-a94e814444-b4d7da560f"
     generated = tmp_path / "generated"
@@ -190,12 +193,12 @@ def test_plan_matches_hashed_skill_by_its_logical_name(tmp_path: Path) -> None:
 
     assert plan["selected_case_ids"] == ["case-0101-00"]
     assert len(plan["groups"]) == 1
-    assert plan["groups"][0]["expected_skills"] == ["alpha"]
+    assert plan["groups"][0]["expected_skills"] == ["alpha-v0-1-0"]
     assert plan["groups"][0]["skill_names"] == [generated_name]
     generated_case = json.loads(
         Path(plan["groups"][0]["cases_path"]).read_text(encoding="utf-8")
     )
-    assert generated_case["expected_skills"] == [generated_name]
+    assert generated_case["expected_skills"] == ["alpha-v0-1-0", generated_name]
 
 
 def test_generated_name_parser_keeps_legacy_compatibility() -> None:
@@ -207,7 +210,7 @@ def test_generated_name_parser_keeps_legacy_compatibility() -> None:
 def test_multiple_expected_skills_run_individually_by_default(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["alpha", "beta"])
+    _case(cases, "case-0101-00", ["alpha-v0-1-0", "beta-v0-1-0"])
     generated = tmp_path / "generated"
     _skill(generated, "alpha")
     _skill(generated, "beta")
@@ -226,7 +229,7 @@ def test_plan_builds_existing_plus_one_generated_catalog(
 ) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["alpha"])
+    _case(cases, "case-0101-00", ["alpha-v0-1-0"])
     generated = tmp_path / "generated"
     _skill(generated, "alpha", variant_id="alpha_1")
     _skill(generated, "unused")
@@ -243,7 +246,7 @@ def test_plan_builds_existing_plus_one_generated_catalog(
     assert plan["generated_modes"] == ["generated_skills", "existing_plus_generated"]
     assert len(plan["groups"]) == 1
     group = plan["groups"][0]
-    assert group["replaces_existing"] is False
+    assert group["shares_name_with_existing"] is False
     assert Registry.load(group["catalog_path"]).active() == ["alpha"]
     assert Registry.load(group["combined_catalog_path"]).active() == ["alpha", "standard"]
     assert [row["skill_name"] for row in plan["unmatched_artifacts"]] == ["unused"]
@@ -251,23 +254,15 @@ def test_plan_builds_existing_plus_one_generated_catalog(
     assert not (tmp_path / "work/catalogs/generated/existing-plus-generated/unused").exists()
 
 
-def test_combined_catalog_replaces_same_name_standard_skill(tmp_path: Path) -> None:
+def test_combined_catalog_adds_versioned_skill_beside_existing(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()
-    _case(cases, "case-0101-00", ["standard"])
+    _case(cases, "case-0101-00", ["standard-v1-0-1"])
     generated = tmp_path / "generated"
-    _skill(generated, "standard")
+    name = "standard-v1-0-1-compact-a94e814444-b4d7da560f"
+    _skill(generated, name, version="1.0.1")
     base = tmp_path / "base"
-    (base / "org").mkdir(parents=True)
-    (base / "org" / "standard.yaml").write_text(
-        "name: standard\n"
-        "title: Standard\n"
-        "kind: recipe\n"
-        "domain: org\n"
-        "description: Base standard skill\n"
-        "query: {schema: dm_core, logic_model: employee_actual, metrics: [fact_count]}\n",
-        encoding="utf-8",
-    )
+    _skill(base, "standard", version="1.0.0")
 
     plan = build_generated_plan(
         cases, generated, tmp_path / "work", schema_path=SCHEMA,
@@ -277,12 +272,118 @@ def test_combined_catalog_replaces_same_name_standard_skill(tmp_path: Path) -> N
 
     assert len(plan["groups"]) == 1
     group = plan["groups"][0]
-    assert group["replaces_existing"] is True
-    assert group["skill_names"] == ["standard"]
+    assert group["shares_name_with_existing"] is False
+    assert group["skill_names"] == [name]
     combined = Path(group["combined_catalog_path"])
-    assert not (combined / "org" / "standard.yaml").exists()
     registry = Registry.load(combined)
-    assert registry.active() == ["standard"]
-    assert registry.get("standard").kind == "reference"
-    assert registry.get("standard").description == "Generated standard"
+    assert registry.active() == ["standard", name]
+    assert registry.get("standard").version == "1.0.0"
+    assert registry.get(name).version == "1.0.1"
     assert registry.duplicates() == {}
+
+
+def test_generated_skill_metadata_version_overrides_name(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", ["standard-v0-1-0"])
+    generated = tmp_path / "generated"
+    _skill(generated, "standard-v1-0-1-compact-a94e814444-b4d7da560f")
+
+    plan = build_generated_plan(
+        cases, generated, tmp_path / "work", schema_path=SCHEMA,
+    )
+    assert plan["selected_case_ids"] == ["case-0101-00"]
+    assert plan["groups"][0]["expected_skills"] == ["standard-v0-1-0"]
+
+
+def test_combined_catalog_keeps_different_versions_of_same_name(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", ["standard-v0-1-1"])
+    generated = tmp_path / "generated"
+    _skill(generated, "standard", version="0.1.1")
+    base = tmp_path / "base"
+    _skill(base, "standard", version="0.1.0")
+
+    plan = build_generated_plan(
+        cases, generated, tmp_path / "work", schema_path=SCHEMA,
+        base_catalog_path=base,
+        generated_modes=("existing_plus_generated",),
+    )
+    group = plan["groups"][0]
+    assert group["shares_name_with_existing"] is True
+    registry = Registry.load(group["combined_catalog_path"])
+    assert registry.active() == ["standard@0.1.0", "standard@0.1.1"]
+    assert registry.get("standard@0.1.0").version == "0.1.0"
+    assert registry.get("standard@0.1.1").version == "0.1.1"
+    assert [row["name"] for row in registry.find("*")["results"]] == registry.active()
+    assert registry.get("standard@0.1.1").name == "standard"
+    assert registry.duplicates() == {}
+    generated_case = json.loads(Path(group["cases_path"]).read_text().splitlines()[0])
+    assert generated_case["expected_skills"] == [
+        "standard-v0-1-1", "standard", "standard@0.1.1",
+    ]
+
+
+def test_combined_catalog_indexes_same_name_and_version(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", ["standard-v0-1-0"])
+    generated = tmp_path / "generated"
+    _skill(generated, "standard")
+    base = tmp_path / "base"
+    _skill(base, "standard")
+
+    plan = build_generated_plan(
+        cases, generated, tmp_path / "work", schema_path=SCHEMA,
+        base_catalog_path=base, generated_modes=("existing_plus_generated",),
+    )
+    group = plan["groups"][0]
+    registry = Registry.load(group["combined_catalog_path"])
+    assert registry.active() == ["standard@0.1.0#existing", "standard@0.1.0#generated"]
+    assert registry.get("standard@0.1.0#existing").version == "0.1.0"
+    assert registry.get("standard@0.1.0#generated").version == "0.1.0"
+    assert [row["name"] for row in registry.find("*")["results"]] == registry.active()
+    assert "name: standard\n" in (
+        Path(group["catalog_path"]) / "standard" / "SKILL.md"
+    ).read_text()
+    assert "version: 0.1.0\n" in (
+        Path(group["catalog_path"]) / "standard" / "SKILL.md"
+    ).read_text()
+    generated_case = json.loads(Path(group["cases_path"]).read_text().splitlines()[0])
+    assert generated_case["expected_skills"] == [
+        "standard-v0-1-0", "standard",
+        "standard@0.1.0#existing", "standard@0.1.0#generated",
+    ]
+    assert "version: 0.1.0\n" in next(
+        item.path.read_text() for item in registry.files()
+        if item.name == "standard@0.1.0#generated"
+    )
+    assert (generated / "standard" / "SKILL.md").read_bytes() == next(
+        item.path.read_bytes() for item in registry.files()
+        if item.name == "standard@0.1.0#generated"
+    )
+    assert registry.duplicates() == {}
+
+
+def test_combined_catalog_keeps_existing_patch_versions(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", ["standard-v1-0-0"])
+    generated = tmp_path / "generated"
+    _skill(generated, "standard", version="1.0.0")
+    base = tmp_path / "base"
+    _skill(base, "standard", variant_id="current", version="1.0.0")
+    _skill(base, "standard", variant_id="next", version="1.0.1")
+
+    plan = build_generated_plan(
+        cases, generated, tmp_path / "work", schema_path=SCHEMA,
+        base_catalog_path=base, generated_modes=("existing_plus_generated",),
+    )
+    group = plan["groups"][0]
+    registry = Registry.load(group["combined_catalog_path"])
+    assert registry.active() == [
+        "standard@1.0.0#existing", "standard@1.0.0#generated", "standard@1.0.1",
+    ]
+    assert registry.get("standard@1.0.0#generated").version == "1.0.0"
+    assert Registry.load(group["catalog_path"]).get("standard").version == "1.0.0"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,42 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
     assert metrics["expected_skill_loaded"] == 0
 
 
+def test_existing_skill_load_matches_catalog_version_only(tmp_path: Path) -> None:
+    (tmp_path / "compare_people.md").write_text(
+        "---\nname: compare_people\ntitle: Compare people\nkind: reference\n"
+        "domain: general\ndescription: Compare employees\nversion: 1.0.0\n"
+        "status: active\n---\n\nCompare two people.\n",
+        encoding="utf-8",
+    )
+    case = ready_case()
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    observations = {"loaded_skills": ["compare_people"]}
+    existing = replace(mode(), catalog_path=str(tmp_path))
+
+    case.raw["expected_skills"] = ["compare_people-v1-0-0"]
+    assert calculate_metrics(
+        case, existing, actual, observations,
+    )["expected_skill_loaded"] == 1
+
+    case.raw["expected_skills"] = ["compare_people-v1-0-1"]
+    assert calculate_metrics(
+        case, existing, actual, observations,
+    )["expected_skill_loaded"] == 0
+
+    versioned_dir = tmp_path / "versioned"
+    versioned_dir.mkdir()
+    (versioned_dir / "skill.md").write_text(
+        "---\nname: compare_people-v1-0-1\ntitle: Compare people\nkind: reference\n"
+        "domain: general\ndescription: Compare employees\nversion: 1.0.0\n"
+        "status: active\n---\n\nCompare two people.\n",
+        encoding="utf-8",
+    )
+    observations["loaded_skills"] = ["compare_people-v1-0-1"]
+    assert calculate_metrics(
+        case, replace(existing, catalog_path=str(versioned_dir)), actual, observations,
+    )["expected_skill_loaded"] == 0
+
+
 def test_combined_mode_scores_only_the_generated_target() -> None:
     case = ready_case()
     case.raw["expected_skills"] = ["generated_headcount"]
@@ -206,6 +243,65 @@ def test_combined_mode_scores_only_the_generated_target() -> None:
 
     assert not_loaded["generated_skill_loaded"] == 0
     assert loaded["generated_skill_loaded"] == 1
+
+
+def test_existing_multiversion_catalog_scores_exact_version(tmp_path: Path) -> None:
+    for version in ("0.1.0", "0.1.1"):
+        (tmp_path / f"standard-{version}.md").write_text(
+            "---\nname: standard\ntitle: Standard\nkind: reference\n"
+            f"domain: general\ndescription: Standard\nversion: {version}\n"
+            "status: active\n---\n\nUse this skill.\n", encoding="utf-8",
+        )
+    case = ready_case()
+    case.raw["expected_skills"] = ["standard-v0-1-1"]
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    existing = replace(mode(), catalog_path=str(tmp_path))
+
+    old = calculate_metrics(case, existing, actual, {"loaded_skills": ["standard@0.1.0"]})
+    new = calculate_metrics(case, existing, actual, {"loaded_skills": ["standard@0.1.1"]})
+    assert old["expected_skill_loaded"] == 0
+    assert new["expected_skill_loaded"] == 1
+
+
+def test_same_name_versions_score_the_loaded_version() -> None:
+    case = ready_case()
+    case.raw["expected_skills"] = ["standard", "standard@0.1.1"]
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    combined = mode("existing_plus_generated", ("standard@0.1.0", "standard@0.1.1"))
+
+    old = calculate_metrics(case, combined, actual, {"loaded_skills": ["standard@0.1.0"]})
+    new = calculate_metrics(case, combined, actual, {"loaded_skills": ["standard@0.1.1"]})
+    assert (old["expected_skill_loaded"], old["generated_skill_loaded"]) == (0, 0)
+    assert (new["expected_skill_loaded"], new["generated_skill_loaded"]) == (1, 1)
+
+
+def test_same_name_and_version_tracks_which_copy_was_loaded(tmp_path: Path) -> None:
+    for source in ("existing", "benchmark-generated-1"):
+        path = tmp_path / source / "standard.md"
+        path.parent.mkdir()
+        path.write_text(
+            "---\nname: standard\ntitle: Standard\nkind: reference\n"
+            "domain: general\ndescription: Standard\nversion: 0.1.0\n"
+            "status: active\n---\n\nUse this skill.\n", encoding="utf-8",
+        )
+    case = ready_case()
+    case.raw["expected_skills"] = [
+        "standard-v0-1-0", "standard@0.1.0#existing", "standard@0.1.0#generated",
+    ]
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    combined = replace(
+        mode("existing_plus_generated", ("standard@0.1.0#generated",)),
+        catalog_path=str(tmp_path),
+    )
+
+    old = calculate_metrics(case, combined, actual, {
+        "loaded_skills": ["standard@0.1.0#existing"],
+    })
+    new = calculate_metrics(case, combined, actual, {
+        "loaded_skills": ["standard@0.1.0#generated"],
+    })
+    assert (old["expected_skill_loaded"], old["generated_skill_loaded"]) == (1, 0)
+    assert (new["expected_skill_loaded"], new["generated_skill_loaded"]) == (1, 1)
 
 
 def test_generated_routing_is_not_applicable_without_expected_generated_skill() -> None:

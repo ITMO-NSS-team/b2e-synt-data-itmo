@@ -5,8 +5,10 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
+from heimdall.skills.registry import Registry
 from jsonschema import Draft202012Validator
 
 from .cases import BenchmarkCase
@@ -16,6 +18,8 @@ from .modes import ModeConfig
 
 _FENCED_JSON = re.compile(r"[\x60]{3}(?:json)?\s*\n(.*?)\n[\x60]{3}", re.DOTALL | re.IGNORECASE)
 _REFUSAL_OUTCOMES = frozenset({"access_control", "missing_skill", "out_of_scope"})
+_VERSIONED_NAME = re.compile(r".+-v[0-9]+-[0-9]+-[0-9]+$")
+_QUARTER = re.compile(r"^([0-9]{4})[ -]Q([1-4])$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +157,9 @@ def calculate_metrics(
         "outcome_accuracy": outcome_accuracy,
         "correct_refusal": correct_refusal,
         "any_skill_loaded": int(bool(loaded_skills)),
-        "expected_skill_loaded": int(bool(loaded_skills & expected_skills)),
+        "expected_skill_loaded": _expected_skill_loaded(
+            expected_skills, loaded_skills, mode.catalog_path,
+        ),
         "generated_skill_loaded": generated_loaded,
         **{name: observations.get(name) for name in OPERATIONAL_METRICS},
     }
@@ -186,6 +192,28 @@ def _missing_root_brace_candidates(text: str):
             yield value
 
 
+def _expected_skill_loaded(
+    expected: set[str], loaded: set[str], catalog_path: str | None,
+) -> int:
+    if not loaded or not catalog_path:
+        return int(bool(expected & loaded))
+    identities = _catalog_identities(catalog_path)
+    for name in loaded & identities.keys():
+        logical, version = identities[name]
+        if f"{logical}-v{version.replace('.', '-')}" in expected:
+            return 1
+        if name in expected and not _VERSIONED_NAME.fullmatch(name):
+            return 1
+    return 0
+
+
+@lru_cache(maxsize=32)
+def _catalog_identities(path: str) -> dict[str, tuple[str, str]]:
+    registry = Registry.load(path)
+    return {name: (registry.get(name).name, registry.get(name).version)
+            for name in registry.active()}
+
+
 def _json_candidates(text: str):
     decoder = json.JSONDecoder()
     stripped = text.strip()
@@ -213,6 +241,8 @@ def _results_equal(
     expected: Any,
     comparison: dict[str, Any],
 ) -> bool:
+    actual = _normalize_quarters(actual)
+    expected = _normalize_quarters(expected)
     if not isinstance(actual, list) or not isinstance(expected, list):
         return _value_equal(
             actual, expected, float(comparison["numeric_absolute_tolerance"])
@@ -258,6 +288,16 @@ def _results_equal(
     return all(
         _value_equal(a, e, tolerance) for a, e in zip(actual_rows, expected_rows)
     )
+
+
+def _normalize_quarters(value: Any) -> Any:
+    if isinstance(value, str):
+        return _QUARTER.sub(r"\1-Q\2", value)
+    if isinstance(value, list):
+        return [_normalize_quarters(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_quarters(item) for key, item in value.items()}
+    return value
 
 
 def _row_key(row: dict[str, Any], keys: list[str]) -> tuple[str, ...]:

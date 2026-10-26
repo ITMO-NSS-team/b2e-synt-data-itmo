@@ -205,7 +205,7 @@ def preflight_case(
             return PreflightResult(
                 case.case_id, mode.name, "generated_no_expected_skill_skipped",
             )
-        if not set(expected) <= set(mode.generated_skill_names):
+        if not set(expected) & set(mode.generated_skill_names):
             return PreflightResult(
                 case.case_id, mode.name, "generated_skill_unavailable_skipped",
             )
