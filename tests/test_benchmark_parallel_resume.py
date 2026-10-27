@@ -55,10 +55,19 @@ def test_resume_does_not_repeat_saved_cells(tmp_path):
 
 def test_resume_rejects_incompatible_conditions(tmp_path):
     writer = ResultWriter(tmp_path, "test")
-    manifest = {"eval_id": "test", "case_ids": [], "modes": [{"name": "skills_disabled", "common": {"model_id": "one"}}]}
+    manifest = {"eval_id": "test", "case_ids": [], "modes": [{
+        "name": "skills_disabled",
+        "common": {"model_id": "one", "hr_employee_ids": ("hr-1",)},
+        "tool_subset": ("mcp_query",),
+        "generated_skill_names": ("skill-v1-0-0",),
+    }]}
     writer.write_manifest(manifest)
     resumed = ResultWriter(tmp_path, "test", resume=True)
     resumed.write_manifest(manifest)
+    saved = json.loads((writer.root / "run-manifest.json").read_text())
+    assert saved["modes"][0]["tool_subset"] == ["mcp_query"]
+    assert saved["modes"][0]["generated_skill_names"] == ["skill-v1-0-0"]
+    assert saved["modes"][0]["common"]["hr_employee_ids"] == ["hr-1"]
     manifest["modes"][0]["common"]["model_id"] = "two"
     with pytest.raises(ValueError, match="resume manifest differs"):
         resumed.write_manifest(manifest)

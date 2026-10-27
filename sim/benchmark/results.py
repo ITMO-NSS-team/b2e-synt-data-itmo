@@ -355,7 +355,7 @@ def _pretty_json(value: Any) -> str:
 
 def _resume_signature(manifest: dict[str, Any]) -> dict[str, Any]:
     """Pinned ref numbers can advance; effective conditions must remain equal."""
-    return {
+    signature = {
         **{key: manifest.get(key) for key in ("eval_id", "check_only", "case_ids", "case_hashes", "repetitions", "workers")},
         "skill_registry_hash": manifest.get("live_stand", {}).get("skill_registry_hash"),
         "modes": [
@@ -365,3 +365,4 @@ def _resume_signature(manifest: dict[str, Any]) -> dict[str, Any]:
             )} for mode in manifest.get("modes", [])
         ],
     }
+    return json.loads(_pretty_json(signature))
