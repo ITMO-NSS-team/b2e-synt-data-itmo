@@ -65,6 +65,7 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert "Нажмите на точку" in text
     assert "Любой skill загружен" in text
     assert "Expected skill загружен" in text
+    assert "Целевой generated skill загружен" in text
     assert "position: sticky" in text
     assert "td:nth-child(4)" in text
     assert 'existing_plus_generated: "existing + gen"' in text
@@ -91,6 +92,7 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert '"expected_skill_loaded_count":2' in text
     assert '"expected_skill_loaded_total":2' in text
     assert '"expected_skill_loaded":1.0' in text
+    assert '"generated_skill_loaded_count":2' in text
     assert '"delta_pp":100.0' in text
     assert (public / "eval-1" / "report.html").read_text() == text
     assert list((public / "eval-1").iterdir()) == [public / "eval-1" / "report.html"]
@@ -152,3 +154,28 @@ def test_report_keeps_variants_separate_and_compares_matching_cases(tmp_path) ->
     assert '"variant":"baseline--second"' in text
     assert text.count('"n_pairs":1') == 2
     assert text.count('"delta_pp":0.0') == 2
+
+
+def test_report_labels_full_catalog_as_one_source_variant(tmp_path) -> None:
+    root = tmp_path / "eval-catalog"
+    root.mkdir()
+    (root / "run-manifest.json").write_text(json.dumps({"generated_plan": {
+        "groups": [{
+            "variant_id": "catalog--baseline", "modes": ["existing_plus_catalog"],
+            "scope": "catalog", "source": "baseline",
+            "source_path": "/runs/compact/medium", "skill_names": ["alpha", "beta"],
+            "case_ids": ["case-0001-00"], "matched_case_ids": ["case-0001-00"],
+        }],
+        "generated_modes": ["existing_plus_catalog"],
+        "source_case_ids": ["case-0001-00"], "selected_case_ids": ["case-0001-00"],
+        "excluded": [], "unmatched_artifacts": [],
+    }}), encoding="utf-8")
+    result = _result("catalog-run", "existing_plus_catalog@catalog--baseline", 1, 1000, 1, 2)
+
+    text = write_report(root, [result]).read_text(encoding="utf-8")
+
+    assert '"source":"baseline"' in text
+    assert '"method":"compact"' in text
+    assert '"detail":"medium"' in text
+    assert '"skill":"2 skills"' in text
+    assert '"matched":1' in text

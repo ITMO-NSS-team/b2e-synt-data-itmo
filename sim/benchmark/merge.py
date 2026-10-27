@@ -165,7 +165,7 @@ def _validate_generated_plan_execution(
     expected = {
         f"{mode}@{group['variant_id']}"
         for group in plan.get("groups", [])
-        for mode in generated_modes
+        for mode in group.get("modes", generated_modes)
     }
     missing = sorted(expected - actual)
     if missing:
@@ -188,18 +188,26 @@ def _selection_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
         status: sum(row.get("status") == status for row in excluded)
         for status in sorted({row.get("status") for row in excluded})
     }
-    return {
-        "selection": {
-            "n_source_cases": len(source),
-            "n_eligible_cases": len(eligible),
-            "n_selected_cases": len(selected),
-            "n_excluded_cases": len(excluded),
-            "n_partially_covered_cases": len(partially_covered),
-            "n_unmatched_artifacts": len(plan.get("unmatched_artifacts", [])),
-            "coverage_rate": len(eligible) / len(source) if source else None,
-            "excluded_by_reason": reasons,
-        }
+    selection = {
+        "n_source_cases": len(source),
+        "n_eligible_cases": len(eligible),
+        "n_selected_cases": len(selected),
+        "n_excluded_cases": len(excluded),
+        "n_partially_covered_cases": len(partially_covered),
+        "n_unmatched_artifacts": len(plan.get("unmatched_artifacts", [])),
+        "coverage_rate": len(eligible) / len(source) if source else None,
+        "excluded_by_reason": reasons,
     }
+    catalogs = {
+        group["source"]: {
+            "n_cases": len(group["case_ids"]),
+            "n_target_cases": len(group["matched_case_ids"]),
+        }
+        for group in plan.get("groups", []) if group.get("scope") == "catalog"
+    }
+    if catalogs:
+        selection["catalog_coverage"] = catalogs
+    return {"selection": selection}
 
 
 def _read_json(path: Path) -> Any:

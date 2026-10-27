@@ -118,7 +118,8 @@ def test_mixed_benchmark_splits_catalogs_and_merges_results() -> None:
     assert 'CASES="$$covered_cases"' in source
     assert 'BENCH_MODES="$$generated_mode"' in source
     assert 'BENCH_GENERATED_VARIANT_ID="$$variant"' in source
-    assert 'read -r slug cases catalog combined_catalog skill variant <&3' in source
+    assert 'read -r slug cases catalog combined_catalog skill variant group_modes <&3' in source
+    assert 'case ",$$group_modes," in *,"$$generated_mode",*)' in source
     assert 'done 3< "$$group_list"' in source
     assert 'CASES="$$cases" GENERATED_SKILLS_DIR="$$active_catalog"' in source
     assert "sim.benchmark.generated_plan" in source

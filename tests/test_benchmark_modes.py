@@ -66,6 +66,7 @@ def test_modes_pin_same_common_conditions(
     assert modes.existing_skills.tool_subset == SKILL_TOOLS
     assert modes.generated_skills.tool_subset == GENERATED_SKILL_TOOLS
     assert modes.existing_plus_generated.tool_subset == SKILL_TOOLS
+    assert modes.existing_plus_catalog.tool_subset == SKILL_TOOLS
     assert "get_docs" not in modes.generated_skills.tool_subset
     assert modes.existing_skills.catalog_hash == catalog_hash(base)
     assert modes.generated_skills.catalog_hash == catalog_hash(generated)
@@ -74,6 +75,7 @@ def test_modes_pin_same_common_conditions(
     }
     assert modes.generated_skills.generated_skill_names == ("generated",)
     assert modes.existing_plus_generated.generated_skill_names == ("generated",)
+    assert modes.existing_plus_catalog.generated_skill_names == ("generated",)
 
 
 def test_combined_mode_targets_only_generated_copy(
@@ -120,6 +122,7 @@ def test_mode_behavior_comes_from_registered_strategies() -> None:
     assert combined.catalog_source == "generated"
     assert ("generated_skills", "existing_skills") in comparison_pairs()
     assert ("existing_plus_generated", "existing_skills") in comparison_pairs()
+    assert ("existing_plus_catalog", "existing_skills") in comparison_pairs()
     assert ("existing_skills", "skills_disabled") in comparison_pairs()
 
 

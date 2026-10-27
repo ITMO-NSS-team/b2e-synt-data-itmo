@@ -196,7 +196,7 @@ empty :=
 space := $(empty) $(empty)
 comma := ,
 BENCH_MODE_LIST = $(subst $(comma),$(space),$(BENCH_MODES))
-BENCH_GENERATED_MODES := generated_skills existing_plus_generated
+BENCH_GENERATED_MODES := generated_skills existing_plus_generated existing_plus_catalog
 BENCH_GENERATED_MODE_LIST = $(filter $(BENCH_GENERATED_MODES),$(BENCH_MODE_LIST))
 BENCH_GENERATED_MODE_CSV = $(subst $(space),$(comma),$(strip $(BENCH_GENERATED_MODE_LIST)))
 BENCH_SKILLS_ROOT = $(if $(BENCH_GENERATED_MODE_LIST),/app/heimdall-skill-catalog/generated,/app/heimdall-skill-catalog/existing)
@@ -324,7 +324,7 @@ benchmarking:  ## полный прогон; generated skills изолируют
 			$(if $(BENCH_RESUME),--resume,) \
 			$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",); \
 		covered_cases="$$($(PY) -c 'import json,sys; print(json.load(open(sys.argv[1]))["covered_cases_path"])' "$$plan")"; \
-		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["combined_catalog_path"] or "-",",".join(g["skill_names"]),g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
+		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["combined_catalog_path"] or "-",str(len(g["skill_names"]))+" skills" if g["scope"]=="catalog" else ",".join(g["skill_names"]),g["variant_id"],",".join(g["modes"])))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
 		if ! test -s "$$group_list"; then \
 			echo "Нет кейсов для доступных generated skills; сохраняю отчёт о покрытии без вызовов агента"; \
 			BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.merge --generated-plan "$$plan" \
@@ -347,12 +347,13 @@ benchmarking:  ## полный прогон; generated skills изолируют
 			cd "$(CURDIR)"; \
 			echo "$$phase_root/baseline/$$eval_id" >> "$$phase_list"; \
 		fi; \
-		while IFS="$$(printf '\t')" read -r slug cases catalog combined_catalog skill variant <&3; do \
+		while IFS="$$(printf '\t')" read -r slug cases catalog combined_catalog skill variant group_modes <&3; do \
 			test -n "$$slug" || continue; \
 			for generated_mode in $(BENCH_GENERATED_MODE_LIST); do \
+				case ",$$group_modes," in *,"$$generated_mode",*) ;; *) continue ;; esac; \
 				reference=""; if test -s "$$phase_list"; then reference="$$(head -n 1 "$$phase_list")/run-manifest.json"; fi; \
 				active_catalog="$$catalog"; \
-				if test "$$generated_mode" = "existing_plus_generated"; then active_catalog="$$combined_catalog"; fi; \
+				if test "$$generated_mode" = "existing_plus_generated" || test "$$generated_mode" = "existing_plus_catalog"; then active_catalog="$$combined_catalog"; fi; \
 				test "$$active_catalog" != "-" || { echo "не собран объединённый каталог для $$variant"; exit 2; }; \
 				echo "Generated-фаза: $$generated_mode, $$skill ($$variant), кейсы $$cases"; \
 				$(MAKE) --no-print-directory _benchmarking-single \

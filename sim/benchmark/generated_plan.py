@@ -1,8 +1,8 @@
 """Plan case-scoped generated-skill benchmark phases.
 
 The planner never calls an LLM and never mutates authorial cases or generated
-artifacts. It creates one case suite shared by all requested baseline modes
-and one isolated catalog/suite per generated artifact.
+artifacts. It creates one case suite shared by baseline modes, one isolated
+suite per generated artifact, and one full-catalog suite per source when asked.
 """
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ _HASHED_SKILL = re.compile(
     r"^(?P<base>.+)-(?P<method>no-context|compact|full)-"
     r"(?P<prompt_hash>[0-9a-f]{10})(?:-(?P<generation_hash>[0-9a-f]{10}))?$"
 )
+# shortcut: SF's trailing 10-hex hash is naming convention; use explicit logical metadata if names can end that way.
+_CONTENT_HASHED_SKILL = re.compile(r"^(?P<base>.+)-[0-9a-f]{10}$")
 _VERSIONED_SKILL = re.compile(r"(?P<logical>.+)-v[0-9]+-[0-9]+-[0-9]+$")
 
 
@@ -57,12 +59,15 @@ class GeneratedGroup:
     skill_names: tuple[str, ...]
     expected_skills: tuple[str, ...]
     variant_id: str
+    modes: tuple[str, ...]
+    scope: str
     source: str
     source_path: str
     path_labels: tuple[str, ...]
     version: str
     slug: str
     case_ids: tuple[str, ...]
+    matched_case_ids: tuple[str, ...]
     cases_path: str
     catalog_path: str
     combined_catalog_path: str | None
@@ -73,12 +78,15 @@ class GeneratedGroup:
             "skill_names": list(self.skill_names),
             "expected_skills": list(self.expected_skills),
             "variant_id": self.variant_id,
+            "modes": list(self.modes),
+            "scope": self.scope,
             "source": self.source,
             "source_path": self.source_path,
             "path_labels": list(self.path_labels),
             "version": self.version,
             "slug": self.slug,
             "case_ids": list(self.case_ids),
+            "matched_case_ids": list(self.matched_case_ids),
             "cases_path": self.cases_path,
             "catalog_path": self.catalog_path,
             "combined_catalog_path": self.combined_catalog_path,
@@ -100,12 +108,14 @@ def build_generated_plan(
 ) -> dict[str, Any]:
     """Create the covered baseline suite and isolated generated phases.
 
-    A case is selected when at least one name in ``expected_skills`` has an
-    active generated artifact. ``limit`` is applied after this coverage filter.
+    For individual-skill modes, a case is selected when one expected skill has
+    an artifact. The catalog mode selects all input cases. ``limit`` follows
+    that selection.
     All baseline modes run once over the selected suite. Every available skill
     variant gets an individual generated phase. When
     ``existing_plus_generated`` is requested, the plan also prepares a catalog
     containing the standard Heimdall skills plus that one generated artifact.
+    ``existing_plus_catalog`` adds one phase per source with all its skills.
     The generated artifact remains available alongside the standard skills,
     including another version of a skill with the same logical name.
     """
@@ -116,15 +126,19 @@ def build_generated_plan(
     allowed_modes = {
         BenchmarkMode.GENERATED_SKILLS.value,
         BenchmarkMode.EXISTING_PLUS_GENERATED.value,
+        BenchmarkMode.EXISTING_PLUS_CATALOG.value,
     }
     unknown_modes = set(generated_modes) - allowed_modes
     if unknown_modes:
         raise ValueError(f"unsupported generated modes: {sorted(unknown_modes)}")
     if (
-        BenchmarkMode.EXISTING_PLUS_GENERATED.value in generated_modes
+        set(generated_modes) & {
+            BenchmarkMode.EXISTING_PLUS_GENERATED.value,
+            BenchmarkMode.EXISTING_PLUS_CATALOG.value,
+        }
         and base_catalog_path is None
     ):
-        raise ValueError("existing_plus_generated requires base_catalog_path")
+        raise ValueError("combined generated modes require base_catalog_path")
     cases = load_cases_path(cases_source, schema_path=schema_path)
     sources = (
         {label: Path(path).resolve() for label, path in generated_sources.items()}
@@ -163,6 +177,8 @@ def build_generated_plan(
     if root.exists() and any(root.iterdir()):
         raise ValueError(f"generated benchmark plan already exists: {root}")
 
+    catalog_mode = BenchmarkMode.EXISTING_PLUS_CATALOG.value
+    individual_modes = tuple(mode for mode in generated_modes if mode != catalog_mode)
     artifacts = []
     named_sources = generated_sources is not None
     for label, source in sorted(sources.items()):
@@ -173,7 +189,9 @@ def build_generated_plan(
             variant_prefix=f"{label}--" if named_sources else "",
             base_catalog_path=(
                 Path(base_catalog_path).resolve()
-                if BenchmarkMode.EXISTING_PLUS_GENERATED.value in generated_modes
+                if set(generated_modes) & {
+                    BenchmarkMode.EXISTING_PLUS_GENERATED.value, catalog_mode,
+                }
                 else None
             ),
         ))
@@ -186,6 +204,9 @@ def build_generated_plan(
     excluded: list[dict[str, Any]] = []
     partially_covered: list[dict[str, Any]] = []
     for case in cases:
+        if catalog_mode in generated_modes:
+            eligible.append(case)
+            continue
         expected = tuple(case.raw["expected_skills"])
         if not expected:
             excluded.append(_exclude(
@@ -226,6 +247,8 @@ def build_generated_plan(
                 "expected_skills": list(artifact.expected_skills),
             })
             continue
+        if not individual_modes:
+            continue
         catalog = Path(artifact.catalog_path)
         skill_dir = catalog / artifact.skill_name
         skill_dir.mkdir(parents=True)
@@ -256,17 +279,67 @@ def build_generated_plan(
             skill_names=(artifact.skill_name,),
             expected_skills=matched_expected,
             variant_id=artifact.variant_id,
+            modes=individual_modes,
+            scope="skill",
             source=artifact.source,
             source_path=artifact.source_path,
             path_labels=artifact.path_labels,
             version=artifact.version,
             slug=slug,
             case_ids=tuple(case.case_id for case in skill_cases),
+            matched_case_ids=tuple(case.case_id for case in skill_cases),
             cases_path=_workspace_path(cases_path),
             catalog_path=artifact.catalog_path,
             combined_catalog_path=artifact.combined_catalog_path,
             shares_name_with_existing=artifact.shares_name_with_existing,
         ))
+
+    if catalog_mode in generated_modes and selected:
+        for label, source in sorted(sources.items()):
+            variant_id = f"catalog--{label}"
+            if variant_id in {artifact.variant_id for artifact in artifacts}:
+                raise ValueError(f"catalog variant_id conflicts with a skill: {variant_id}")
+            slug = _slug(variant_id, used_group_slugs)
+            used_group_slugs.add(slug)
+            combined = root / "catalogs" / label / "existing-plus-catalog"
+            runtime_names = _combined_catalog(
+                Path(base_catalog_path).resolve(), source, combined,
+            )
+            registry = _loaded_registry(combined)
+            targets = {
+                name: set(_expected_names(registry.get(name).name, registry.get(name).version))
+                for name in runtime_names
+            }
+            available_expected = set().union(*targets.values())
+            case_targets = {
+                case.case_id: tuple(name for name, expected in targets.items()
+                                    if expected & set(case.raw["expected_skills"]))
+                for case in selected
+            }
+            cases_path = root / "cases" / f"{slug}.jsonl"
+            _write_cases(cases_path, selected, runtime_names_by_case=case_targets)
+            matched = tuple(case_id for case_id, names in case_targets.items() if names)
+            groups.append(GeneratedGroup(
+                skill_names=tuple(registry.get(name).name for name in runtime_names),
+                expected_skills=tuple(sorted({name for case in selected
+                                              for name in case.raw["expected_skills"]}
+                                             & available_expected)),
+                variant_id=variant_id,
+                modes=(catalog_mode,),
+                scope="catalog",
+                source=label,
+                source_path=str(source),
+                path_labels=(),
+                version="",
+                slug=slug,
+                case_ids=tuple(case.case_id for case in selected),
+                matched_case_ids=matched,
+                cases_path=_workspace_path(cases_path),
+                catalog_path=str(combined),
+                combined_catalog_path=str(combined),
+                shares_name_with_existing=any(artifact.shares_name_with_existing
+                                              for artifact in artifacts if artifact.source == label),
+            ))
 
     payload = {
         "schema_version": "2.3",
@@ -368,10 +441,10 @@ def _combined_catalog(
     base_catalog: Path,
     generated_catalog: Path,
     target: Path,
-    generated_skill_name: str,
-    generated_version: str,
+    generated_skill_name: str | None = None,
+    generated_version: str | None = None,
 ) -> tuple[str, ...]:
-    """Copy the standard catalog and exactly one generated artifact."""
+    """Copy standard skills and generated skills, preserving their metadata."""
     shutil.copytree(base_catalog, target)
     index = 1
     while (target / f"{BENCHMARK_GENERATED_PREFIX}{index}").exists():
@@ -379,11 +452,14 @@ def _combined_catalog(
     generated_copy = target / f"{BENCHMARK_GENERATED_PREFIX}{index}"
     shutil.copytree(generated_catalog, generated_copy)
     registry = _loaded_registry(target)
-    if not any(item.ok and item.path.is_relative_to(generated_copy)
-               for item in registry.files()):
+    generated_names = tuple(item.name for item in registry.files()
+                            if item.ok and item.name and item.path.is_relative_to(generated_copy))
+    if not generated_names:
         raise ValueError(
             f"combined catalog did not load generated skill: {generated_skill_name}"
         )
+    if generated_skill_name is None:
+        return generated_names
     return tuple(name for name in registry.active()
                  if registry.get(name).name == generated_skill_name
                  and registry.get(name).version == generated_version)
@@ -403,12 +479,17 @@ def _write_cases(
     cases: list[Any],
     *,
     expected_skills: tuple[str, ...] | None = None,
+    runtime_names_by_case: Mapping[str, tuple[str, ...]] | None = None,
 ) -> None:
     rows = []
     for case in cases:
         raw = dict(case.raw)
         if expected_skills is not None:
             raw["expected_skills"] = list(expected_skills)
+        if runtime_names_by_case is not None:
+            raw["expected_skills"] = list(dict.fromkeys((
+                *raw["expected_skills"], *runtime_names_by_case[case.case_id],
+            )))
         rows.append(raw)
     path.write_text(
         "".join(json.dumps(raw, ensure_ascii=False, sort_keys=True) + "\n" for raw in rows),
@@ -417,7 +498,7 @@ def _write_cases(
 
 
 def _expected_skill(skill_name: str) -> str:
-    match = _HASHED_SKILL.fullmatch(skill_name)
+    match = _HASHED_SKILL.fullmatch(skill_name) or _CONTENT_HASHED_SKILL.fullmatch(skill_name)
     return match.group("base") if match else skill_name
 
 

@@ -17,7 +17,7 @@ from sim.fingerprint import RunFingerprint
 
 from .cases import BenchmarkCase, require_ready, validate_case
 from .catalog_snapshots import verify_snapshot
-from .modes import ModeConfig, ModeConfigs, _loaded_registry
+from .modes import BenchmarkMode, ModeConfig, ModeConfigs, _loaded_registry
 
 _JSON_FENCE = re.compile(r"[\x60]{3}(json|jsonc)\s*\n(.*?)\n[\x60]{3}", re.IGNORECASE | re.DOTALL)
 _PINNED_VERSION = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
@@ -199,7 +199,7 @@ def preflight_case(
     strategy.validate(mode)
     if skip_status := strategy.skip_status(mode):
         return PreflightResult(case.case_id, mode.name, skip_status)
-    if strategy.generated:
+    if strategy.generated and mode.name != BenchmarkMode.EXISTING_PLUS_CATALOG.value:
         expected = tuple(case.raw["expected_skills"])
         if not expected:
             return PreflightResult(

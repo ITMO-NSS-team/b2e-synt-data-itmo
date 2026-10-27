@@ -45,6 +45,7 @@ def mode(
         if name in (
             BenchmarkMode.GENERATED_SKILLS,
             BenchmarkMode.EXISTING_PLUS_GENERATED,
+            BenchmarkMode.EXISTING_PLUS_CATALOG,
         )
         else ()
     )
@@ -275,7 +276,10 @@ def test_same_name_versions_score_the_loaded_version() -> None:
     assert (new["expected_skill_loaded"], new["generated_skill_loaded"]) == (1, 1)
 
 
-def test_same_name_and_version_tracks_which_copy_was_loaded(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode_name", ["existing_plus_generated", "existing_plus_catalog"])
+def test_same_name_and_version_tracks_which_copy_was_loaded(
+    tmp_path: Path, mode_name: str,
+) -> None:
     for source in ("existing", "benchmark-generated-1"):
         path = tmp_path / source / "standard.md"
         path.parent.mkdir()
@@ -290,7 +294,7 @@ def test_same_name_and_version_tracks_which_copy_was_loaded(tmp_path: Path) -> N
     ]
     actual = NormalizedAnswer(case.raw["gold_answer"], None)
     combined = replace(
-        mode("existing_plus_generated", ("standard@0.1.0#generated",)),
+        mode(mode_name, ("standard@0.1.0#generated",)),
         catalog_path=str(tmp_path),
     )
 

@@ -84,7 +84,7 @@ def _write(root: Path, rows: list[dict[str, Any]]) -> Path:
     groups = {
         f"{mode}@{group['variant_id']}": group
         for group in plan.get("groups", [])
-        for mode in plan.get("generated_modes", [])
+        for mode in group.get("modes", plan.get("generated_modes", []))
     }
     points = [_point(row, groups.get(str(row["mode"]))) for row in rows]
     payload = json.dumps(
@@ -97,6 +97,13 @@ def _write(root: Path, rows: list[dict[str, Any]]) -> Path:
                 "selected_cases": len(plan.get("selected_case_ids", [])),
                 "excluded": plan.get("excluded", []),
                 "unmatched_artifacts": plan.get("unmatched_artifacts", []),
+                "catalogs": [
+                    {"source": group["source"],
+                     "matched": len(group["matched_case_ids"]),
+                     "cases": len(group["case_ids"])}
+                    for group in plan.get("groups", [])
+                    if group.get("scope") == "catalog"
+                ],
             } if plan else None,
             "counts": {
                 "runs": len(rows),
@@ -132,14 +139,16 @@ def _point(row: dict[str, Any], group: dict[str, Any] | None = None) -> dict[str
     skill = "—"
     if group:
         if source_path := group.get("source_path"):
-            directories = Path(source_path).parent.parts
+            directories = (Path(source_path).parts if group.get("scope") == "catalog"
+                           else Path(source_path).parent.parts)
             method = next((part for part in reversed(directories)
                            if part in {"no-context", "compact", "full"}), "—")
             detail = next((part for part in reversed(directories)
                            if part in {"abstract", "medium", "detailed"}), "—")
         source = group.get("source", "—")
         variant = group["variant_id"]
-        skill = ", ".join(group.get("skill_names", []))
+        names = group.get("skill_names", [])
+        skill = f"{len(names)} skills" if group.get("scope") == "catalog" else ", ".join(names)
     metrics = row["metrics"]
     latency = metrics.get("latency_ms")
     return {
@@ -156,6 +165,7 @@ def _point(row: dict[str, Any], group: dict[str, Any] | None = None) -> dict[str
         "accuracy": metrics.get("answer_accuracy"),
         "any_skill_loaded": metrics.get("any_skill_loaded"),
         "expected_skill_loaded": metrics.get("expected_skill_loaded"),
+        "generated_skill_loaded": metrics.get("generated_skill_loaded"),
         "latency_s": latency / 1000 if latency is not None else None,
         "mcp_queries": metrics.get("mcp_query_calls"),
         "iterations": metrics.get("iterations"),
@@ -195,6 +205,7 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
         accuracy_values = [point["accuracy"] for point in group if point["accuracy"] is not None]
         any_skill_values = [point["any_skill_loaded"] for point in group if point["any_skill_loaded"] is not None]
         expected_values = [point["expected_skill_loaded"] for point in group if point["expected_skill_loaded"] is not None]
+        generated_values = [point["generated_skill_loaded"] for point in group if point["generated_skill_loaded"] is not None]
         accuracy = _mean(accuracy_values)
         pairs = [
             (point["accuracy"], existing[(point["case_id"], point["repetition"])])
@@ -221,6 +232,9 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "expected_skill_loaded": _mean(expected_values),
             "expected_skill_loaded_count": sum(expected_values),
             "expected_skill_loaded_total": len(expected_values),
+            "generated_skill_loaded": _mean(generated_values),
+            "generated_skill_loaded_count": sum(generated_values),
+            "generated_skill_loaded_total": len(generated_values),
             "median_latency_s": _median(point["latency_s"] for point in group),
             "median_mcp_queries": _median(point["mcp_queries"] for point in group),
             "median_iterations": _median(point["iterations"] for point in group),

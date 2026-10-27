@@ -205,6 +205,7 @@ def test_generated_name_parser_keeps_legacy_compatibility() -> None:
     assert _expected_skill("alpha-full-a94e814444-b4d7da560f") == "alpha"
     assert _expected_skill("alpha-full-a94e814444") == "alpha"
     assert _expected_skill("alpha-full-not-a-hash") == "alpha-full-not-a-hash"
+    assert _expected_skill("alpha-e31ddc4fa2") == "alpha"
 
 
 def test_multiple_expected_skills_run_individually_by_default(tmp_path: Path) -> None:
@@ -387,3 +388,63 @@ def test_combined_catalog_keeps_existing_patch_versions(tmp_path: Path) -> None:
     ]
     assert registry.get("standard@1.0.0#generated").version == "1.0.0"
     assert Registry.load(group["catalog_path"]).get("standard").version == "1.0.0"
+
+
+def test_catalog_mode_runs_same_cases_for_each_source_and_keeps_existing(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", ["alpha-v0-1-0"])
+    _case(cases, "case-0102-00", ["beta-v0-1-0"])
+    _case(cases, "case-0103-00", ["missing-v0-1-0"])
+    baseline = tmp_path / "baseline"
+    _skill(baseline, "alpha")
+    _skill(baseline, "unused")
+    sf = tmp_path / "skillfactory"
+    _skill(sf, "beta-e31ddc4fa2")
+    base = tmp_path / "base"
+    _skill(base, "alpha")
+
+    plan = build_generated_plan(
+        cases, None, tmp_path / "work", schema_path=SCHEMA,
+        base_catalog_path=base,
+        generated_modes=("existing_plus_catalog",),
+        generated_sources={"baseline": baseline, "skillfactory": sf},
+    )
+
+    assert plan["selected_case_ids"] == [
+        "case-0101-00", "case-0102-00", "case-0103-00",
+    ]
+    assert len(plan["groups"]) == 2
+    assert all(group["modes"] == ["existing_plus_catalog"] for group in plan["groups"])
+    assert all(len(group["case_ids"]) == 3 for group in plan["groups"])
+    groups = {group["source"]: group for group in plan["groups"]}
+    assert groups["baseline"]["matched_case_ids"] == ["case-0101-00"]
+    assert groups["skillfactory"]["matched_case_ids"] == ["case-0102-00"]
+    baseline_registry = Registry.load(groups["baseline"]["combined_catalog_path"])
+    assert baseline_registry.active() == [
+        "alpha@0.1.0#existing", "alpha@0.1.0#generated", "unused",
+    ]
+    baseline_cases = [json.loads(line) for line in Path(groups["baseline"]["cases_path"]).read_text().splitlines()]
+    assert "alpha@0.1.0#generated" in baseline_cases[0]["expected_skills"]
+    assert baseline_cases[1]["expected_skills"] == ["beta-v0-1-0"]
+    assert baseline_cases[2]["expected_skills"] == ["missing-v0-1-0"]
+    assert (Path(groups["baseline"]["combined_catalog_path"]) /
+            "benchmark-generated-1" / "unused" / "SKILL.md").is_file()
+
+
+def test_catalog_mode_rejects_duplicate_skill_identity_within_source(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", ["alpha-v0-1-0"])
+    generated = tmp_path / "generated"
+    _skill(generated, "alpha", variant_id="first")
+    _skill(generated, "alpha", variant_id="second")
+    base = tmp_path / "base"
+    _skill(base, "standard")
+
+    with pytest.raises(ValueError, match="duplicates"):
+        build_generated_plan(
+            cases, generated, tmp_path / "work", schema_path=SCHEMA,
+            base_catalog_path=base,
+            generated_modes=("existing_plus_catalog",),
+        )

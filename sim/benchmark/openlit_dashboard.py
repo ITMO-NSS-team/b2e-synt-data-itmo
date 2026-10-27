@@ -154,7 +154,7 @@ SELECT
         round(p.delta_pp, 1)
     ) AS accuracy_delta_vs_existing_skills_pp,
     if(
-        g.mode IN ('generated_skills', 'existing_plus_generated')
+        g.mode IN ('generated_skills', 'existing_plus_generated', 'existing_plus_catalog')
             AND g.target_eligible > 0,
         concat(toString(round(g.target_skill_loaded * 100, 1)), '% (',
             toString(g.target_loaded), '/', toString(g.target_eligible), ')'),
@@ -173,7 +173,8 @@ ORDER BY indexOf([
     'skills_disabled',
     'existing_skills',
     'generated_skills',
-    'existing_plus_generated'
+    'existing_plus_generated',
+    'existing_plus_catalog'
 ], g.mode), g.configuration
 """.strip()
 
@@ -214,7 +215,7 @@ SELECT
     round(g.target_skill_loaded * 100, 1) AS target_skill_loaded_pct
 FROM grouped AS g
 WHERE
-    g.mode IN ('generated_skills', 'existing_plus_generated')
+    g.mode IN ('generated_skills', 'existing_plus_generated', 'existing_plus_catalog')
     AND g.target_skill_loaded IS NOT NULL
 ORDER BY target_skill_loaded_pct DESC, configuration
 """.strip()

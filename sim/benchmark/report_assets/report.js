@@ -5,6 +5,7 @@ const colors = {
   existing_skills: "#1570ef",
   generated_skills: "#f79009",
   existing_plus_generated: "#12b76a",
+  existing_plus_catalog: "#039855",
 };
 const symbols = { abstract: "circle", medium: "square", detailed: "diamond", "—": "cross" };
 const pct = (value, count, total) => value == null ? "—" :
@@ -19,6 +20,7 @@ const shortMode = {
   existing_skills: "existing",
   generated_skills: "generated",
   existing_plus_generated: "existing + gen",
+  existing_plus_catalog: "existing + catalog",
 };
 const configName = row => [row.mode, row.source, row.method, row.detail, row.variant]
   .filter(value => value && value !== "—").join(" / ");
@@ -35,7 +37,9 @@ if (data.coverage) {
   const coverage = data.coverage;
   const section = document.getElementById("coverage");
   section.hidden = false;
-  section.innerHTML = `<h2>Покрытие каталогами</h2><p>Кейсов выбрано: ${coverage.selected_cases} из ${coverage.source_cases}; без подходящего skill: ${coverage.excluded.length}; skills без подходящих кейсов: ${coverage.unmatched_artifacts.length}.</p>
+  const catalogCoverage = (coverage.catalogs || []).map(row =>
+    `${esc(row.source)}: ${row.matched}/${row.cases} кейсов с целевым generated skill`).join("; ");
+  section.innerHTML = `<h2>Покрытие каталогами</h2><p>Кейсов выбрано: ${coverage.selected_cases} из ${coverage.source_cases}; без подходящего skill: ${coverage.excluded.length}; skills без подходящих кейсов: ${coverage.unmatched_artifacts.length}.${catalogCoverage ? ` ${catalogCoverage}.` : ""}</p>
     <details><summary>Непокрытые кейсы и skills</summary><ul>${coverage.excluded.map(row => `<li>${esc(row.case_id)} — ${esc(row.reason)}</li>`).join("")}${coverage.unmatched_artifacts.map(row => `<li>${esc(row.source)} / ${esc(row.skill_name)} (${esc(row.version)}) — нет подходящих кейсов среди выбранных</li>`).join("")}</ul></details>`;
 }
 
@@ -45,6 +49,7 @@ document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
   <td>${row.n_pairs || "—"}</td>
   <td>${row.delta_pp == null ? "—" : `${row.delta_pp > 0 ? "+" : ""}${row.delta_pp.toFixed(1)}`}</td>
   <td>${pct(row.any_skill_loaded, row.any_skill_loaded_count, row.any_skill_loaded_total)}</td><td>${pct(row.expected_skill_loaded, row.expected_skill_loaded_count, row.expected_skill_loaded_total)}</td>
+  <td>${pct(row.generated_skill_loaded, row.generated_skill_loaded_count, row.generated_skill_loaded_total)}</td>
   <td>${row.median_latency_s == null ? "—" : `${num(row.median_latency_s)} с`}</td>
   <td>${num(row.median_mcp_queries)}</td><td>${num(row.median_iterations)}</td><td>${num(row.median_input_tokens)}</td><td>${num(row.median_output_tokens)}</td>
 </tr>`).join("");

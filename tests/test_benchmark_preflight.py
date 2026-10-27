@@ -203,6 +203,23 @@ def test_generated_preflight_accepts_one_available_expected_skill(tmp_path: Path
     assert result.status == "ready"
 
 
+def test_full_catalog_preflight_runs_case_without_matching_generated_skill(tmp_path: Path) -> None:
+    standard = make_catalog(tmp_path / "standard")
+    generated = make_catalog(tmp_path / "generated", name="available")
+    modes = build_modes(common(), standard, generated, snapshots_root=tmp_path / "snapshots")
+    case = ready_case()
+    case.raw["expected_skills"] = ["missing-v1-0-0"]
+
+    result = preflight_case(
+        case, modes.existing_plus_catalog, snapshot_root=data_snapshot(tmp_path / "data"),
+        standard_catalog_path=modes.existing_skills.catalog_path,
+        model_catalog_path=MODEL_CATALOG, agent_config_version="benchmark_agent@1",
+        identity_factory=FakeIdentity, schema_path=SCHEMA,
+    )
+
+    assert result.status == "ready"
+
+
 def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:
     standard = make_catalog(tmp_path / "standard")
     modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")

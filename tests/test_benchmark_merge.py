@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from sim.benchmark.merge import merge_phases
+from sim.benchmark.merge import (
+    _selection_summary, _validate_generated_plan_execution, merge_phases,
+)
 
 
 def _phase(
@@ -69,6 +71,37 @@ def test_merge_phases_writes_one_summary_and_keeps_shared_group(tmp_path: Path) 
     manifest = json.loads((writer.root / "run-manifest.json").read_text())
     assert manifest["schema_version"] == "1.1"
     assert len(manifest["catalog_phases"]) == 2
+
+
+def test_generated_plan_checks_only_modes_assigned_to_each_group() -> None:
+    plan = {
+        "generated_modes": ["existing_plus_generated", "existing_plus_catalog"],
+        "groups": [
+            {"variant_id": "one", "modes": ["existing_plus_generated"]},
+            {"variant_id": "catalog--baseline", "modes": ["existing_plus_catalog"]},
+        ],
+    }
+    manifests = [
+        {"modes": [{"name": "existing_plus_generated@one"}]},
+        {"modes": [{"name": "existing_plus_catalog@catalog--baseline"}]},
+    ]
+    _validate_generated_plan_execution(manifests, plan)
+
+
+def test_catalog_coverage_is_reported_separately_from_case_selection() -> None:
+    plan = {
+        "source_case_ids": ["a", "b"], "eligible_case_ids": ["a", "b"],
+        "selected_case_ids": ["a", "b"],
+        "groups": [{"scope": "catalog", "source": "baseline",
+                    "case_ids": ["a", "b"], "matched_case_ids": ["a"]}],
+    }
+
+    selection = _selection_summary(plan)["selection"]
+
+    assert selection["coverage_rate"] == 1.0
+    assert selection["catalog_coverage"] == {
+        "baseline": {"n_cases": 2, "n_target_cases": 1},
+    }
 
 
 @pytest.mark.parametrize("check_only", [False, True])
