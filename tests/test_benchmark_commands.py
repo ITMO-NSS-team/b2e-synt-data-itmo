@@ -128,6 +128,10 @@ def test_mixed_benchmark_splits_catalogs_and_merges_results() -> None:
     assert "--phase-telemetry" in source
     assert "sim.benchmark.publish" in source
     assert "command -v flock" in source and "exec lockf -t 0" in source
+    assert source.count(
+        'BENCH_LOCK_HELD=1 BENCH_MODES="$(BENCH_MODES)" '
+        'BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_LIMIT="$(BENCH_LIMIT)"'
+    ) == 2
     assert 'if ! test -s "$$group_list"' in source
 
 

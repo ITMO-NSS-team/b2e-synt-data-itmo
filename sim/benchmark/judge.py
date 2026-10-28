@@ -9,12 +9,19 @@ from typing import Any, Protocol
 import httpx
 
 
-PROMPT_VERSION = "benchmark-answer-judge@1"
+PROMPT_VERSION = "benchmark-answer-judge@3"
 SYSTEM_PROMPT = """Ты проверяешь семантическую корректность ответа HR-агента.
 
 Сравни candidate_answer с reference_answer строго в рамках user_query и
 comparison_rules. Явные требования к формату ответа внутри user_query
 обязательны и имеют приоритет: ответ с нарушенным форматом считай неверным.
+Проверяй весь candidate_answer, а не только найденный внутри него JSON. Если
+user_query требует ровно один JSON-объект и разрешает пояснения только в его
+поле, любой обычный текст до или после объекта является нарушением. Отдельный
+структурированный хвост допустим, когда user_query сообщает, что его может
+требовать системный prompt. При наличии такого разрешения считай хвост
+допустимым без дополнительных доказательств; это не разрешает иной текст вне
+JSON.
 Если user_query не содержит требований к формату, не снижай оценку только за
 формат, формулировки или допустимый порядок строк. Неверные числа, сущности,
 outcome, пропущенные или противоречащие эталону факты являются ошибкой. Не
@@ -68,11 +75,17 @@ class ZaiAnswerJudge:
             base_url=self.base_url.rstrip("/"), timeout=self.timeout,
             transport=self.transport,
         ) as client:
-            response = client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json=request,
-            )
+            for attempt in range(2):
+                try:
+                    response = client.post(
+                        "/chat/completions",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        json=request,
+                    )
+                    break
+                except httpx.TransportError:
+                    if attempt == 1:
+                        raise
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:

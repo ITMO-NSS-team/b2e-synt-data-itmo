@@ -4,7 +4,7 @@ import json
 
 import httpx
 
-from sim.benchmark.judge import ZaiAnswerJudge, from_env
+from sim.benchmark.judge import PROMPT_VERSION, SYSTEM_PROMPT, ZaiAnswerJudge, from_env
 
 
 def test_zai_judge_sends_only_answer_material_and_parses_verdict() -> None:
@@ -46,6 +46,12 @@ def test_judge_is_disabled_by_default(monkeypatch) -> None:
     assert from_env() is None
 
 
+def test_judge_prompt_prioritizes_the_full_requested_format() -> None:
+    assert PROMPT_VERSION == "benchmark-answer-judge@3"
+    assert "Проверяй весь candidate_answer" in SYSTEM_PROMPT
+    assert "любой обычный текст до или после объекта" in SYSTEM_PROMPT
+
+
 def test_judge_uses_its_own_model(monkeypatch) -> None:
     monkeypatch.setenv("BENCH_LLM_JUDGE_ENABLED", "true")
     monkeypatch.setenv("BENCH_LLM_JUDGE_MODEL", "glm-judge")
@@ -57,3 +63,29 @@ def test_judge_uses_its_own_model(monkeypatch) -> None:
 
     assert isinstance(judge, ZaiAnswerJudge)
     assert judge.model == "glm-judge"
+
+
+def test_judge_retries_one_transport_failure() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("temporary", request=request)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": (
+                '{"pass": true, "explanation": "Совпадает"}'
+            )}}],
+        })
+
+    result = ZaiAnswerJudge(
+        model="glm-test", api_key="secret", base_url="https://z.ai/v4",
+        transport=httpx.MockTransport(handler),
+    ).evaluate(
+        query="Вопрос", reference={"outcome": "answer"}, comparison={},
+        candidate="Ответ",
+    )
+
+    assert attempts == 2
+    assert result["pass"] is True

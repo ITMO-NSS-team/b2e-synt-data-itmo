@@ -299,9 +299,9 @@ benchmarking:  ## полный прогон; generated skills изолируют
 	@mkdir -p var
 	@if test -z "$(BENCH_LOCK_HELD)"; then \
 		if command -v flock >/dev/null 2>&1; then \
-			exec flock -n var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+			exec flock -n var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1 BENCH_MODES="$(BENCH_MODES)" BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_LIMIT="$(BENCH_LIMIT)"; \
 		fi; \
-		exec lockf -t 0 var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+		exec lockf -t 0 var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1 BENCH_MODES="$(BENCH_MODES)" BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_LIMIT="$(BENCH_LIMIT)"; \
 	fi; \
 	if test -n "$(BENCH_GENERATED_MODE_LIST)"; then \
 		set -e; \
