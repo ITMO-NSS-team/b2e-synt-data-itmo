@@ -11,6 +11,7 @@ def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int, ste
         run_id=run_id, case_id="case-0001-00", mode=mode, repetition=1,
         status="completed", score={"metrics": {
             "answer_accuracy": accuracy,
+            "format_valid": 1,
             "llm_judge_accuracy": accuracy,
             "generated_skill_loaded": 1 if "generated" in mode else None,
             "latency_ms": latency,
@@ -67,6 +68,7 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert "Любой skill загружен" in text
     assert "Expected skill загружен" in text
     assert "LLM judge accuracy" in text
+    assert "Format valid" in text
     assert "Целевой generated skill загружен" in text
     assert "position: sticky" in text
     assert "td:nth-child(4)" in text
@@ -91,6 +93,7 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert '"median_output_tokens":80.0' in text
     assert '"accuracy_correct":2' in text
     assert '"accuracy_total":2' in text
+    assert '"format_valid_count":2' in text
     assert '"llm_judge_accuracy":1.0' in text
     assert '"llm_judge_passed":2' in text
     assert '"llm_judge_scored":2' in text

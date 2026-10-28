@@ -262,7 +262,7 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             **{
                 name: _mean(metric.get(name) for metric in metrics)
                 for name in (
-                    "answer_accuracy", "strict_answer_accuracy",
+                    "answer_accuracy", "strict_answer_accuracy", "format_valid",
                     "llm_judge_accuracy",
                     "response_schema_valid_without_repair", "normalization_repaired",
                     "exact_match", "outcome_accuracy",
@@ -309,7 +309,7 @@ def _review_reason(row: RunResult) -> str | None:
 def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
     output: dict[str, Any] = {}
     for name in (
-        "answer_accuracy", "strict_answer_accuracy",
+        "answer_accuracy", "strict_answer_accuracy", "format_valid",
         "llm_judge_accuracy",
         "response_schema_valid_without_repair", "normalization_repaired",
         "exact_match", "outcome_accuracy", "correct_refusal", "any_skill_loaded", "expected_skill_loaded",
@@ -358,7 +358,7 @@ def _paired_compare(
 def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     rows = list(metrics)
     names = (
-        "answer_accuracy", "strict_answer_accuracy",
+        "answer_accuracy", "strict_answer_accuracy", "format_valid",
         "llm_judge_accuracy",
         "response_schema_valid_without_repair", "normalization_repaired",
         "exact_match", "outcome_accuracy", "correct_refusal",

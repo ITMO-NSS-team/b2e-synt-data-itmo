@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,26 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
     assert activator.activated == ["existing_skills", "existing_skills"]
     assert activator.deactivated == activator.activated
     assert all(result.score["metrics"]["answer_accuracy"] == 1 for result in results)
+    assert all(result.score["metrics"]["format_valid"] == 1 for result in results)
+
+
+def test_runner_reports_prose_around_json_without_changing_accuracy() -> None:
+    class ProseExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            turn = super().execute(request)
+            return replace(turn, answer="Результат: " + turn.answer)
+
+    runner = BenchmarkRunner(
+        "eval-format", preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ), activator=FakeActivator(), executor=ProseExecutor(),
+    )
+    result = runner.run([ready_case()], {"existing_skills": mode()}, repetitions=1)[0]
+    metrics = result.score["metrics"]
+    assert metrics["exact_match"] == 1
+    assert metrics["format_valid"] == 0
+    assert metrics["answer_accuracy"] == 1
+    assert metrics["strict_answer_accuracy"] == 1
 
 
 def test_generated_variant_has_distinct_result_arm_but_shared_comparison_group() -> None:
@@ -221,8 +242,10 @@ def test_runner_treats_blocked_bash_as_completed_when_answer_exists() -> None:
 def test_llm_judge_is_supplemental_and_does_not_change_answer_accuracy() -> None:
     class RejectingJudge:
         def evaluate(self, **kwargs):
-            assert kwargs["query"].startswith(ready_case().raw["query"])
-            assert "Формат ответа для автоматической проверки" in kwargs["query"]
+            case = ready_case()
+            assert kwargs["query"] == case.raw["query"]
+            assert kwargs["reference"] == case.raw["gold_answer"]
+            assert kwargs["comparison"] == case.raw["gold_comparison"]
             assert kwargs["candidate"]
             return {
                 "applicable": True,

@@ -46,10 +46,11 @@ def test_judge_is_disabled_by_default(monkeypatch) -> None:
     assert from_env() is None
 
 
-def test_judge_prompt_prioritizes_the_full_requested_format() -> None:
-    assert PROMPT_VERSION == "benchmark-answer-judge@3"
+def test_judge_prompt_scores_facts_across_the_whole_answer() -> None:
+    assert PROMPT_VERSION == "benchmark-answer-judge@4"
     assert "Проверяй весь candidate_answer" in SYSTEM_PROMPT
-    assert "любой обычный текст до или после объекта" in SYSTEM_PROMPT
+    assert "Не снижай оценку за формат ответа" in SYSTEM_PROMPT
+    assert "противоречия между частями самого ответа" in SYSTEM_PROMPT
 
 
 def test_judge_uses_its_own_model(monkeypatch) -> None:

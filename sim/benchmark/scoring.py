@@ -17,6 +17,7 @@ from .execution import OPERATIONAL_METRICS
 from .modes import ModeConfig
 
 _FENCED_JSON = re.compile(r"[\x60]{3}(?:json)?\s*\n(.*?)\n[\x60]{3}", re.DOTALL | re.IGNORECASE)
+_ANSWER_TAIL = re.compile(r"```answer[ \t]*\r?\n(?:(?!```)[\s\S])*\r?\n```", re.IGNORECASE)
 _REFUSAL_OUTCOMES = frozenset({"access_control", "missing_skill", "out_of_scope"})
 _VERSIONED_NAME = re.compile(r".+-v[0-9]+-[0-9]+-[0-9]+$")
 _QUARTER = re.compile(r"^([0-9]{4})[ -]Q([1-4])$")
@@ -73,6 +74,21 @@ def normalize_answer(answer: str, gold_contract: dict[str, Any]) -> NormalizedAn
     first_error = next(validator.iter_errors(parsed[0]), None)
     detail = first_error.message if first_error is not None else "no candidate matched"
     return NormalizedAnswer(None, f"normalized answer violates gold_contract: {detail}")
+
+
+def response_format_valid(answer: str, normalized: NormalizedAnswer) -> bool:
+    """Require one direct JSON object, optionally followed by one answer block."""
+    if normalized.value is None or normalized.repair:
+        return False
+    text = answer.strip()
+    try:
+        value, end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(value, dict) or value != normalized.value:
+        return False
+    tail = text[end:].strip()
+    return not tail or _ANSWER_TAIL.fullmatch(tail) is not None
 
 
 def calculate_metrics(
