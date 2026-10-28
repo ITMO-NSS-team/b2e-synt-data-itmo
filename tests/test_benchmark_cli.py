@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 import pytest
 
-from sim.benchmark.cli import common_conditions, load_cases_path, parser, select_modes
+from sim.benchmark.cli import _validate_phase_reference, common_conditions, load_cases_path, parser, select_modes
 from sim.benchmark.modes import CommonConditions, build_modes
 from tests.fixtures.constants import EXAMPLE
 
@@ -116,6 +117,21 @@ def test_live_manifest_builds_common_conditions_and_rejects_drift(tmp_path) -> N
     payload["configs"]["benchmark_general@1"]["temperature"] = 0.7
     with pytest.raises(ValueError, match="differ by temperature"):
         common_conditions(payload)
+
+
+@pytest.mark.parametrize("field", ["max_output_tokens", "max_tool_iterations"])
+def test_phase_reference_rejects_runtime_config_drift(field: str) -> None:
+    live = live_payload()
+    live["skill_registry_hash"] = "registry-hash"
+    reference = {
+        "modes": [{"common": json.loads(json.dumps(asdict(common_conditions(live))))}],
+        "live_stand": json.loads(json.dumps(live)),
+        "workers": 1,
+    }
+    _validate_phase_reference(live, common_conditions(live), reference, 1)
+    live["configs"][live["refs"]["existing_skills"]][field] = 8192
+    with pytest.raises(ValueError, match="agent configuration changed before this phase"):
+        _validate_phase_reference(live, common_conditions(live), reference, 1)
 
 
 def test_generated_mock_cannot_be_selected(tmp_path) -> None:

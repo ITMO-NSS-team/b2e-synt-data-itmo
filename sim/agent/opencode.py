@@ -352,6 +352,10 @@ class OpenCodeHarness:
         err_path = workdir / "opencode.stderr"
         with collect_native_timings() as timings, open(err_path, "w+", encoding="utf-8") as err:
             env = self.child_env(config_path)
+            if config.conversation_mode == "stateless":
+                # Concurrent CLI startups contend on the shared SQLite store.
+                # Independent turns need no shared OpenCode session database.
+                env["XDG_DATA_HOME"] = str(config_path.with_suffix(".data"))
             env["OTEL_EXPORTER_OTLP_ENDPOINT"] = timings.endpoint
             # `opencode run` may exit without flushing the SDK's default 5s
             # batch. Drain locally while it is alive; missing batches remain

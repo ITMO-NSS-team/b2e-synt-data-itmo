@@ -345,7 +345,8 @@ class HeimdallTools:
                           params={"query": query, "limit": limit})
 
     def get_skill(self, name: str) -> dict[str, Any]:
-        return self._call("GET", f"/api/v2/mcp/skills/{name}/", ENDPOINT_GET_SKILL)
+        from urllib.parse import quote
+        return self._call("GET", f"/api/v2/mcp/skills/{quote(name, safe='')}/", ENDPOINT_GET_SKILL)
 
     def get_overview(self) -> dict[str, Any]:
         return self._call("GET", "/api/v2/mcp/overview/", ENDPOINT_OVERVIEW)

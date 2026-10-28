@@ -1,0 +1,32 @@
+# Local environments, caches and Git history.
+.git/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+**/__pycache__/
+**/*.pyc
+
+# Local secrets and runtime state.
+.env
+deploy/.env
+sim/benchmark/.env
+sim/benchmark/.env.bak-*
+deploy/.env.bak-*
+var/
+spool/
+cassettes/
+
+# Datasets, generated skills, experiment results and archives.
+data/
+data-small/
+data-notraps/
+data-small-notraps/
+data-previous/
+generated-skills/
+b2e-skill-benchmark/
+benchmarking/results/
+outputs/
+*.zip
+*.tar.gz

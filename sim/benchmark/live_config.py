@@ -64,6 +64,9 @@ def capture_live_config(
         BenchmarkMode.EXISTING_PLUS_GENERATED.value: pinned.get(
             "existing_plus_generated", pinned["existing_skills"],
         ),
+        BenchmarkMode.EXISTING_PLUS_CATALOG.value: pinned.get(
+            "existing_plus_catalog", pinned["existing_skills"],
+        ),
     }
     for mode in (BenchmarkMode.DOCS_ONLY, BenchmarkMode.EXISTING_SKILLS_NO_DOCS):
         if mode.value in pinned:

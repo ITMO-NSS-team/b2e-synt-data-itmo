@@ -53,6 +53,7 @@ def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
     return {
         "existing_skills": on_version.ref,
         "existing_plus_generated": on_version.ref,
+        "existing_plus_catalog": on_version.ref,
         "generated_skills": generated_version.ref,
         "skills_disabled": disabled_version.ref,
         "general_knowledge": general_version.ref,

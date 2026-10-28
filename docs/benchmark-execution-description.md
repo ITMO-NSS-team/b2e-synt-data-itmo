@@ -13,19 +13,32 @@
 - расчёт accuracy, инструментальных и ресурсных метрик;
 - агрегирование результатов и сравнение режимов.
 
-Generated-режимы запускаются с внешним каталогом, указанным через
-`GENERATED_SKILLS_DIR`. Связь кейса со сгенерированным skill задаётся полем
-`expected_skills`. Эксперимент ограничивается кейсами, для которых найден хотя бы
-один соответствующий артефакт. Baseline-режимы выполняются для каждого такого
-кейса ровно один раз, а каждый доступный generated skill проверяется отдельно.
+Generated-режимы запускаются с именованными каталогами готовых skills из
+`BENCH_SKILL_CATALOGS` в `sim/benchmark/.env`. Например:
+`BENCH_SKILL_CATALOGS=baseline=../skill-factory/baseline/runs/my-run,skillfactory=var/sf-output`.
+Допустимы вложенные каталоги и плоские наборы `.md`/`.yaml`-файлов; имена и
+версии skills берутся из содержимого файлов, а не из их путей. Связь кейса со skill задаётся полем
+`expected_skills`. В индивидуальных generated-режимах выбираются кейсы с хотя
+бы одним соответствующим артефактом. Если выбран `existing_plus_catalog`, все
+входные кейсы запускаются для каждого источника отдельно. Baseline-режимы выполняются
+по выбранным кейсам ровно один раз.
 `generated_skills` предоставляет агенту только проверяемый skill;
 `existing_plus_generated` — весь стандартный каталог Heimdall и тот же один
 generated skill. Если имя generated skill совпадает со стандартным, generated
-skill заменяет его в комбинированном каталоге: это ревизия, а не второе
-определение. Несколько generated skills в один каталог не объединяются.
-Непокрытые кейсы не становятся фиктивными запусками: их число и причины исключения
-фиксируются в generated plan и разделе `selection` итоговой сводки. LLM-as-judge
-пока не выполняется — в результатах для него сохраняется только пустая структура.
+skill остаётся рядом со стандартным. Версии различаются через `name@version`;
+при равных версиях только в смешанном каталоге экземпляры получают адреса
+`name@1.0.0#existing` и `name@1.0.0#generated`. Поля `name` и `version` внутри
+обоих skill-файлов не меняются. Исходный generated-файл и изолированный каталог
+также остаются без изменений.
+`existing_plus_catalog` добавляет к Heimdall все навыки одного источника;
+разные источники запускаются отдельно. В одном каталоге источника не должно
+быть двух навыков с одинаковыми `name` и `version`.
+Непокрытые кейсы и skills без подходящих кейсов не становятся фиктивными запусками:
+они перечислены в plan и HTML-отчёте, а число исключений есть в `selection`
+итоговой сводки. Сравнение вариантов с `existing_skills` в HTML-отчёте считается
+только для совпадающих `(case_id, repetition)` с оценкой в обоих режимах.
+LLM-as-judge пока не выполняется: в `llm_judge` стоит `applicable: false`,
+а оценка и пояснение не заполнены.
 
 ## Компоненты
 
@@ -135,8 +148,9 @@ skill заменяет его в комбинированном каталоге
 | `general_knowledge` | нет | отсутствует | реализован |
 | `skills_disabled` | `list_models`, `describe_model`, `mcp_query` | отсутствует | реализован |
 | `existing_skills` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | уже существующий каталог навыков информационного сервиса | реализован |
-| `generated_skills` | `list_models`, `describe_model`, `mcp_query`, `find_skills`, `get_skill` | только соответствующая кейсу вариация skill из `GENERATED_SKILLS_DIR` | реализован; непокрытые кейсы исключаются из всех выбранных режимов |
+| `generated_skills` | `list_models`, `describe_model`, `mcp_query`, `find_skills`, `get_skill` | только соответствующая кейсу вариация skill из `BENCH_SKILL_CATALOGS` | реализован; непокрытые кейсы исключаются из всех выбранных режимов |
 | `existing_plus_generated` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | стандартные Heimdall skills и ровно одна соответствующая кейсу generated-вариация | реализован; каждый generated skill проверяется отдельной фазой |
+| `existing_plus_catalog` | `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills`, `get_skill` | стандартные Heimdall skills и все skills одного источника | реализован; один прогон каждого кейса на источник |
 
 В `generated_skills` отсутствует `get_docs`: встроенные процедурные приёмы Heimdall
 не должны подменять или дополнять проверяемый сгенерированный skill. Через
@@ -145,17 +159,27 @@ skill заменяет его в комбинированном каталоге
 запрос: оно используется только при подготовке каталога экспериментального режима.
 
 В `existing_plus_generated` сохраняются стандартные skills и `get_docs`, а к
-каталогу добавляется ровно один проверяемый generated skill. Стандартный skill
-не удаляется: агент сам выбирает между ним и сгенерированным, независимо от
-того, ожидается REUSE или EXTEND. Точное совпадение имён отклоняется при
-планировании, поскольку оба skill нельзя показать одновременно. Поэтому режим измеряет,
-найдёт ли агент generated skill среди уже существующих и даст ли он преимущество по
+каталогу добавляется ровно один проверяемый generated skill. При одинаковом
+имени доступны обе версии, а при одинаковых имени и версии — оба экземпляра,
+различаемые техническим суффиксом `#existing`/`#generated`. В последнем случае
+загрузка любого из них засчитывается как загрузка ожидаемого skill по исходным
+`name` и `version`; метрика `generated_skill_loaded` засчитывает только второй.
+Это не зависит от
+того, ожидается REUSE или EXTEND. Поэтому режим измеряет,
+найдёт ли агент generated skill среди доступных и даст ли он преимущество по
 сравнению с `existing_skills`. Если в кейсе перечислено несколько
 `expected_skills`, planner создаёт отдельный прогон для каждого доступного
 generated skill; совместного прогона нескольких generated skills нет.
 Кейс сопоставляется с логическим именем skill и версией из его метаданных.
 Версия в имени файла или артефакта для этого не используется: при расхождении
 верной считается версия внутри skill.
+
+В `existing_plus_catalog` каждый именованный источник из `BENCH_SKILL_CATALOGS`
+добавляется к стандартному каталогу целиком. Все источники получают одинаковые
+кейсы, даже если у одного нет ожидаемого generated skill. Тогда
+`generated_skill_loaded` неприменима, но answer accuracy оценивается. Для
+baseline выбирайте один метод и уровень детализации на источник, чтобы не
+смешивать разные варианты одного skill.
 
 `general_knowledge` служит отрицательным baseline: агент не получает инструменты стенда, включая `list_models`, `describe_model`, `get_docs`, `mcp_query`, `find_skills` и `get_skill`. Он не видит перечень витрин, не читает данные, не узнаёт поля и метрики и не получает приёмы и рецепты. Режим проверяет, решается ли задача из общих знаний модели без информации со стенда.
 
@@ -223,24 +247,62 @@ MCP-мост публикует ему ровно три инструмента 
 
 Требования:
 
-- заполнен `deploy/.env`;
+- заполнен `deploy/.env` для сервисов и `sim/benchmark/.env` для бенчмарка;
 - подготовлен снимок данных с `manifest.json` и `truth/people.json`;
 - кейсы имеют статус `verified`.
 
 Снимок выбирается только переменной `DATA_DIR` в `deploy/.env` (по умолчанию
 `../data`). Тот же путь используется при проверке `manifest.json` и монтируется
 в Heimdall и `benchmark-runner` как `/data/snapshot`, поэтому отдельный
-`BENCH_DATA_PATH` настраивать не требуется. Разовый запуск можно переопределить
-через `DATA_DIR=/absolute/path make benchmarking-check`.
+`BENCH_DATA_PATH` настраивать не требуется.
 
-Каждая команда проверяет `manifest.json` и состояние `admin-ui`, `b2e-agent`, `phoenix`, `heimdall-emulator`. Если сервисы уже работают, они не перезапускаются. Иначе выполняется `make up`. Затем из `admin-ui` снимается live-config и запускается `benchmark-runner`.
+Сервисы используют `deploy/docker-compose.yml` и `deploy/.env`.
+Бенчмарк читает параметры эксперимента из `sim/benchmark/.env` (шаблон —
+`sim/benchmark/.env.example`), а конфигурацию стенда — из работающих сервисов.
+Публичный адрес и подключение к OpenLIT для dashboard берутся из `deploy/.env`.
+Повторять эти настройки в benchmark-файле не нужно.
+В Compose сохранены исходные `name: b2e-itmo`, имена образов, targets и DNS-overlay.
+Локальный `COMPOSE_PROJECT_NAME` в `.env`, если задан, стандартным механизмом
+Docker Compose переопределяет имя проекта; перед сменой имени проверьте тома.
+
+```bash
+cp sim/benchmark/.env.example sim/benchmark/.env  # один раз, затем заполнить
+make setup   # uv создаёт .venv и устанавливает зависимости из pyproject.toml
+make up      # исходная команда: подготовка DNS-overlay и up -d --build
+```
+
+Benchmark проверяет manifest снимка и состояние нужных сервисов. Ошибка Compose
+показывается сразу; она не считается отсутствием стенда. Если сервисов нет или
+нужно восстановить DNS-overlay, выполняется исходный `make up`. При готовом
+стенде смена каталога skills может пересоздать `heimdall-emulator` без остальных
+сервисов. Затем снимается live-config и запускается `benchmark-runner`.
+
+Все параметры эксперимента задаются в `sim/benchmark/.env`: источник кейсов и
+skills, режимы, повторы, параллельность, тайм-ауты и каталог результатов.
+При запуске через Make этот файл имеет приоритет над унаследованными
+переменными терминала; явные аргументы рекурсивных фаз Make сохраняются.
+`BENCH_EVAL_ID` лучше оставить незаданным, чтобы каждый запуск получил новый
+идентификатор. Для продолжения прерванного запуска укажите прежний
+`BENCH_EVAL_ID` и `BENCH_RESUME=1`; затем уберите их для нового запуска.
+Относительные пути `CASES`, `BENCHMARK_REPO_DIR` и `BENCH_SKILL_CATALOGS` в
+`sim/benchmark/.env` отсчитываются от корня репозитория. `DATA_DIR` остаётся настройкой
+стенда в `deploy/.env` и задаётся относительно `deploy/`.
+Например: `BENCH_SKILL_CATALOGS=baseline=../skill-factory/baseline/runs/my-run,skillfactory=var/sf-output`.
+`GENERATED_SKILLS_DIR` сохраняется как совместимость для одного каталога.
+
+Локальное окружение устанавливается через `uv pip install -e ".[serve]"`;
+`make setup` не пересоздаёт уже существующую `.venv`. `pyproject.toml` и отдельный
+`deploy/requirements.txt` сохранены в исходном виде. Синхронизация зависимостей
+Docker через lock-файл не вводится. `.dockerignore` исключает локальные окружения,
+данные, секреты и результаты из контекста сборки, не меняя Dockerfile.
 
 Если в `deploy/.env` задан `OPENLIT_CLICKHOUSE_URL`, перед живым прогоном
 идемпотентно создаётся или обновляется dashboard `B2E Benchmark`. В нём три
 постоянных табличных виджета: список запусков со ссылкой на trace,
 агрегированные метрики по режимам и попарные дельты accuracy относительно
 `general_knowledge`, `skills_disabled` и `existing_skills`. Абсолютные метрики
-предусматривают также `generated_skills` и `existing_plus_generated`, когда
+предусматривают также `generated_skills`, `existing_plus_generated` и
+`existing_plus_catalog`, когда
 передан внешний каталог.
 Колонки сравнения постоянны, а строки создаются только
 для режимов, фактически выбранных в конкретном запуске. Виджеты читают
@@ -249,7 +311,7 @@ MCP-мост публикует ему ровно три инструмента 
 появляются после обычного обновления dashboard; создавать его повторно руками
 не нужно. `benchmarking-check` не изменяет OpenLIT.
 
-Для локального OpenLIT compose достаточно:
+Для локального OpenLIT добавьте в `deploy/.env`:
 
 ```dotenv
 OPENLIT_CLICKHOUSE_URL=http://127.0.0.1:8123
@@ -268,41 +330,51 @@ URL не задан или OpenLIT недоступен, живой benchmark п
 ### Проверка без LLM
 
 ```bash
-make benchmarking-check CASES=b2e-skill-benchmark/gold_dataset
+make benchmarking-check
 ```
 
 ### Smoke-прогон
 
-Запускает первый `verified`-кейс, три реализованных режима и один повтор:
+Запускает первый подходящий `verified`-кейс в режимах из `BENCH_MODES` с одним
+повтором:
 
 ```bash
-make benchmarking-smoke CASES=b2e-skill-benchmark/gold_dataset
+make benchmarking-smoke
 ```
 
-Smoke проверяет полный технический путь `case → agent → information service → trace → normalization → metrics`. Низкая accuracy не считается технической ошибкой. Ошибки preflight (снимок, роль, каталог, недоступный стенд) останавливают запуск до LLM. После старта хода ненормализуемый JSON, отсутствующая трасса или несовпадение fingerprint не останавливают матрицу: ячейка попадает в `summary.json` → `review` и не входит в средние метрики. Успешный отказ харнесса (`denied:Bash` и аналоги) при готовом ответе остаётся обычным `completed`.
+Smoke проверяет полный технический путь `case → agent → information service → trace → normalization → metrics`. Низкая accuracy не считается технической ошибкой. Ошибки preflight (снимок, роль, каталог, недоступный стенд) останавливают запуск до LLM. После старта хода ненормализуемый JSON, отсутствующая трасса или несовпадение fingerprint не останавливают матрицу: ячейка попадает в `summary.json` → `review`. Ошибка формата учитывается как неверный ответ; отсутствие трассы и несовпадение fingerprint исключаются из quality-метрик. Успешный отказ харнесса (`denied:Bash` и аналоги) при готовом ответе остаётся обычным `completed`.
 
 ### Полный прогон
 
 ```bash
-make benchmarking \
-  CASES=b2e-skill-benchmark/gold_dataset \
-  BENCH_REPETITIONS=3
+make benchmarking
 ```
 
-### Параметры Make
+### Основные параметры env
+
+`DATA_DIR` и `B2E_MODEL` относятся к `deploy/.env`; остальные параметры таблицы
+задаются в `sim/benchmark/.env`.
 
 | Параметр | По умолчанию | Назначение |
 | --- | --- | --- |
 | `DATA_DIR` | значение из `deploy/.env`, иначе `../data` | единственный источник пути к снимку для стенда и benchmark |
-| `CASES` | значение `CASES` из `deploy/.env` | источник кейсов |
+| `BENCHMARK_REPO_DIR` | `../b2e-skill-benchmark` в шаблоне | путь к отдельному репозиторию кейсов |
+| `CASES` | `b2e-skill-benchmark/gold_dataset` в шаблоне | источник кейсов |
+| `BENCH_SKILL_CATALOGS` | пусто | именованные каталоги готовых skills для generated-режимов |
 | `BENCH_MODES` | `general_knowledge,skills_disabled,existing_skills` | режимы запуска |
 | `BENCH_REPETITIONS` | `1` | число повторов полного прогона |
+| `BENCH_WORKERS` | `1` | число параллельных запусков кейсов |
 | `BENCH_RESULTS` | `benchmarking/results` | каталог результатов |
 | `BENCH_EVAL_ID` | генерируется автоматически | идентификатор запуска |
+| `BENCH_RESUME` | не задан | продолжить запуск с указанным `BENCH_EVAL_ID` (`1`) |
 | `BENCH_TIMEOUT` | `1800` | тайм-аут одного обращения к стенду, секунды |
 | `BENCH_TRACE_TIMEOUT` | `300` | максимальное ожидание полной Phoenix-трассы, секунды |
-| `BENCH_MODEL` | не задан | model id для benchmark-конфигурации; не меняет provider или harness |
+| `BENCH_HEALTH_TIMEOUT` | `60` | ожидание готовности Heimdall, секунды |
 | `BENCH_LIMIT` | не задан | ограничение числа verified-кейсов; без него выполняется весь набор |
+| `BENCH_MAX_UNSCORED` | не задан | остановка новых запусков после серии неоценённых ячеек |
+
+Модель работающего агента задаётся `B2E_MODEL` в `deploy/.env`, а не параметром
+бенчмарка.
 
 ## Метрики
 
@@ -311,11 +383,14 @@ make benchmarking \
 | Метрика | Смысл |
 | --- | --- |
 | `answer_accuracy` | главная метрика: exact match для задач с ответом или правильность outcome для остальных категорий |
+| `strict_answer_accuracy` | та же оценка, но ответ, потребовавший синтаксического восстановления, получает 0 |
+| `response_schema_valid_without_repair` | удалось извлечь объект по схеме без восстановления синтаксиса |
+| `normalization_repaired` | применено восстановление единственной пропущенной закрывающей скобки корневого объекта |
 | `exact_match` | совпадение нормализованного `rows` с `gold_answer.rows` по правилам `gold_comparison` |
 | `outcome_accuracy` | совпадение фактического и ожидаемого outcome |
 | `correct_refusal` | правильность отказа для `access_control`, `missing_skill` и `out_of_scope` |
-| `expected_skill_loaded` | загружен ли ожидаемый skill; для стандартных Heimdall skills версия из каталога сопоставляется с суффиксом `-vX-Y-Z` в `expected_skills` |
-| `generated_skill_loaded` | загружен ли через `get_skill` generated skill, одновременно указанный в `case.expected_skills` и входящий в generated-каталог режима; иначе метрика неприменима |
+| `expected_skill_loaded` | загружен ли skill с ожидаемыми `name` и `version` из метаданных; при коллизии одинаковых имени и версии подходит как existing, так и generated |
+| `generated_skill_loaded` | загружен ли через `get_skill` именно generated-экземпляр целевого skill; загрузка одноимённого existing-экземпляра не засчитывается |
 | `heimdall_calls` | число обращений к инструментам информационного сервиса (в текущем стенде — Heimdall) |
 | `mcp_query_calls` | число вызовов `mcp_query` |
 | `failed_tool_calls` | число завершившихся ошибкой инструментальных вызовов |
@@ -330,6 +405,17 @@ make benchmarking \
 - сопоставление строк по `row_key`;
 - разрешение дополнительных строк;
 - абсолютная числовая погрешность.
+
+Начиная с `benchmark-scorer@2`, после неудачного обычного извлечения JSON
+нормализатор может добавить одну завершающую `}` в конце полного ответа или
+JSON-блока. Это разрешено только после завершённой строки, массива или объекта,
+при ошибке разбора ровно в конце текста и успешной последующей проверке схемы.
+Оборванные числа, строки, массивы, отсутствующие поля и неверные типы не
+восстанавливаются. Gold-значения в этом исправлении не используются.
+`normalization_repair` в записи оценки содержит название применённого правила;
+исходный ответ сохраняется без изменений. При сравнении исторических запусков
+их сырые ответы следует пересчитать одной версией scorer, сохранив исходные
+оценки и отдельно показывая строгую accuracy.
 
 `summary.json` содержит средние значения по режимам и парные сравнения:
 
@@ -379,71 +465,71 @@ benchmarking/results/<eval_id>/
 как статусы запусков, а в `generated_plan.excluded`: отсутствует `expected_skills`
 или нет ни одного соответствующего артефакта. Если доступна только часть навыков
 из `expected_skills`, кейс запускается отдельно для каждого найденного навыка, а
-недоступные имена фиксируются в `generated_plan.partially_covered`.
+недоступные имена фиксируются в `generated_plan.partially_covered`. Если
+совпадений нет совсем, создаётся пустой отчёт о покрытии без вызовов агента.
 
 ## Единый запуск
 
-Команды одинаковы для локального и серверного checkout:
+Для локального и серверного checkout настройте `sim/benchmark/.env`:
+
+```dotenv
+BENCHMARK_REPO_DIR=../b2e-skill-benchmark
+CASES=b2e-skill-benchmark/gold_dataset
+BENCH_SKILL_CATALOGS=baseline=../skill-factory/baseline/runs/my-run,skillfactory=var/sf-output
+BENCH_MODES=skills_disabled,existing_skills,generated_skills,existing_plus_generated,existing_plus_catalog
+BENCH_REPETITIONS=1
+```
+
+Затем используйте одну из команд:
 
 ```bash
-# Первый verified-кейс, один повтор
-make benchmarking-smoke CASES=b2e-skill-benchmark/gold_dataset
+# Первый покрытый verified-кейс, один повтор
+make benchmarking-smoke
 
 # Preflight всех verified-кейсов без LLM
-make benchmarking-check CASES=b2e-skill-benchmark/gold_dataset
+make benchmarking-check
 
-# Полный прогон
-make benchmarking \
-  CASES=b2e-skill-benchmark/gold_dataset \
-  BENCH_REPETITIONS=3
-
-# Generated skill из отдельной директории
-make benchmarking-generated \
-  GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills \
-  CASES=b2e-skill-benchmark/gold_dataset
-
-# Стандартный Heimdall-каталог плюс один generated skill на фазу
-make benchmarking-existing-plus-generated \
-  GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills \
-  CASES=b2e-skill-benchmark/gold_dataset
-
-# Все пять режимов и один общий отчёт
-make benchmarking \
-  CASES=b2e-skill-benchmark/gold_dataset \
-  BENCH_MODES=general_knowledge,skills_disabled,existing_skills,generated_skills,existing_plus_generated \
-  GENERATED_SKILLS_DIR=/absolute/path/to/skill-factory/output/skills
+# Все выбранные в env режимы, источники и кейсы; один общий отчёт
+make benchmarking
 ```
 
 `benchmarking` фиксирует live-конфигурацию и **append-only** пинит benchmark-конфиги от текущего `agent_config`, затем запускает одноразовый `benchmark-runner` в сети Compose. Остальные работающие сервисы не пересоздаются, миграции не выполняются, исходные кейсы, snapshot и каталог навыков не изменяются. `heimdall-emulator` пересоздаётся только при изменении подключённой директории skills.
 
-Перед каждым benchmark-запуском Compose применяет выбранное значение
-`GENERATED_SKILLS_DIR` к `heimdall-emulator`. Контейнер пересоздаётся только
-если его конфигурация монтирования изменилась. Поэтому следующий обычный прогон
-без этой переменной снова использует только стандартный каталог.
+Для каждой индивидуальной generated-фазы planner подготавливает каталог с одним
+навыком из `BENCH_SKILL_CATALOGS` (или его копию со стандартными Heimdall skills).
+Для `existing_plus_catalog` он делает одну копию стандартного каталога с
+полным набором skills каждого именованного источника.
+Compose подключает подготовленный каталог к `heimdall-emulator`; контейнер
+пересоздаётся только при изменении монтирования. В обычной baseline-фазе
+используется стандартный каталог.
 
 Если вместе выбраны baseline-режимы и generated-режимы, команда автоматически
-делит эксперимент на последовательные фазы. Сначала planner оставляет только
-кейсы, для которых найден хотя бы один skill из `expected_skills`. Все
+делит эксперимент на последовательные фазы. Если выбран
+`existing_plus_catalog`, planner берёт все входные кейсы; иначе оставляет
+только кейсы с хотя бы одним skill из `expected_skills`. Все
 baseline-режимы выполняются по этому общему набору один раз со стандартным
 каталогом Heimdall. Затем каждая физическая вариация skill получает отдельную
 фазу: изолированный одноэлементный каталог для `generated_skills` и копию
 стандартного каталога с этим одним skill для `existing_plus_generated`.
-Generated skill с именем стандартного skill заменяет его в этой копии;
-`plan.json` записывает `replaces_existing`. Один
+`existing_plus_catalog` получает одну фазу на каждый источник и все те же кейсы.
+Generated skill с именем стандартного skill остаётся рядом с ним;
+`plan.json` записывает `shares_name_with_existing`. Один
 skill может обслуживать любое число аугментаций кейса, а несколько вариантов
 или имён не размножают baseline-запуски.
 
-Каноническое имя берётся из frontmatter `name`, а идентификатор варианта — из
-имени директории артефакта. Например, директории `successors_1/SKILL.md` и
-`successors_2/SKILL.md` могут обе содержать `name: successors`. В результатах
-они становятся отдельными arms `generated_skills@successors_1` и
-`generated_skills@successors_2` и сравниваются с одним набором baseline-ячеек.
+Связь с кейсом определяется по `name` и `version` внутри skill-файла; каталог
+задаёт только источник и уникальный идентификатор физического варианта. Поэтому
+`baseline/first/SKILL.md` и `skillfactory/second.md` могут проверяться отдельно
+на одном наборе кейсов, если их метаданные соответствуют `expected_skills`.
+Имя файла не переопределяет версию skill.
 
 Все фазы используют один логический `eval_id`, а затем объединяются в общие
 `responses.jsonl`, `scores.jsonl`, `traces/` и `summary.json`. В `summary.json`
 `n_runs` включает только реально запущенную матрицу. Раздел `selection` показывает
 число исходных, покрытых, выбранных и исключённых кейсов, а также причины
-исключения. Попарные дельты считаются только по тем `case_id × repetition`,
+исключения и число skills без подходящих кейсов. Для `existing_plus_catalog`
+`catalog_coverage` отдельно показывает число кейсов с целевым generated skill
+для каждого источника. Попарные дельты считаются только по тем `case_id × repetition`,
 которые получили оценку в обоих сравниваемых режимах.
 Промежуточные артефакты сохраняются в
 `benchmarking/results/.phases/<eval_id>/` для диагностики.
@@ -454,15 +540,8 @@ dashboard игнорирует частичные фазовые summary, что
 
 Runner обращается напрямую к `http://b2e-agent:8082` и `http://phoenix:6006`. Публичный proxy, HTTP Basic и SSH-транспорт не используются. Результаты сохраняются на той же машине в `benchmarking/results/<eval_id>/`.
 
-Дополнительные параметры:
-
-- `BENCH_LIMIT=5` — выполнить только первые пять verified-кейсов; при наличии
-  `generated_skills` лимит применяется после отбора покрытых кейсов;
-- `BENCH_RESULTS`, `BENCH_TIMEOUT`, `BENCH_TRACE_TIMEOUT`, `BENCH_EVAL_ID`, `BENCH_REPETITIONS` — параметры запуска и результатов;
-- `BENCH_MODES` — по умолчанию `general_knowledge,skills_disabled,existing_skills`;
-- `BENCH_MODEL` — модель для pinned benchmark-конфигураций без изменения provider или harness.
-- `GENERATED_SKILLS_DIR` — абсолютный или относительный от корня репозитория
-  путь к `.md`/`.yaml` skills, созданным генератором.
+`BENCH_LIMIT` из `sim/benchmark/.env` применяется после отбора кейсов; в
+`existing_plus_catalog` отбор по наличию generated skill не выполняется.
 
 Если стенд находится на другой машине, сначала нужно войти на неё обычным способом, а затем вызвать одну из трёх команд в серверном checkout.
 
@@ -472,5 +551,5 @@ Runner обращается напрямую к `http://b2e-agent:8082` и `http
 - Порядок режимов детерминированный и пока не перемешивается.
 - Создание кейсов, получение gold и перевод `draft → verified` выполняются вне runner.
 - Серверный прогон требует, чтобы актуальная версия benchmark-кода находилась в checkout стенда.
-- `generated_skills` без `GENERATED_SKILLS_DIR` остаётся mock и не выбирается.
-- `existing_plus_generated` без `GENERATED_SKILLS_DIR` также остаётся mock и не выбирается.
+- Generated-режимы требуют `BENCH_SKILL_CATALOGS` или совместимый одиночный
+  `GENERATED_SKILLS_DIR`.

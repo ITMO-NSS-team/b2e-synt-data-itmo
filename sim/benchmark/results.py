@@ -40,7 +40,7 @@ class RunResult:
 class ResultWriter:
     """Write each raw response once; scores stay independently reproducible."""
 
-    def __init__(self, results_root: str | Path, eval_id: str) -> None:
+    def __init__(self, results_root: str | Path, eval_id: str, *, resume: bool = False) -> None:
         """Create an empty evaluation directory.
 
         Args:
@@ -51,7 +51,8 @@ class ResultWriter:
             ValueError: If ``results_root/eval_id`` already has content.
         """
         self.root = Path(results_root).resolve() / eval_id
-        if self.root.exists() and any(self.root.iterdir()):
+        self.resume = resume
+        if self.root.exists() and any(self.root.iterdir()) and not resume:
             raise ValueError(f"evaluation output already exists: {self.root}")
         self.traces = self.root / "traces"
         self.responses_path = self.root / "responses.jsonl"
@@ -96,15 +97,58 @@ class ResultWriter:
         """
         path = self.root / "run-manifest.json"
         if path.exists():
-            raise ValueError(f"run manifest already exists: {path}")
+            if not self.resume:
+                raise ValueError(f"run manifest already exists: {path}")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if _resume_signature(saved) != _resume_signature(manifest):
+                raise ValueError("resume manifest differs: cases, catalog, concurrency or conditions changed")
+            return path
         path.write_text(_pretty_json(manifest) + "\n", encoding="utf-8")
         return path
+
+    def read_checkpoint(self) -> list[RunResult]:
+        """Read saved cells without rewriting them or repeating an LLM call."""
+        if not self.resume:
+            return []
+        responses, response_ends = _checkpoint_rows(self.responses_path)
+        score_rows, score_ends = _checkpoint_rows(self.scores_path)
+        scores = {row["run_id"]: row for row in score_rows}
+        if len(scores) != len(score_rows):
+            raise ValueError("duplicate checkpoint score")
+        incomplete = [index for index, raw in enumerate(responses)
+                      if raw["run_id"] not in scores and raw["status"] not in _SKIP_STATUSES]
+        if incomplete:
+            if incomplete != [len(responses) - 1]:
+                raise ValueError("incomplete checkpoint cell is not the last response")
+            responses.pop()
+            response_ends.pop()
+        results, seen = [], set()
+        for raw in responses:
+            run_id = raw["run_id"]
+            if run_id in seen:
+                raise ValueError(f"duplicate checkpoint run: {run_id}")
+            seen.add(run_id)
+            results.append(RunResult(
+                run_id, raw["comparison_group_id"], raw["case_id"], raw["mode"],
+                int(raw["repetition"]), raw["status"],
+                {key: value for key, value in raw.items() if key not in {
+                    "run_id", "comparison_group_id", "case_id", "mode", "repetition", "status",
+                }}, scores.get(run_id), None,
+            ))
+        if set(scores) - seen:
+            raise ValueError("checkpoint contains scores without responses")
+        for path, ends in ((self.responses_path, response_ends), (self.scores_path, score_ends)):
+            if path.exists() and path.stat().st_size != ends[-1]:
+                with path.open("r+b") as handle:
+                    handle.truncate(ends[-1])
+        return results
 
     def write_summary(
         self,
         results: Iterable[RunResult],
         *,
         extra: dict[str, Any] | None = None,
+        publish_report: bool = True,
     ) -> Path:
         """Write aggregate per-mode metrics and pairwise deltas.
 
@@ -121,7 +165,7 @@ class ResultWriter:
         path = self.root / "summary.json"
         path.write_text(_pretty_json(summary) + "\n", encoding="utf-8")
         from .report import write_report
-        write_report(self.root, rows)
+        write_report(self.root, rows, publish=publish_report)
         return path
 
 
@@ -135,6 +179,26 @@ _SKIP_STATUSES = frozenset({
     "generated_skill_unavailable_skipped",
 })
 _SCORED_STATUSES = frozenset({"completed", "normalization_pending"})
+
+
+def _checkpoint_rows(path: Path) -> tuple[list[dict[str, Any]], list[int]]:
+    """Read complete JSONL rows and return byte offsets for safe tail repair."""
+    rows: list[dict[str, Any]] = []
+    ends = [0]
+    if not path.exists():
+        return rows, ends
+    lines = path.read_bytes().splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if index == len(lines) - 1 and not line.endswith(b"\n"):
+            break
+        try:
+            rows.append(json.loads(line))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            if index != len(lines) - 1:
+                raise ValueError(f"corrupt checkpoint row in {path}") from None
+            break
+        ends.append(ends[-1] + len(line))
+    return rows, ends
 
 
 def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
@@ -192,9 +256,10 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             **{
                 name: _mean(metric.get(name) for metric in metrics)
                 for name in (
-                    "answer_accuracy", "exact_match", "outcome_accuracy",
-                    "correct_refusal", "any_skill_loaded",
-                    "expected_skill_loaded", "generated_skill_loaded",
+                    "answer_accuracy", "strict_answer_accuracy",
+                    "response_schema_valid_without_repair", "normalization_repaired",
+                    "exact_match", "outcome_accuracy",
+                    "correct_refusal", "generated_skill_loaded", "any_skill_loaded", "expected_skill_loaded",
                     *OPERATIONAL_METRICS,
                 )
             },
@@ -237,9 +302,10 @@ def _review_reason(row: RunResult) -> str | None:
 def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
     output: dict[str, Any] = {}
     for name in (
-        "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
-        "any_skill_loaded", "expected_skill_loaded", "generated_skill_loaded",
-        *OPERATIONAL_METRICS,
+        "answer_accuracy", "strict_answer_accuracy",
+        "response_schema_valid_without_repair", "normalization_repaired",
+        "exact_match", "outcome_accuracy", "correct_refusal", "any_skill_loaded", "expected_skill_loaded",
+        "generated_skill_loaded", *OPERATIONAL_METRICS,
     ):
         a, b = target.get(name), baseline.get(name)
         if a is None or b is None:
@@ -284,9 +350,10 @@ def _paired_compare(
 def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     rows = list(metrics)
     names = (
-        "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
-        "any_skill_loaded", "expected_skill_loaded", "generated_skill_loaded",
-        *OPERATIONAL_METRICS,
+        "answer_accuracy", "strict_answer_accuracy",
+        "response_schema_valid_without_repair", "normalization_repaired",
+        "exact_match", "outcome_accuracy", "correct_refusal",
+        "generated_skill_loaded", "any_skill_loaded", "expected_skill_loaded", *OPERATIONAL_METRICS,
     )
     return {
         name: _mean(row.get(name) for row in rows)
@@ -316,3 +383,21 @@ def _pretty_json(value: Any) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, indent=2, default=str,
     )
+
+
+def _resume_signature(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Pinned ref numbers can advance; effective conditions must remain equal."""
+    live = manifest.get("live_stand", {})
+    base_ref = live.get("refs", {}).get("existing_skills")
+    signature = {
+        **{key: manifest.get(key) for key in ("eval_id", "check_only", "case_ids", "case_hashes", "repetitions", "workers")},
+        "skill_registry_hash": live.get("skill_registry_hash"),
+        "agent_config": live.get("configs", {}).get(base_ref),
+        "modes": [
+            {key: mode.get(key) for key in (
+                "name", "common", "tool_subset", "catalog_hash", "generated_skills_hash",
+                "generated_skill_names", "skills_enabled", "is_mock",
+            )} for mode in manifest.get("modes", [])
+        ],
+    }
+    return json.loads(_pretty_json(signature))

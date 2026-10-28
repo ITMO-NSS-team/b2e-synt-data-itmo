@@ -11,7 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Iterator, Mapping
 
-from heimdall.skills.registry import EXTENSIONS, Registry
+from heimdall.skills.registry import BENCHMARK_GENERATED_PREFIX, EXTENSIONS, Registry
 from sim.fingerprint import VALID_LATENCY_PROFILES
 
 GENERAL_KNOWLEDGE_TOOLS: tuple[str, ...] = ()
@@ -38,6 +38,7 @@ class BenchmarkMode(str, Enum):
         EXISTING_SKILLS: Catalog of already-deployed skills plus ``find_skills``/``get_skill``.
         GENERATED_SKILLS: Generated-only catalog; may still be a mock.
         EXISTING_PLUS_GENERATED: Existing catalog plus one generated skill.
+        EXISTING_PLUS_CATALOG: Existing catalog plus every skill from one source.
     """
     GENERAL_KNOWLEDGE = "general_knowledge"
     SKILLS_DISABLED = "skills_disabled"
@@ -46,6 +47,7 @@ class BenchmarkMode(str, Enum):
     EXISTING_SKILLS = "existing_skills"
     GENERATED_SKILLS = "generated_skills"
     EXISTING_PLUS_GENERATED = "existing_plus_generated"
+    EXISTING_PLUS_CATALOG = "existing_plus_catalog"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,10 +114,9 @@ class ModeConfig:
         catalog_hash: Content hash of that snapshot, or ``None``.
         generated_skills_path: Source catalog mounted for a generated-skill arm.
             It is generated-only for ``generated_skills`` and combined for
-            ``existing_plus_generated``.
+            ``existing_plus_generated`` or ``existing_plus_catalog``.
         generated_skills_hash: Content hash of that source catalog.
-        generated_skill_names: Active names in that source catalog. The planner
-            narrows each generated phase to one target through ``expected_skills``.
+        generated_skill_names: Generated target names in that source catalog.
         common: Shared conditions copied into every arm.
         skills_enabled: Whether ``find_skills``/``get_skill`` are in the subset.
         is_mock: True when generated skills were not supplied.
@@ -209,7 +210,7 @@ class ModeStrategy:
         targets = set(expected_skills) & set(config.generated_skill_names)
         if not targets:
             return None
-        return int(targets <= set(loaded_skills))
+        return int(bool(targets & set(loaded_skills)))
 
 
 _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
@@ -268,6 +269,14 @@ _MODE_STRATEGIES: Mapping[str, ModeStrategy] = MappingProxyType({
         ),
         ModeStrategy(
             BenchmarkMode.EXISTING_PLUS_GENERATED,
+            SKILL_TOOLS,
+            True,
+            "generated",
+            generated=True,
+            comparison_baselines=(BenchmarkMode.EXISTING_SKILLS,),
+        ),
+        ModeStrategy(
+            BenchmarkMode.EXISTING_PLUS_CATALOG,
             SKILL_TOOLS,
             True,
             "generated",
@@ -357,6 +366,10 @@ class ModeConfigs:
     def existing_plus_generated(self) -> ModeConfig:
         return self[BenchmarkMode.EXISTING_PLUS_GENERATED]
 
+    @property
+    def existing_plus_catalog(self) -> ModeConfig:
+        return self[BenchmarkMode.EXISTING_PLUS_CATALOG]
+
     def __iter__(self) -> Iterator[ModeConfig]:
         """Yield arms in strategy registration order."""
         return iter(self.by_name.values())
@@ -415,7 +428,7 @@ def build_modes(
         base_catalog_path: Live existing-skill catalog to snapshot.
         generated_skills_path: Optional active catalog for generated-skill modes.
             The planner supplies either an isolated generated catalog or a
-            standard catalog extended with exactly one generated skill.
+            standard catalog extended with one generated skill or a source catalog.
         snapshots_root: Directory for content-addressed catalog copies.
             Required when ``generated_skills_path`` is set.
 
@@ -446,8 +459,12 @@ def build_modes(
         generated_registry = _loaded_registry(generated)
         if not _skill_files(generated):
             raise ValueError("generated-skill mode requires at least one active skill")
-        names = tuple(generated_registry.active())
-        if len(names) != len(generated_registry.all_names()):
+        target_files = [item for item in generated_registry.files()
+                        if item.ok and item.name
+                        and item.path.relative_to(generated).parts[0].startswith(
+                            BENCHMARK_GENERATED_PREFIX)]
+        names = tuple(item.name for item in target_files) or tuple(generated_registry.active())
+        if len(generated_registry.active()) != len(generated_registry.all_names()):
             raise ValueError("generated skills must be active")
         generated_path = str(generated)
         generated_hash = catalog_hash(generated)
