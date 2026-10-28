@@ -263,12 +263,7 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
     reference_path = getattr(args, "reference_manifest", None)
     if reference_path:
         reference = json.loads(Path(reference_path).read_text(encoding="utf-8"))
-        if json.loads(json.dumps(asdict(common))) != reference["modes"][0]["common"]:
-            raise ValueError("benchmark conditions changed before this phase: model/prompt/snapshot/access")
-        if live["skill_registry_hash"] != reference["live_stand"]["skill_registry_hash"]:
-            raise ValueError("executable registry changed before this phase")
-        if getattr(args, "workers", 1) != reference.get("workers", 1):
-            raise ValueError("concurrency changed before this phase")
+        _validate_phase_reference(live, common, reference, getattr(args, "workers", 1))
     context = prepare_preflight_context(
         args.data, modes.existing_skills.catalog_path, args.model_catalog, selected.values(),
     )
@@ -293,6 +288,25 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
     context.verify_unchanged()
 
     return PreparedBenchmark(cases, live, selected, activator, checked)
+
+
+def _validate_phase_reference(
+    live: dict[str, Any], common: CommonConditions,
+    reference: dict[str, Any], workers: int,
+) -> None:
+    """Keep phases of one evaluation on the same effective stand conditions."""
+    if json.loads(json.dumps(asdict(common))) != reference["modes"][0]["common"]:
+        raise ValueError("benchmark conditions changed before this phase: model/prompt/snapshot/access")
+    previous = reference["live_stand"]
+    # All pinned arms share this config except for their tool subset.
+    current_config = live["configs"][live["refs"]["existing_skills"]]
+    previous_config = previous["configs"][previous["refs"]["existing_skills"]]
+    if current_config != previous_config:
+        raise ValueError("agent configuration changed before this phase")
+    if live["skill_registry_hash"] != previous["skill_registry_hash"]:
+        raise ValueError("executable registry changed before this phase")
+    if workers != reference.get("workers", 1):
+        raise ValueError("concurrency changed before this phase")
 
 
 def _eval_id(args: argparse.Namespace, default_prefix: str) -> str:
