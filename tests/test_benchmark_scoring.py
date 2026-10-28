@@ -5,6 +5,8 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import (
     GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
@@ -43,6 +45,7 @@ def mode(
         if name in (
             BenchmarkMode.GENERATED_SKILLS,
             BenchmarkMode.EXISTING_PLUS_GENERATED,
+            BenchmarkMode.EXISTING_PLUS_CATALOG,
         )
         else ()
     )
@@ -97,6 +100,57 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     assert metrics["any_skill_loaded"] == 1
     assert metrics["expected_skill_loaded"] == 1
     assert metrics["generated_skill_loaded"] == 1
+
+
+@pytest.mark.parametrize("fenced", [False, True])
+def test_normalizer_recovers_only_missing_root_brace_and_records_strict_failure(fenced) -> None:
+    case = ready_case()
+    answer = json.dumps(case.raw["gold_answer"])[:-1]
+    if fenced:
+        answer = "\x60\x60\x60json\n" + answer + "\n\x60\x60\x60"
+    normalized = normalize_answer(answer, case.raw["gold_contract"])
+    assert normalized.value == case.raw["gold_answer"]
+    assert normalized.repair == "missing_final_object_brace"
+    metrics = calculate_metrics(case, mode(), normalized, {"loaded_skills": []})
+    assert metrics["answer_accuracy"] == 1
+    assert metrics["strict_answer_accuracy"] == 0
+    assert metrics["response_schema_valid_without_repair"] == 0
+    assert metrics["normalization_repaired"] == 1
+
+
+@pytest.mark.parametrize("answer", [
+    '{"outcome":"answer","rows":[{"grade":10,"employee_count":',
+    '{"outcome":"answer","rows":[{"grade":10,"employee_count":3',
+    '{"outcome":"answer","rows":[{"grade":10,"employee_count":3}',
+    '{"outcome":"answer","rows":[],"comment":"unfinished',
+    '{"outcome":"answer","rows":[],',
+    '{"outcome":"answer","rows":[] followed by prose',
+    '{"outcome":"answer","unknown":[]',
+    '{"outcome":"answer","rows":[{"grade":"wrong type","employee_count":3}]',
+])
+def test_normalizer_does_not_repair_missing_data_or_contract_mismatch(answer) -> None:
+    normalized = normalize_answer(answer, ready_case().raw["gold_contract"])
+    assert normalized.value is None
+    assert normalized.repair is None
+
+
+def test_syntax_recovery_does_not_make_wrong_facts_correct() -> None:
+    case = ready_case()
+    wrong = {"outcome": "answer", "rows": [{"grade": 10, "employee_count": 999}]}
+    normalized = normalize_answer(json.dumps(wrong)[:-1], case.raw["gold_contract"])
+    assert normalized.value == wrong
+    metrics = calculate_metrics(case, mode(), normalized, {"loaded_skills": []})
+    assert metrics["answer_accuracy"] == 0
+    assert metrics["strict_answer_accuracy"] == 0
+
+
+def test_valid_json_needs_no_repair() -> None:
+    case = ready_case()
+    normalized = normalize_answer(json.dumps(case.raw["gold_answer"]), case.raw["gold_contract"])
+    assert normalized.repair is None
+    metrics = calculate_metrics(case, mode(), normalized, {"loaded_skills": []})
+    assert metrics["strict_answer_accuracy"] == 1
+    assert metrics["response_schema_valid_without_repair"] == 1
 
 
 def test_generated_routing_requires_skill_expected_by_case() -> None:
@@ -190,6 +244,68 @@ def test_combined_mode_scores_only_the_generated_target() -> None:
 
     assert not_loaded["generated_skill_loaded"] == 0
     assert loaded["generated_skill_loaded"] == 1
+
+
+def test_existing_multiversion_catalog_scores_exact_version(tmp_path: Path) -> None:
+    for version in ("0.1.0", "0.1.1"):
+        (tmp_path / f"standard-{version}.md").write_text(
+            "---\nname: standard\ntitle: Standard\nkind: reference\n"
+            f"domain: general\ndescription: Standard\nversion: {version}\n"
+            "status: active\n---\n\nUse this skill.\n", encoding="utf-8",
+        )
+    case = ready_case()
+    case.raw["expected_skills"] = ["standard-v0-1-1"]
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    existing = replace(mode(), catalog_path=str(tmp_path))
+
+    old = calculate_metrics(case, existing, actual, {"loaded_skills": ["standard@0.1.0"]})
+    new = calculate_metrics(case, existing, actual, {"loaded_skills": ["standard@0.1.1"]})
+    assert old["expected_skill_loaded"] == 0
+    assert new["expected_skill_loaded"] == 1
+
+
+def test_same_name_versions_score_the_loaded_version() -> None:
+    case = ready_case()
+    case.raw["expected_skills"] = ["standard", "standard@0.1.1"]
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    combined = mode("existing_plus_generated", ("standard@0.1.0", "standard@0.1.1"))
+
+    old = calculate_metrics(case, combined, actual, {"loaded_skills": ["standard@0.1.0"]})
+    new = calculate_metrics(case, combined, actual, {"loaded_skills": ["standard@0.1.1"]})
+    assert (old["expected_skill_loaded"], old["generated_skill_loaded"]) == (0, 0)
+    assert (new["expected_skill_loaded"], new["generated_skill_loaded"]) == (1, 1)
+
+
+@pytest.mark.parametrize("mode_name", ["existing_plus_generated", "existing_plus_catalog"])
+def test_same_name_and_version_tracks_which_copy_was_loaded(
+    tmp_path: Path, mode_name: str,
+) -> None:
+    for source in ("existing", "benchmark-generated-1"):
+        path = tmp_path / source / "standard.md"
+        path.parent.mkdir()
+        path.write_text(
+            "---\nname: standard\ntitle: Standard\nkind: reference\n"
+            "domain: general\ndescription: Standard\nversion: 0.1.0\n"
+            "status: active\n---\n\nUse this skill.\n", encoding="utf-8",
+        )
+    case = ready_case()
+    case.raw["expected_skills"] = [
+        "standard-v0-1-0", "standard@0.1.0#existing", "standard@0.1.0#generated",
+    ]
+    actual = NormalizedAnswer(case.raw["gold_answer"], None)
+    combined = replace(
+        mode(mode_name, ("standard@0.1.0#generated",)),
+        catalog_path=str(tmp_path),
+    )
+
+    old = calculate_metrics(case, combined, actual, {
+        "loaded_skills": ["standard@0.1.0#existing"],
+    })
+    new = calculate_metrics(case, combined, actual, {
+        "loaded_skills": ["standard@0.1.0#generated"],
+    })
+    assert (old["expected_skill_loaded"], old["generated_skill_loaded"]) == (1, 0)
+    assert (new["expected_skill_loaded"], new["generated_skill_loaded"]) == (1, 1)
 
 
 def test_generated_routing_is_not_applicable_without_expected_generated_skill() -> None:

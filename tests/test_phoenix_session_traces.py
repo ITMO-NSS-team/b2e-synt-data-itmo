@@ -68,3 +68,66 @@ def test_trace_rejects_truncation_or_repeated_cursor(limit, match):
     client = PhoenixClient("http://phoenix", client=http)
     with pytest.raises(PhoenixUnavailable, match=match):
         client.spans_for_trace("trace-target", limit=limit)
+
+
+def test_latest_traces_respects_span_budget_and_marks_incomplete_data():
+    requested_limits = []
+
+    def handler(request):
+        if request.url.path.endswith("/traces"):
+            return httpx.Response(200, json={"data": [{"trace_id": "new"}, {"trace_id": "old"}]})
+        requested_limits.append(int(request.url.params["limit"]))
+        first = not request.url.params.get("cursor")
+        spans = [_span(None, "new", str(i)) for i in ([1, 2] if first else [3])]
+        return httpx.Response(200, json={"data": spans, "next_cursor": "next" if first else "more"})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://phoenix")
+    client = PhoenixClient("http://phoenix", client=http)
+    traces = client.latest_traces(span_cap=3)
+    assert requested_limits == [3, 1]
+    assert len(traces[0]["spans"]) == 3
+    assert traces[1]["spans"] == []
+    assert all(t["span_limit_reached"] for t in traces)
+
+
+@pytest.mark.parametrize("single", [False, True])
+@pytest.mark.parametrize("include", [False, True])
+def test_live_span_loading_can_omit_reconstructed_inputs_without_losing_outputs(single, include):
+    def handler(request):
+        if request.url.path.endswith("/traces"):
+            return httpx.Response(200, json={"data": [{"trace_id": "trace-target"}]})
+        span = _span("session", "trace-target", "root")
+        span["attributes"].update({
+            "llm.input_messages.0.message.content": "long conversation",
+            "llm": {"input_messages": ["long conversation"], "output_messages": ["answer"]},
+            "input.value": "question", "output.value": "answer",
+        })
+        return httpx.Response(200, json={"data": [span]})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://phoenix")
+    client = PhoenixClient("http://phoenix", client=http)
+    spans = client.spans_for_trace("trace-target", include_input_messages=include) if single else client.latest_traces(include_input_messages=include)[0]["spans"]
+    attrs = spans[0]["attributes"]
+    assert ("llm.input_messages.0.message.content" in attrs) is include
+    assert ("input_messages" in attrs["llm"]) is include
+    assert attrs["llm"]["output_messages"] == ["answer"]
+    assert attrs["input.value"] == "question"
+    assert attrs["output.value"] == "answer"
+
+
+def test_page_size_budget_is_reported_and_single_trace_never_returns_partial_data():
+    def handler(request):
+        if request.url.path.endswith("/traces"):
+            return httpx.Response(200, json={"data": [{"trace_id": "trace-target"}]})
+        span = _span("session", "trace-target", "root")
+        span["attributes"]["output.value"] = "x" * 1000
+        return httpx.Response(200, json={"data": [span]})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://phoenix")
+    client = PhoenixClient("http://phoenix", client=http)
+    result = client.latest_traces(max_bytes=10)
+    assert result[0]["span_limit_reached"] is True
+    assert result[0]["load_limit_reason"] == "page_size"
+    assert result[0]["spans"] == []
+    with pytest.raises(PhoenixUnavailable, match="page size budget"):
+        client.spans_for_trace("trace-target", max_bytes=10)

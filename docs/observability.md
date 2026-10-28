@@ -196,3 +196,24 @@ Recalibrate from a fresh sample whenever the system prompt, the tool surface or
 the model changes; all three move the cached prefix, which is where the tokens
 are. The constants live in `sim/costguard.py` and
 `tests/test_sim_cost_calibration.py` pins them to this measurement.
+
+## Trace explorer loading
+
+`/admin/explorer` has separate controls for recent traces (1–1000, default 100)
+and the total span budget (1–100000, default 50000). For example,
+`/admin/explorer?limit=500&span_limit=50000` loads up to 500 recent traces.
+Reaching the span budget is explicitly reported; a listed trace with no loaded
+spans is not presented as simply having no prompt. Open it separately or raise
+the budget to inspect its full data. Live pages also have a 128 MiB serialized
+span-data budget to bound server memory; reaching this budget is reported
+separately. Larger trace lists still include their metadata and links to open
+each trace separately.
+
+`/admin/explorer?trace_id=<32-character-hex-ID>` fetches that trace directly,
+regardless of its age or position in the recent list. The same parameters work
+on `/admin/explorer.json`. The separate-trace view rejects truncated results.
+
+Reconstructed `llm.input_messages` are omitted before buffering live spans to
+keep larger selections manageable. The optional reconstructed-prompts checkbox
+includes them. Original prompts, final answers, outputs and stored Phoenix
+traces are preserved.

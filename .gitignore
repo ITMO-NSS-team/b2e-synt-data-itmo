@@ -72,5 +72,13 @@ b2e-skill-benchmark/
 
 # Local benchmark runs and reproducible condition snapshots.
 benchmarking/results/
+
+# Benchmark configuration is independent from deployment secrets.
+sim/benchmark/.env
+sim/benchmark/.env.bak-*
+
+# Keep the benchmark configuration guide alongside its example.
+!sim/benchmark/README.md
+
 benchmarking/reports/
 var/

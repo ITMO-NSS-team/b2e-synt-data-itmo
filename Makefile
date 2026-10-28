@@ -1,4 +1,5 @@
 PYTHON := python3.12
+UV ?= $(shell command -v uv 2>/dev/null || echo var/uv-package/bin/uv)
 PY := $(shell [ -x .venv/bin/python3.12 ] && echo .venv/bin/python3.12 || echo $(PYTHON))
 export PYTHONPATH := .:skill-factory
 
@@ -36,11 +37,10 @@ SMOKE_DATA ?= $(STAND_DATA_PATH)
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/' | sort
 
-setup:  ## окружение и зависимости
-	@command -v $(PYTHON) >/dev/null || { echo "$(PYTHON) is required (macOS: brew install python@3.12)"; exit 1; }
-	$(PYTHON) -m venv --clear .venv
-	.venv/bin/python3.12 -m pip install -q -U pip
-	.venv/bin/python3.12 -m pip install -q -e ".[serve]"
+setup:  ## local Python 3.12 environment through uv
+	@test -x "$(UV)" || command -v "$(UV)" >/dev/null || { echo "Install uv or set UV=/path/to/uv"; exit 1; }
+	@test -x .venv/bin/python3.12 || $(UV) venv --python 3.12 .venv
+	$(UV) pip install --python .venv/bin/python3.12 -e ".[serve]"
 
 catalog:  ## каталог витрин из спецификации OpenAPI (OPENAPI=путь)
 	$(PY) -m b2e.cli catalog --openapi $(OPENAPI) --overlay catalog --out catalog/snapshot.json
@@ -96,7 +96,7 @@ prepare-resolv:
 
 up: prepare-resolv  ## поднять весь стек одной командой; PROFILE=telegram добавит бота
 	@test -f deploy/.env || { echo "нет deploy/.env — скопируйте deploy/.env.example"; exit 1; }
-	@mkdir -p var/empty-generated-skills "$(BENCHMARK_REPORT_DIR)"
+	@mkdir -p var/empty-generated-skills benchmarking/reports
 	@test -d "$(GENERATED_SKILLS_DIR)" || { echo "нет каталога skills: $(GENERATED_SKILLS_DIR)"; exit 1; }
 	@force_recreate=""; \
 	if test -f "$(RESOLV_RECREATE_MARKER)"; then \
@@ -146,37 +146,60 @@ rebuild:  ## пересобрать образы без кэша
 
 # ============================================================ benchmark
 
-DEPLOY_CASES := $(shell awk -F= '/^CASES=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
-CASES ?= $(DEPLOY_CASES)
-DEPLOY_BENCHMARK_REPO_DIR := $(shell awk -F= '/^BENCHMARK_REPO_DIR=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
-BENCH_CASES_HOST := $(if $(filter /%,$(CASES)),$(CASES),$(if $(filter b2e-skill-benchmark/%,$(CASES)),$(DEPLOY_BENCHMARK_REPO_DIR)/$(patsubst b2e-skill-benchmark/%,%,$(CASES)),$(abspath $(CASES))))
-MAKE_GENERATED_SKILLS_DIR := $(GENERATED_SKILLS_DIR)
-DEPLOY_GENERATED_SKILLS_DIR := $(shell awk -F= '/^GENERATED_SKILLS_DIR=/{print substr($$0,index($$0,"=")+1); exit}' deploy/.env 2>/dev/null)
-GENERATED_SKILLS_INPUT := $(or $(MAKE_GENERATED_SKILLS_DIR),$(DEPLOY_GENERATED_SKILLS_DIR))
+# Benchmark settings live separately from the deployment environment.
+# The benchmark .env overrides inherited shell variables; recursive phase
+# arguments still override it.
+BENCH_ENV_FILE := sim/benchmark/.env
+benchmark_env = $(shell awk -F= '/^$(1)=/{print substr($$0,index($$0,"=")+1); exit}' $(BENCH_ENV_FILE) 2>/dev/null)
+
+BENCH_CASES_SETTING := $(call benchmark_env,CASES)
+CASES := $(BENCH_CASES_SETTING)
+BENCH_REPO_SETTING := $(call benchmark_env,BENCHMARK_REPO_DIR)
+BENCH_REPO_HOST := $(abspath $(or $(BENCH_REPO_SETTING),b2e-skill-benchmark))
+BENCH_REPO_HOST := $(if $(filter /%,$(BENCH_REPO_SETTING)),$(BENCH_REPO_SETTING),$(BENCH_REPO_HOST))
+BENCH_CASES_HOST := $(if $(filter /%,$(CASES)),$(CASES),$(if $(filter b2e-skill-benchmark/%,$(CASES)),$(BENCH_REPO_HOST)/$(patsubst b2e-skill-benchmark/%,%,$(CASES)),$(abspath $(CASES))))
+BENCH_CASES_CONTAINER := $(if $(filter $(BENCH_REPO_HOST)/%,$(BENCH_CASES_HOST)),/app/b2e-skill-benchmark/$(patsubst $(BENCH_REPO_HOST)/%,%,$(BENCH_CASES_HOST)),/app/$(patsubst $(CURDIR)/%,%,$(BENCH_CASES_HOST)))
+MAKE_GENERATED_SKILLS_DIR := $(if $(filter command line,$(origin GENERATED_SKILLS_DIR)),$(GENERATED_SKILLS_DIR),)
+BENCH_GENERATED_SKILLS_SETTING := $(call benchmark_env,GENERATED_SKILLS_DIR)
+BENCH_SKILL_CATALOGS := $(call benchmark_env,BENCH_SKILL_CATALOGS)
+BENCH_GENERATED_SKILLS_HOST := $(if $(BENCH_GENERATED_SKILLS_SETTING),$(if $(filter /%,$(BENCH_GENERATED_SKILLS_SETTING)),$(BENCH_GENERATED_SKILLS_SETTING),$(BENCH_GENERATED_SKILLS_SETTING)))
+GENERATED_SKILLS_INPUT := $(or $(MAKE_GENERATED_SKILLS_DIR),$(BENCH_GENERATED_SKILLS_HOST))
 override GENERATED_SKILLS_DIR := $(abspath $(or $(GENERATED_SKILLS_INPUT),var/empty-generated-skills))
 export GENERATED_SKILLS_DIR
-BENCH_MODES ?= general_knowledge,skills_disabled,existing_skills
-BENCH_REPETITIONS ?= 1
-BENCH_RESULTS ?= benchmarking/results
-BENCHMARK_REPORT_DIR ?= $(abspath benchmarking/reports)
-export BENCHMARK_REPORT_DIR
+
+BENCH_COMPOSE = BENCHMARK_REPO_DIR="$(BENCH_REPO_HOST)" $(COMPOSE)
+BENCH_DEFAULT_MODES := general_knowledge,skills_disabled,existing_skills
+BENCH_MODES := $(or $(call benchmark_env,BENCH_MODES),$(BENCH_DEFAULT_MODES))
+BENCH_REPETITIONS := $(or $(call benchmark_env,BENCH_REPETITIONS),1)
+BENCH_RESULTS := $(or $(call benchmark_env,BENCH_RESULTS),benchmarking/results)
+
 BENCH_LIVE_CONFIG ?= var/benchmark-live-config.json
-BENCH_EVAL_ID ?=
-BENCH_TIMEOUT ?= 1800
-BENCH_TRACE_TIMEOUT ?= 300
-BENCH_HEALTH_TIMEOUT ?= 60
-BENCH_LIMIT ?=
+BENCH_EVAL_ID := $(call benchmark_env,BENCH_EVAL_ID)
+BENCH_TIMEOUT := $(or $(call benchmark_env,BENCH_TIMEOUT),1800)
+BENCH_TRACE_TIMEOUT := $(or $(call benchmark_env,BENCH_TRACE_TIMEOUT),300)
+BENCH_HEALTH_TIMEOUT := $(or $(call benchmark_env,BENCH_HEALTH_TIMEOUT),60)
+BENCH_LIMIT := $(call benchmark_env,BENCH_LIMIT)
 BENCH_REQUIRED_SERVICES := admin-ui b2e-agent phoenix heimdall-emulator
 BENCH_EVAL_PREFIX ?= benchmark
 BENCH_CHECK_ONLY ?=
 BENCH_SKIP_OPENLIT ?=
 BENCH_PHASE_TELEMETRY ?=
 BENCH_GENERATED_VARIANT_ID ?=
+BENCH_MAX_UNSCORED := $(call benchmark_env,BENCH_MAX_UNSCORED)
+BENCH_WORKERS := $(or $(call benchmark_env,BENCH_WORKERS),1)
+BENCH_RESUME := $(call benchmark_env,BENCH_RESUME)
+BENCH_LLM_JUDGE_ENABLED := $(or $(call benchmark_env,BENCH_LLM_JUDGE_ENABLED),false)
+BENCH_LLM_JUDGE_MODEL := $(call benchmark_env,BENCH_LLM_JUDGE_MODEL)
+BENCH_REFERENCE_MANIFEST ?=
+BENCH_LOCK_HELD ?=
+export BENCH_MAX_UNSCORED BENCH_MODES BENCH_WORKERS BENCH_CHECK_ONLY BENCH_LIMIT
+export BENCH_REPETITIONS BENCH_EVAL_PREFIX BENCH_EVAL_ID BENCH_SKILL_CATALOGS BENCH_RESUME
+export BENCH_LLM_JUDGE_ENABLED BENCH_LLM_JUDGE_MODEL
 empty :=
 space := $(empty) $(empty)
 comma := ,
 BENCH_MODE_LIST = $(subst $(comma),$(space),$(BENCH_MODES))
-BENCH_GENERATED_MODES := generated_skills existing_plus_generated
+BENCH_GENERATED_MODES := generated_skills existing_plus_generated existing_plus_catalog
 BENCH_GENERATED_MODE_LIST = $(filter $(BENCH_GENERATED_MODES),$(BENCH_MODE_LIST))
 BENCH_GENERATED_MODE_CSV = $(subst $(space),$(comma),$(strip $(BENCH_GENERATED_MODE_LIST)))
 BENCH_SKILLS_ROOT = $(if $(BENCH_GENERATED_MODE_LIST),/app/heimdall-skill-catalog/generated,/app/heimdall-skill-catalog/existing)
@@ -202,7 +225,7 @@ define BENCHMARK_PREPARE
 		echo "нет $(STAND_DATA_PATH)/manifest.json — создайте/скопируйте снимок или задайте DATA_DIR в deploy/.env"; \
 		exit 1; \
 	}
-	@running="$$($(COMPOSE) ps --status running --services 2>/dev/null)"; \
+	@cd "$(CURDIR)"; running="$$($(BENCH_COMPOSE) ps --status running --services)" || { echo "Compose inspection failed; fix the configuration first"; exit 1; }; \
 	missing=""; \
 	if test -f "$(RESOLV_RECREATE_MARKER)"; then missing="$$missing resolv-overlay"; fi; \
 	for service in $(BENCH_REQUIRED_SERVICES); do \
@@ -213,8 +236,8 @@ define BENCHMARK_PREPARE
 		$(MAKE) up GENERATED_SKILLS_DIR="$(GENERATED_SKILLS_DIR)" HEIMDALL_SKILLS_ROOT="$(BENCH_SKILLS_ROOT)"; \
 	else \
 		echo "стенд поднят; применяю каталог skills: $(BENCH_SKILLS_ROOT)"; \
-		HEIMDALL_SKILLS_ROOT="$(BENCH_SKILLS_ROOT)" $(COMPOSE) up -d --no-deps heimdall-emulator; \
-		container_id="$$($(COMPOSE) ps -q heimdall-emulator)"; \
+		HEIMDALL_SKILLS_ROOT="$(BENCH_SKILLS_ROOT)" $(BENCH_COMPOSE) up -d --no-deps heimdall-emulator; \
+		container_id="$$($(BENCH_COMPOSE) ps -q heimdall-emulator)"; \
 		test -n "$$container_id" || { echo "не найден контейнер heimdall-emulator"; exit 1; }; \
 		elapsed=0; health=""; \
 		while test $$elapsed -lt $(BENCH_HEALTH_TIMEOUT); do \
@@ -222,39 +245,40 @@ define BENCHMARK_PREPARE
 			if test "$$health" = healthy; then break; fi; \
 			if test "$$health" = unhealthy || test "$$health" = exited || test "$$health" = dead; then \
 				echo "heimdall-emulator завершил запуск со статусом $$health"; \
-				$(COMPOSE) logs --tail=100 heimdall-emulator; \
+				$(BENCH_COMPOSE) logs --tail=100 heimdall-emulator; \
 				exit 1; \
 			fi; \
 			sleep 1; elapsed=$$((elapsed + 1)); \
 		done; \
 		if test "$$health" != healthy; then \
 			echo "heimdall-emulator не стал healthy за $(BENCH_HEALTH_TIMEOUT) секунд (status=$$health)"; \
-			$(COMPOSE) logs --tail=100 heimdall-emulator; \
+			$(BENCH_COMPOSE) logs --tail=100 heimdall-emulator; \
 			exit 1; \
 		fi; \
 	fi
-	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" "$(BENCHMARK_REPORT_DIR)" var/benchmark-catalog-snapshots
-	$(COMPOSE) exec -T $(if $(BENCH_MODEL),-e B2E_BENCH_MODEL="$(BENCH_MODEL)",) \
-		admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
+
+	@mkdir -p "$(dir $(BENCH_LIVE_CONFIG))" "$(BENCH_RESULTS)" var/benchmark-catalog-snapshots
+	$(BENCH_COMPOSE) exec -T admin-ui python -m sim.benchmark.live_config > "$(BENCH_LIVE_CONFIG)"
 endef
 
 openlit-dashboard:  ## создать/обновить dashboard результатов в OpenLIT; без URL безопасно пропускается
-	$(PY) -m sim.benchmark.openlit_dashboard --env-file deploy/.env
+	cd "$(CURDIR)" && $(PY) -m sim.benchmark.openlit_dashboard --env-file deploy/.env
 
 _benchmarking-single:
 	$(BENCHMARK_PREPARE)
 	$(if $(or $(BENCH_CHECK_ONLY),$(BENCH_SKIP_OPENLIT)),@true,$(MAKE) --no-print-directory openlit-dashboard)
-	$(COMPOSE) --profile benchmark run --rm --no-deps \
+	$(BENCH_COMPOSE) --profile benchmark run --rm --no-deps \
 		--user "$$(id -u):$$(id -g)" benchmark-runner \
 		python3.12 -m sim.benchmark.cli \
-			--cases "/app/$(CASES)" --data /data/snapshot \
+			--env-file "/app/$(BENCH_ENV_FILE)" \
+			--cases "$(BENCH_CASES_CONTAINER)" --data /data/snapshot \
 			--catalog /app/heimdall-skills \
 			$(if $(BENCH_GENERATED_MODE_LIST),--generated-skills /app/generated-skills,) \
 			--catalog-snapshots /app/var/benchmark-catalog-snapshots \
 			--model-catalog /app/catalog/snapshot.json \
 			--live-config "/app/$(BENCH_LIVE_CONFIG)" \
 			--results "/app/$(BENCH_RESULTS)" \
-			--modes "$(BENCH_MODES)" --repetitions "$(BENCH_REPETITIONS)" \
+			--modes "$(BENCH_MODES)" --repetitions "$(BENCH_REPETITIONS)" --workers "$(BENCH_WORKERS)" \
 			--timeout "$(BENCH_TIMEOUT)" --trace-timeout "$(BENCH_TRACE_TIMEOUT)" \
 			--trace-backend phoenix --agent-url http://b2e-agent:8082 \
 			--agent-prefix "" --phoenix-url http://phoenix:6006 --no-auth \
@@ -263,15 +287,29 @@ _benchmarking-single:
 			$(if $(BENCH_PHASE_TELEMETRY),--phase-telemetry,) \
 			$(if $(BENCH_GENERATED_VARIANT_ID),--generated-variant-id "$(BENCH_GENERATED_VARIANT_ID)",) \
 			$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",) \
+			$(if $(BENCH_MAX_UNSCORED),--max-consecutive-unscored "$(BENCH_MAX_UNSCORED)",) \
+			$(if $(BENCH_REFERENCE_MANIFEST),--reference-manifest "/app/$(BENCH_REFERENCE_MANIFEST)",) \
+			$(if $(BENCH_RESUME),--resume,) \
 			$(if $(BENCH_EVAL_ID),--eval-id "$(BENCH_EVAL_ID)",)
 
+# WSL/DrvFS may invalidate the current-directory handle after a bind-mounted
+# one-off container exits. Re-enter the project after each phase before running
+# local Python or recursive Make.
 benchmarking:  ## полный прогон; generated skills изолируются по expected_skills кейса
-	@if test -n "$(BENCH_GENERATED_MODE_LIST)"; then \
+	@mkdir -p var
+	@if test -z "$(BENCH_LOCK_HELD)"; then \
+		if command -v flock >/dev/null 2>&1; then \
+			exec flock -n var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+		fi; \
+		exec lockf -t 0 var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+	fi; \
+	if test -n "$(BENCH_GENERATED_MODE_LIST)"; then \
 		set -e; \
-		test -n "$(GENERATED_SKILLS_INPUT)" || { \
-			echo "для generated_skills задайте непустой GENERATED_SKILLS_DIR"; \
+		test -n "$(BENCH_SKILL_CATALOGS)$(GENERATED_SKILLS_INPUT)" || { \
+			echo "для generated_skills задайте BENCH_SKILL_CATALOGS или GENERATED_SKILLS_DIR в sim/benchmark/.env"; \
 			exit 2; \
 		}; \
+		test -z "$(BENCH_RESUME)" || test -n "$(BENCH_EVAL_ID)" || { echo "BENCH_RESUME requires the original BENCH_EVAL_ID"; exit 2; }; \
 		eval_id="$(BENCH_EVAL_ID)"; \
 		if test -z "$$eval_id"; then eval_id="$(BENCH_EVAL_PREFIX)-$$(date -u +%Y%m%dT%H%M%SZ)"; fi; \
 		phase_root="$(BENCH_RESULTS)/.phases/$$eval_id"; \
@@ -282,13 +320,22 @@ benchmarking:  ## полный прогон; generated skills изолируют
 		$(if $(BENCH_CHECK_ONLY),true,$(MAKE) --no-print-directory openlit-dashboard); \
 		$(PY) -m sim.benchmark.generated_plan \
 			--cases "$(BENCH_CASES_HOST)" \
-			--generated-skills "$(GENERATED_SKILLS_DIR)" \
+			$(if $(GENERATED_SKILLS_INPUT),--generated-skills "$(GENERATED_SKILLS_DIR)",) \
 			--base-skills "$(abspath heimdall-skills)" \
 			--modes "$(BENCH_GENERATED_MODE_CSV)" \
 			--output "$$plan_root" \
+			$(if $(BENCH_RESUME),--resume,) \
 			$(if $(BENCH_LIMIT),--limit "$(BENCH_LIMIT)",); \
 		covered_cases="$$($(PY) -c 'import json,sys; print(json.load(open(sys.argv[1]))["covered_cases_path"])' "$$plan")"; \
-		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["combined_catalog_path"] or "-",",".join(g["skill_names"]),g["variant_id"]))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
+		$(PY) -c 'import json,sys; p=json.load(open(sys.argv[1])); [print("\t".join((g["slug"],g["cases_path"],g["catalog_path"],g["combined_catalog_path"] or "-",str(len(g["skill_names"]))+" skills" if g["scope"]=="catalog" else ",".join(g["skill_names"]),g["variant_id"],",".join(g["modes"])))) for g in p["groups"]]' "$$plan" > "$$group_list"; \
+		if ! test -s "$$group_list"; then \
+			echo "Нет кейсов для доступных generated skills; сохраняю отчёт о покрытии без вызовов агента"; \
+			BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.merge --generated-plan "$$plan" \
+				--results "$(BENCH_RESULTS)" --eval-id "$$eval_id" \
+				$(if $(BENCH_CHECK_ONLY),--check-only,) \
+				$(if $(BENCH_RESUME),--resume,); \
+			exit $$?; \
+		fi; \
 		: > "$$phase_list"; \
 		if test -n "$(BENCH_BASELINE_MODE_LIST)"; then \
 			echo "Baseline-фаза: $(BENCH_BASELINE_MODES) — один раз для покрытых кейсов $$covered_cases"; \
@@ -298,14 +345,18 @@ benchmarking:  ## полный прогон; generated skills изолируют
 				BENCH_RESULTS="$$phase_root/baseline" BENCH_SKIP_OPENLIT=1 \
 				BENCH_PHASE_TELEMETRY=1 \
 				BENCH_CHECK_ONLY="$(BENCH_CHECK_ONLY)" BENCH_LIMIT="" \
-				BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)"; \
+				BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)" \
+				BENCH_WORKERS="$(BENCH_WORKERS)" BENCH_RESUME="$(BENCH_RESUME)"; \
+			cd "$(CURDIR)"; \
 			echo "$$phase_root/baseline/$$eval_id" >> "$$phase_list"; \
 		fi; \
-		while IFS="$$(printf '\t')" read -r slug cases catalog combined_catalog skill variant <&3; do \
+		while IFS="$$(printf '\t')" read -r slug cases catalog combined_catalog skill variant group_modes <&3; do \
 			test -n "$$slug" || continue; \
 			for generated_mode in $(BENCH_GENERATED_MODE_LIST); do \
+				case ",$$group_modes," in *,"$$generated_mode",*) ;; *) continue ;; esac; \
+				reference=""; if test -s "$$phase_list"; then reference="$$(head -n 1 "$$phase_list")/run-manifest.json"; fi; \
 				active_catalog="$$catalog"; \
-				if test "$$generated_mode" = "existing_plus_generated"; then active_catalog="$$combined_catalog"; fi; \
+				if test "$$generated_mode" = "existing_plus_generated" || test "$$generated_mode" = "existing_plus_catalog"; then active_catalog="$$combined_catalog"; fi; \
 				test "$$active_catalog" != "-" || { echo "не собран объединённый каталог для $$variant"; exit 2; }; \
 				echo "Generated-фаза: $$generated_mode, $$skill ($$variant), кейсы $$cases"; \
 				$(MAKE) --no-print-directory _benchmarking-single \
@@ -315,17 +366,21 @@ benchmarking:  ## полный прогон; generated skills изолируют
 					BENCH_RESULTS="$$phase_root/generated-$$generated_mode-$$slug" BENCH_SKIP_OPENLIT=1 \
 					BENCH_PHASE_TELEMETRY=1 \
 					BENCH_CHECK_ONLY="$(BENCH_CHECK_ONLY)" BENCH_LIMIT="" \
-					BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)"; \
+					BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)" \
+					BENCH_WORKERS="$(BENCH_WORKERS)" BENCH_RESUME="$(BENCH_RESUME)" \
+					BENCH_REFERENCE_MANIFEST="$$reference"; \
+				cd "$(CURDIR)"; \
 				echo "$$phase_root/generated-$$generated_mode-$$slug/$$eval_id" >> "$$phase_list"; \
 			done; \
 		done 3< "$$group_list"; \
 		merge_args=""; \
 		while IFS= read -r phase; do merge_args="$$merge_args --phase $$phase"; done < "$$phase_list"; \
-		$(PY) -m sim.benchmark.merge $$merge_args \
+		BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.merge $$merge_args \
 			--generated-plan "$$plan" \
-			--results "$(BENCH_RESULTS)" --eval-id "$$eval_id"; \
+			--results "$(BENCH_RESULTS)" --eval-id "$$eval_id" \
+			$(if $(BENCH_RESUME),--resume,); \
 		if test -z "$(BENCH_CHECK_ONLY)"; then \
-			$(COMPOSE) --profile benchmark run --rm --no-deps \
+			$(BENCH_COMPOSE) --profile benchmark run --rm --no-deps \
 				--user "$$(id -u):$$(id -g)" benchmark-runner \
 				python3.12 -m sim.benchmark.publish \
 				--result-dir "/app/$(BENCH_RESULTS)/$$eval_id"; \
@@ -334,7 +389,8 @@ benchmarking:  ## полный прогон; generated skills изолируют
 		$(MAKE) --no-print-directory _benchmarking-single \
 			BENCH_MODES="$(BENCH_MODES)" BENCH_CHECK_ONLY="$(BENCH_CHECK_ONLY)" \
 			BENCH_LIMIT="$(BENCH_LIMIT)" BENCH_REPETITIONS="$(BENCH_REPETITIONS)" \
-			BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)" BENCH_EVAL_ID="$(BENCH_EVAL_ID)"; \
+			BENCH_EVAL_PREFIX="$(BENCH_EVAL_PREFIX)" BENCH_EVAL_ID="$(BENCH_EVAL_ID)" \
+			BENCH_WORKERS="$(BENCH_WORKERS)" BENCH_RESUME="$(BENCH_RESUME)"; \
 	fi
 
 benchmarking-check: BENCH_CHECK_ONLY := 1
@@ -348,7 +404,7 @@ benchmarking-smoke: benchmarking  ## первый verified-кейс, один п
 
 benchmarking-generated: BENCH_MODES := generated_skills
 benchmarking-generated: BENCH_EVAL_PREFIX := generated
-benchmarking-generated: benchmarking  ## прогон только с каталогом GENERATED_SKILLS_DIR
+benchmarking-generated: benchmarking  ## прогон только с каталогами BENCH_SKILL_CATALOGS
 
 benchmarking-existing-plus-generated: BENCH_MODES := existing_plus_generated
 benchmarking-existing-plus-generated: BENCH_EVAL_PREFIX := existing-plus-generated

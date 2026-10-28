@@ -1,6 +1,7 @@
 """Automatic OpenLIT benchmark dashboard provisioning."""
 from __future__ import annotations
 
+import json
 from collections import deque
 from typing import Any, Mapping
 
@@ -87,6 +88,12 @@ def test_provision_updates_existing_resources_without_duplicates() -> None:
     assert store.inserts == []
     assert len(store.executions) == 1 + len(WIDGETS) * 2
     assert all("mutations_sync = 1" in query for query, _ in store.executions)
+    widget_update = next(
+        (query, params) for query, params in store.executions
+        if "ALTER TABLE openlit_widget UPDATE" in query
+    )
+    assert "config = unhex({config_hex:String})" in widget_update[0]
+    assert "query" in json.loads(bytes.fromhex(widget_update[1]["config_hex"]))
 
 
 def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
@@ -106,10 +113,18 @@ def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
     assert "general_knowledge" in MODE_COMPARISON_QUERY
     assert "accuracy_delta_vs_existing_skills_pp" in MODE_COMPARISON_QUERY
     assert "llm_judge_accuracy" in MODE_COMPARISON_QUERY
-    assert "('generated_skills', 'existing_plus_generated')" in MODE_COMPARISON_QUERY
+    assert "('generated_skills', 'existing_plus_generated', 'existing_plus_catalog')" in MODE_COMPARISON_QUERY
     assert "quantileExactInclusive(0.5)(latency_ms)" in MODE_COMPARISON_QUERY
     assert "quantileExactInclusive(0.5)(mcp_queries)" in MODE_COMPARISON_QUERY
+    assert "quantileExactInclusive(0.5)(input_tokens)" in MODE_COMPARISON_QUERY
+    assert "quantileExactInclusive(0.5)(output_tokens)" in MODE_COMPARISON_QUERY
+    assert "toString(g.answer_correct), '/', toString(g.answer_scored)" in MODE_COMPARISON_QUERY
+    assert "toString(g.target_loaded), '/', toString(g.target_eligible)" in MODE_COMPARISON_QUERY
     assert "latest_eval" in MODE_COMPARISON_QUERY
+    assert "g.configuration AS configuration" in MODE_COMPARISON_QUERY
+    assert "generated.case_id = existing.case_id" in MODE_COMPARISON_QUERY
+    assert "generated.repetition = existing.repetition" in MODE_COMPARISON_QUERY
+    assert "AS method" not in MODE_COMPARISON_QUERY
     assert "share_pct" in ACCURACY_CHART_QUERY
     assert "correct" in ACCURACY_CHART_QUERY
     assert "incorrect" in ACCURACY_CHART_QUERY

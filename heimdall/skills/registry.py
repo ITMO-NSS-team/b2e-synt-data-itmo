@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from .search import build_index
 EXTENSIONS = {".yaml": "recipe", ".yml": "recipe", ".md": "reference"}
 
 DEFAULT_LIMIT = 10
+BENCHMARK_GENERATED_PREFIX = "benchmark-generated-"
 
 #: Текст поля ``note`` в ответе ``get_overview``: сервис прямо разводит понятие
 #: со скиллами Anthropic, и это единственное место, где агент об этом узнаёт.
@@ -138,7 +140,7 @@ class Registry:
         root = Path(root)
         skills: dict[str, Skill] = {}
         files: list[SkillFile] = []
-        seen: dict[str, list[str]] = {}
+        parsed: list[tuple[Path, Skill]] = []
 
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.suffix not in EXTENSIONS:
@@ -155,11 +157,35 @@ class Registry:
             except Exception as exc:  # noqa: BLE001 — любой отказ разбора
                 files.append(SkillFile(path=path, ok=False, error=str(exc)[:200]))
                 continue
-            files.append(SkillFile(path=path, ok=True, name=skill.name))
-            seen.setdefault(skill.name, []).append(path.name)
-            skills[skill.name] = skill
+            parsed.append((path, skill))
 
-        duplicates = {name: sorted(paths) for name, paths in seen.items() if len(paths) > 1}
+        names = Counter(skill.name for _, skill in parsed)
+        versions = Counter((skill.name, skill.version) for _, skill in parsed)
+        # shortcut: reserved directory marks generated copies; use provenance metadata if other catalogs share this layout.
+        generated_pairs = Counter(
+            (skill.name, skill.version) for path, skill in parsed
+            if path.relative_to(root).parts[0].startswith(BENCHMARK_GENERATED_PREFIX)
+        )
+        indices: Counter[tuple[str, str]] = Counter()
+        repeated: dict[tuple[str, str], list[str]] = {}
+        for path, skill in parsed:
+            pair = skill.name, skill.version
+            if names[skill.name] == 1:
+                lookup = skill.name
+            elif versions[pair] == 2 and generated_pairs[pair] == 1:
+                source = ("generated" if path.relative_to(root).parts[0].startswith(
+                    BENCHMARK_GENERATED_PREFIX) else "existing")
+                lookup = f"{skill.name}@{skill.version}#{source}"
+            elif versions[pair] == 1:
+                lookup = f"{skill.name}@{skill.version}"
+            else:
+                indices[pair] += 1
+                lookup = f"{skill.name}@{skill.version}#{indices[pair]}"
+                repeated.setdefault(pair, []).append(path.name)
+            files.append(SkillFile(path=path, ok=True, name=lookup))
+            skills[lookup] = skill
+        duplicates = {f"{name}@{version}": sorted(paths)
+                      for (name, version), paths in repeated.items()}
         return cls(skills, files, duplicates)
 
     # -------------------------------------------------------------- доступ
@@ -197,11 +223,12 @@ class Registry:
         # Имя из каталога в этой сессии заменяется кандидатом; дубль внутри пачки
         # выше уже отклонён. Иначе _files/_duplicates базового реестра снова
         # показали бы заменённый скилл.
-        replaced = set(additions) & set(self._skills)
+        replaced = {key for key, skill in self._skills.items() if skill.name in additions}
         files = [item for item in self._files if item.name not in replaced]
-        duplicates = {name: paths for name, paths in self._duplicates.items()
-                      if name not in replaced}
-        return Registry({**self._skills, **additions}, files, duplicates)
+        duplicates = {key: paths for key, paths in self._duplicates.items()
+                      if not any(key.startswith(f"{name}@") for name in additions)}
+        return Registry({key: skill for key, skill in self._skills.items()
+                         if key not in replaced} | additions, files, duplicates)
 
     def content_hash(self) -> str:
         from dataclasses import asdict
@@ -253,7 +280,8 @@ class Registry:
         page = ordered[offset: offset + limit + 1]
         has_next = len(page) > limit
         return {
-            "results": [self._skills[n].as_summary(scores[n]) for n in page[:limit]],
+            "results": [{**self._skills[n].as_summary(scores[n]), "name": n}
+                        for n in page[:limit]],
             "limit": limit,
             "offset": offset,
             "has_next_page": has_next,
@@ -270,13 +298,16 @@ class Registry:
             if skill.kind == "recipe":
                 domains[skill.domain] += 1
         # Сначала рецепты, потом приёмы — как отдаёт сервис.
-        ordered = sorted(active, key=lambda s: (0 if s.kind == "recipe" else 1,
-                                                s.domain, s.name))
+        ordered = sorted(
+            ((key, skill) for key, skill in self._skills.items() if skill.status == "active"),
+            key=lambda item: (0 if item[1].kind == "recipe" else 1,
+                              item[1].domain, item[1].name, item[1].version),
+        )
         return {
             "intro": OVERVIEW_INTRO,
             "domains": [{"name": name, "title": name, "recipe_count": count}
                         for name, count in sorted(domains.items())],
-            "skills": [s.as_overview() for s in ordered],
+            "skills": [{**skill.as_overview(), "name": key} for key, skill in ordered],
             "filters": OVERVIEW_FILTERS,
             "note": OVERVIEW_NOTE,
         }
@@ -286,7 +317,7 @@ class Registry:
     def dangling_links(self) -> dict[str, list[str]]:
         """Ссылки related, указывающие в пустоту: имя → кто на него ссылается."""
         out: dict[str, list[str]] = {}
-        known = set(self._skills)
+        known = {skill.name for skill in self._skills.values()}
         for skill in self._skills.values():
             for link in skill.related:
                 target = link.get("name")

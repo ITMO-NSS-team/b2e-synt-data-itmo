@@ -322,6 +322,7 @@ services:
       python3.12 -m uvicorn --factory sim.admin.app:create_app
               --host 0.0.0.0 --port 8084 --workers 1
     environment:
+      ADMIN_EXPLORER_TRACES_MAX_BYTES: ${ADMIN_EXPLORER_TRACES_MAX_BYTES:-134217728}
       B2E_REGISTRY_DB: /app/registry/registry.db
       HEIMDALL_URL: http://heimdall-emulator:8081
       B2E_AGENT_URL: http://b2e-agent:8082
@@ -333,7 +334,7 @@ services:
       # has no route to — so the trace explorer would fail in the deployment it
       # exists for while working fine on a laptop.
       PHOENIX_URL: http://phoenix:6006
-      PHOENIX_PROJECT: b2e-itmo
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
       ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       # Runtime source of truth; bootstrap also mirrors these into fresh rows.

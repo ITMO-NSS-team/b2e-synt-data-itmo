@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from sim.benchmark.merge import merge_phases
+from sim.benchmark.merge import (
+    _selection_summary, _validate_generated_plan_execution, merge_phases,
+)
+from sim.benchmark.results import ResultWriter
 
 
 def _phase(
@@ -69,6 +72,177 @@ def test_merge_phases_writes_one_summary_and_keeps_shared_group(tmp_path: Path) 
     manifest = json.loads((writer.root / "run-manifest.json").read_text())
     assert manifest["schema_version"] == "1.1"
     assert len(manifest["catalog_phases"]) == 2
+
+
+def test_resume_rebuilds_partial_final_without_duplicate_rows(tmp_path: Path) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    response = writer.responses_path.read_text()
+    writer.responses_path.write_text(response + response)
+    (writer.root / "summary.json").unlink()
+
+    resumed, final, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True,
+    )
+
+    assert len(results) == len(resumed) == 1
+    assert final.responses_path.read_text() == response
+    assert (final.root / "summary.json").is_file()
+    assert (final.root / "report.html").is_file()
+    assert not list((tmp_path / "results").glob(".merge-*"))
+
+
+def test_resume_keeps_unchanged_final_files(tmp_path: Path) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    _results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    original = (writer.root / "summary.json").stat().st_mtime_ns
+    (writer.root / ".telemetry-published").write_text("published\n")
+
+    merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True)
+
+    assert (writer.root / "summary.json").stat().st_mtime_ns == original
+    assert (writer.root / ".telemetry-published").read_text() == "published\n"
+    assert len(writer.responses_path.read_text().splitlines()) == 1
+
+
+def test_resume_refreshes_final_after_a_phase_gains_a_cell(tmp_path: Path) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    manifest_path = phase / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["case_ids"].append("case-0002-00")
+    manifest_path.write_text(json.dumps(manifest))
+    _run(phase, "existing_skills")
+    merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1")
+    raw = json.loads((phase / "responses.jsonl").read_text())
+    raw["case_id"] = "case-0002-00"
+    raw["run_id"] = "eval-1-case-0002-00-existing_skills-01"
+    raw["comparison_group_id"] = "eval-1-case-0002-00-01"
+    raw.pop("trace_path")
+    with (phase / "responses.jsonl").open("a") as handle:
+        handle.write(json.dumps(raw) + "\n")
+    with (phase / "scores.jsonl").open("a") as handle:
+        handle.write(json.dumps({"run_id": raw["run_id"], "metrics": {"answer_accuracy": 1}}) + "\n")
+    results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True,
+    )
+
+    assert len(results) == 2
+    assert len(writer.responses_path.read_text().splitlines()) == 2
+    assert json.loads((writer.root / "summary.json").read_text())["n_runs"] == 2
+
+
+def test_failed_rebuild_keeps_previous_final(tmp_path: Path, monkeypatch) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    _results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    original = writer.responses_path.read_bytes()
+    public = tmp_path / "public"
+    monkeypatch.setenv("BENCHMARK_REPORT_DIR", str(public))
+
+    def fail_summary(*_args, **_kwargs):
+        raise RuntimeError("interrupted merge")
+
+    monkeypatch.setattr(ResultWriter, "write_summary", fail_summary)
+    with pytest.raises(RuntimeError, match="interrupted merge"):
+        merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True)
+
+    assert writer.responses_path.read_bytes() == original
+    assert (writer.root / "summary.json").is_file()
+    assert not public.exists()
+    assert not list((tmp_path / "results").glob(".merge-*"))
+
+
+def test_failed_promotion_and_rollback_preserve_backup(tmp_path: Path, monkeypatch) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    _results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    (writer.root / "summary.json").unlink()
+    original_rename = Path.rename
+
+    def fail_rename(path, target):
+        if path.name == "eval-1" and path.parent.name.startswith(".merge-"):
+            raise OSError("promotion failed")
+        if path.name.startswith(".backup-"):
+            raise OSError("rollback failed")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", fail_rename)
+    with pytest.raises(OSError, match="rollback failed"):
+        merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True)
+
+    backups = list((tmp_path / "results").glob(".backup-*"))
+    assert len(backups) == 1
+    assert (backups[0] / "run-manifest.json").is_file()
+
+
+def test_generated_plan_checks_only_modes_assigned_to_each_group() -> None:
+    plan = {
+        "generated_modes": ["existing_plus_generated", "existing_plus_catalog"],
+        "groups": [
+            {"variant_id": "one", "modes": ["existing_plus_generated"]},
+            {"variant_id": "catalog--baseline", "modes": ["existing_plus_catalog"]},
+        ],
+    }
+    manifests = [
+        {"modes": [{"name": "existing_plus_generated@one"}]},
+        {"modes": [{"name": "existing_plus_catalog@catalog--baseline"}]},
+    ]
+    _validate_generated_plan_execution(manifests, plan)
+
+
+def test_catalog_coverage_is_reported_separately_from_case_selection() -> None:
+    plan = {
+        "source_case_ids": ["a", "b"], "eligible_case_ids": ["a", "b"],
+        "selected_case_ids": ["a", "b"],
+        "groups": [{"scope": "catalog", "source": "baseline",
+                    "case_ids": ["a", "b"], "matched_case_ids": ["a"]}],
+    }
+
+    selection = _selection_summary(plan)["selection"]
+
+    assert selection["coverage_rate"] == 1.0
+    assert selection["catalog_coverage"] == {
+        "baseline": {"n_cases": 2, "n_target_cases": 1},
+    }
+
+
+@pytest.mark.parametrize("check_only", [False, True])
+def test_zero_coverage_writes_report_without_run_cells(tmp_path: Path, check_only: bool) -> None:
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({
+        "cases_source": "/cases",
+        "source_case_ids": ["case-0001-00"],
+        "eligible_case_ids": [], "selected_case_ids": [], "groups": [],
+        "excluded": [{"case_id": "case-0001-00", "status": "generated_skill_unavailable_excluded"}],
+        "unmatched_artifacts": [{"skill_name": "alpha", "source": "baseline", "version": "1.0.0"}],
+    }), encoding="utf-8")
+
+    results, writer, is_check = merge_phases(
+        [], results_root=tmp_path / "results", eval_id="eval-1",
+        generated_plan=plan, check_only=check_only,
+    )
+
+    assert results == []
+    assert is_check == check_only
+    if check_only:
+        assert json.loads((writer.root / "preflight.json").read_text()) == []
+    else:
+        assert json.loads((writer.root / "summary.json").read_text())["selection"]["n_unmatched_artifacts"] == 1
+        assert "alpha" in (writer.root / "report.html").read_text()
+    assert merge_phases(
+        [], results_root=tmp_path / "results", eval_id="eval-1",
+        generated_plan=plan, check_only=check_only, resume=True,
+    )[0] == []
 
 
 def test_merge_check_only_combines_preflight(tmp_path: Path) -> None:
@@ -197,6 +371,7 @@ def test_merge_reports_generated_selection_without_creating_fake_runs(tmp_path: 
         "n_selected_cases": 1,
         "n_excluded_cases": 1,
         "n_partially_covered_cases": 0,
+            "n_unmatched_artifacts": 0,
         "coverage_rate": 0.5,
         "excluded_by_reason": {"generated_skill_unavailable_excluded": 1},
     }

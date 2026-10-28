@@ -11,6 +11,7 @@
     <h1>B2E benchmark</h1>
     <div id="eval" class="muted"></div>
     <section class="cards" id="cards"></section>
+    <section id="coverage" class="panel" hidden></section>
 
     <section class="charts">
       <article class="panel">
@@ -41,10 +42,10 @@
       <div class="table-scroll">
         <table>
           <thead><tr>
-            <th>Режим</th><th>Метод</th><th>Детализация</th><th>Runs</th>
-            <th>Accuracy</th><th>LLM judge accuracy</th><th>Δ к existing, п.п.</th>
-            <th>Любой skill загружен</th><th>Expected skill загружен</th>
-            <th>Медиана времени</th><th>Медиана mcp_query</th><th>Медиана шагов</th><th>Медиана токенов</th>
+            <th>Режим</th><th>Источник</th><th>Метод</th><th>Детализация</th><th>Skill</th><th>Вариант</th><th>Runs</th>
+            <th>Accuracy</th><th>LLM judge accuracy</th><th>Сопоставимых пар</th><th>Δ к existing, п.п.</th>
+            <th>Любой skill загружен</th><th>Expected skill загружен</th><th>Целевой generated skill загружен</th>
+            <th>Медиана времени</th><th>Медиана mcp_query</th><th>Медиана шагов</th><th>Входные токены, медиана</th><th>Выходные токены, медиана</th>
           </tr></thead>
           <tbody id="metrics"></tbody>
         </table>

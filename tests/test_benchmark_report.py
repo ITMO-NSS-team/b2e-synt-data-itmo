@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from sim.benchmark.report import write_report, write_report_from_files
@@ -15,6 +16,8 @@ def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int, ste
             "latency_ms": latency,
             "mcp_query_calls": calls,
             "iterations": steps,
+            "prompt_tokens": 80 * calls,
+            "completion_tokens": 20 * calls,
             "total_tokens": 100 * calls,
         }},
         response={
@@ -64,7 +67,14 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert "Любой skill загружен" in text
     assert "Expected skill загружен" in text
     assert "LLM judge accuracy" in text
+    assert "Целевой generated skill загружен" in text
+    assert "position: sticky" in text
+    assert "td:nth-child(4)" in text
+    assert 'existing_plus_generated: "existing + gen"' in text
+    assert 'title="${esc(row.mode)}"' in text
     assert "Медиана шагов" in text
+    assert "Входные токены, медиана" in text
+    assert "Выходные токены, медиана" in text
     assert "Шаги агента, шт." in text
     assert text.count('type: "scatter3d"') == 1
     assert 'type: "scatter"' in text
@@ -77,12 +87,22 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert '"detail":"medium"' in text
     assert '"median_latency_s":3.0' in text
     assert '"median_total_tokens":400.0' in text
-    assert '"expected_skill_loaded":1.0' in text
+    assert '"median_input_tokens":320.0' in text
+    assert '"median_output_tokens":80.0' in text
+    assert '"accuracy_correct":2' in text
+    assert '"accuracy_total":2' in text
     assert '"llm_judge_accuracy":1.0' in text
     assert '"llm_judge_passed":2' in text
     assert '"llm_judge_scored":2' in text
+    assert '"expected_skill_loaded_count":2' in text
+    assert '"expected_skill_loaded_total":2' in text
+    assert '"expected_skill_loaded":1.0' in text
+    assert '"generated_skill_loaded_count":2' in text
     assert '"delta_pp":100.0' in text
     assert (public / "eval-1" / "report.html").read_text() == text
+    assert ((public / "eval-1" / "report.html").stat().st_mode & 0o777) == (
+        (tmp_path / "eval-1" / "report.html").stat().st_mode & 0o777
+    )
     assert list((public / "eval-1").iterdir()) == [public / "eval-1" / "report.html"]
 
 
@@ -106,3 +126,64 @@ def test_old_result_files_backfill_skill_metrics(tmp_path) -> None:
     assert '"any_skill_loaded":1' in text
     assert '"expected_skill_loaded":1' in text
     assert '"median_iterations":null' in text
+
+
+def test_report_keeps_variants_separate_and_compares_matching_cases(tmp_path) -> None:
+    root = tmp_path / "eval-paired"
+    root.mkdir()
+    groups = [
+        {"variant_id": variant, "source": "baseline", "path_labels": ["medium"],
+         "source_path": f"/runs/compact/medium/{variant}/SKILL.md", "skill_names": ["alpha"]}
+        for variant in ("baseline--first", "baseline--second")
+    ]
+    (root / "run-manifest.json").write_text(json.dumps({"generated_plan": {
+        "groups": groups, "generated_modes": ["existing_plus_generated"],
+        "source_case_ids": ["case-a", "case-b"],
+        "selected_case_ids": ["case-a", "case-b"],
+        "excluded": [], "unmatched_artifacts": [],
+    }}), encoding="utf-8")
+    first = _result("existing-a", "existing_skills", 1, 1000, 1, 1)
+    first.case_id = "case-a"
+    second = _result("existing-b", "existing_skills", 0, 1000, 1, 1)
+    second.case_id = "case-b"
+    generated = [
+        _result("generated-first", "existing_plus_generated@baseline--first", 1, 1000, 1, 1),
+        _result("generated-second", "existing_plus_generated@baseline--second", 0, 1000, 1, 1),
+    ]
+    generated[0].case_id = "case-a"
+    generated[1].case_id = "case-b"
+
+    text = write_report(root, [first, second, *generated]).read_text(encoding="utf-8")
+
+    assert '"source":"baseline"' in text
+    assert '"method":"compact"' in text
+    assert '"detail":"medium"' in text
+    assert '"variant":"baseline--first"' in text
+    assert '"variant":"baseline--second"' in text
+    assert text.count('"n_pairs":1') == 2
+    assert text.count('"delta_pp":0.0') == 2
+
+
+def test_report_labels_full_catalog_as_one_source_variant(tmp_path) -> None:
+    root = tmp_path / "eval-catalog"
+    root.mkdir()
+    (root / "run-manifest.json").write_text(json.dumps({"generated_plan": {
+        "groups": [{
+            "variant_id": "catalog--baseline", "modes": ["existing_plus_catalog"],
+            "scope": "catalog", "source": "baseline",
+            "source_path": "/runs/compact/medium", "skill_names": ["alpha", "beta"],
+            "case_ids": ["case-0001-00"], "matched_case_ids": ["case-0001-00"],
+        }],
+        "generated_modes": ["existing_plus_catalog"],
+        "source_case_ids": ["case-0001-00"], "selected_case_ids": ["case-0001-00"],
+        "excluded": [], "unmatched_artifacts": [],
+    }}), encoding="utf-8")
+    result = _result("catalog-run", "existing_plus_catalog@catalog--baseline", 1, 1000, 1, 2)
+
+    text = write_report(root, [result]).read_text(encoding="utf-8")
+
+    assert '"source":"baseline"' in text
+    assert '"method":"compact"' in text
+    assert '"detail":"medium"' in text
+    assert '"skill":"2 skills"' in text
+    assert '"matched":1' in text

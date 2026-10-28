@@ -7,9 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from heimdall.catalog.model import Catalog
 from sim.benchmark.cases import BenchmarkCase
 from sim.benchmark.modes import CommonConditions, build_modes
-from sim.benchmark.preflight import preflight_case
+from sim.benchmark.preflight import preflight_case, validate_skill_catalog
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE, MODEL_CATALOG, SCHEMA
 
 
@@ -70,6 +71,55 @@ def data_snapshot(path: Path, snapshot_id: str = "heimdall-sandbox@test") -> Pat
     return path
 
 
+@pytest.mark.parametrize("date_from,date_to", [
+    ("<D>", "<D + 1 день>"),
+    ("<ДАТА РАСЧЁТА>", "<СЛЕДУЮЩИЙ ДЕНЬ>"),
+    ("2026-01-01", "<D + 1 день>"),
+    ("<D>", "2026-01-02"),
+])
+def test_reference_date_templates_compile_without_changing_skill(
+    tmp_path: Path, date_from: str, date_to: str,
+) -> None:
+    query = {
+        "schema": "dm_core", "logic_model": "employee",
+        "columns": ["vacation_days_balance"],
+        "time_dimensions": [{
+            "name": "report_date", "granularity": "day",
+            "range": {"type": "absolute", "from": date_from, "to": date_to},
+        }],
+    }
+    path = tmp_path / "SKILL.md"
+    content = (
+        "---\nname: date_template\ntitle: Date template\nkind: reference\n"
+        "domain: general\ndescription: A parameterized query example\n---\n"
+        "```json\n" + json.dumps(query, ensure_ascii=False) + "\n```\n"
+    )
+    path.write_text(content, encoding="utf-8")
+    validate_skill_catalog(tmp_path, Catalog.load(MODEL_CATALOG))
+    assert path.read_text(encoding="utf-8") == content
+
+    # A template date must not hide invalid fields elsewhere in the query.
+    path.write_text(content.replace(
+        '"vacation_days_balance"', '"does_not_exist"',
+    ), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid mcp_query"):
+        validate_skill_catalog(tmp_path, Catalog.load(MODEL_CATALOG))
+
+
+def test_reference_invalid_literal_date_is_still_rejected(tmp_path: Path) -> None:
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: invalid_date\ntitle: Invalid date\nkind: reference\n"
+        "domain: general\ndescription: An invalid literal date\n---\n"
+        '```json\n{"schema":"dm_core","logic_model":"employee",'
+        '"columns":["vacation_days_balance"],"time_dimensions":[{'
+        '"name":"report_date","granularity":"day","range":{'
+        '"type":"absolute","from":"2026-02-30","to":"<D>"}}]}\n```\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid mcp_query"):
+        validate_skill_catalog(tmp_path, Catalog.load(MODEL_CATALOG))
+
+
 def test_preflight_skips_draft_and_generated_mock_without_llm(tmp_path: Path) -> None:
     standard = make_catalog(tmp_path / "standard")
     modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
@@ -109,7 +159,6 @@ def test_ready_preflight_validates_all_inputs_and_builds_fingerprint(tmp_path: P
     ("expected", "status"),
     [
         ([], "generated_no_expected_skill_skipped"),
-        (["available", "missing"], "generated_skill_unavailable_skipped"),
         (["missing"], "generated_skill_unavailable_skipped"),
     ],
 )
@@ -136,6 +185,39 @@ def test_generated_preflight_skips_non_runnable_case_without_validating_stand(
     )
 
     assert result.status == status
+
+
+def test_generated_preflight_accepts_one_available_expected_skill(tmp_path: Path) -> None:
+    standard = make_catalog(tmp_path / "standard")
+    generated = make_catalog(tmp_path / "generated", name="available")
+    modes = build_modes(common(), standard, generated, snapshots_root=tmp_path / "snapshots")
+    case = ready_case()
+    case.raw["expected_skills"] = ["available", "another_version"]
+
+    result = preflight_case(
+        case, modes.generated_skills, snapshot_root=data_snapshot(tmp_path / "data"),
+        standard_catalog_path=modes.existing_skills.catalog_path,
+        model_catalog_path=MODEL_CATALOG, agent_config_version="benchmark_agent@1",
+        identity_factory=FakeIdentity, schema_path=SCHEMA,
+    )
+    assert result.status == "ready"
+
+
+def test_full_catalog_preflight_runs_case_without_matching_generated_skill(tmp_path: Path) -> None:
+    standard = make_catalog(tmp_path / "standard")
+    generated = make_catalog(tmp_path / "generated", name="available")
+    modes = build_modes(common(), standard, generated, snapshots_root=tmp_path / "snapshots")
+    case = ready_case()
+    case.raw["expected_skills"] = ["missing-v1-0-0"]
+
+    result = preflight_case(
+        case, modes.existing_plus_catalog, snapshot_root=data_snapshot(tmp_path / "data"),
+        standard_catalog_path=modes.existing_skills.catalog_path,
+        model_catalog_path=MODEL_CATALOG, agent_config_version="benchmark_agent@1",
+        identity_factory=FakeIdentity, schema_path=SCHEMA,
+    )
+
+    assert result.status == "ready"
 
 
 def test_preflight_rejects_gold_role_and_recipe_errors(tmp_path: Path) -> None:
@@ -212,3 +294,32 @@ def test_preflight_rejects_unavailable_snapshot_and_invalid_reference_example(
         preflight_case(
             ready_case(), invalid_modes.existing_skills, **kwargs
         )
+
+
+def test_phase_context_reuses_identity_and_preserves_scope_checks(tmp_path):
+    from sim.benchmark.preflight import prepare_preflight_context
+    root = data_snapshot(tmp_path / "data")
+    standard = make_catalog(tmp_path / "skills")
+    modes = build_modes(common(), standard, snapshots_root=tmp_path / "snapshots")
+    constructions = []
+    class Identity(FakeIdentity):
+        def __init__(self, *args, **kwargs):
+            constructions.append(1)
+            super().__init__(*args, **kwargs)
+    context = prepare_preflight_context(root, modes.existing_skills.catalog_path, MODEL_CATALOG,
+                                        [modes.skills_disabled], identity_factory=Identity)
+    case = ready_case()
+    for _ in range(2):
+        result = preflight_case(case, modes.skills_disabled, snapshot_root=root,
+            standard_catalog_path=modes.existing_skills.catalog_path,
+            model_catalog_path=MODEL_CATALOG, agent_config_version="agent@1",
+            schema_path=SCHEMA, prepared=context)
+        assert result.status == "ready"
+    assert len(constructions) == 1
+    case.raw["employee_id"] = 999
+    with pytest.raises(ValueError, match="employee does not exist"):
+        preflight_case(case, modes.skills_disabled, snapshot_root=root,
+            standard_catalog_path=modes.existing_skills.catalog_path,
+            model_catalog_path=MODEL_CATALOG, agent_config_version="agent@1",
+            schema_path=SCHEMA, prepared=context)
+    context.verify_unchanged()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -16,7 +17,7 @@ from .execution import PinnedConfigActivator, StandSessionExecutor
 from .judge import from_env as answer_judge_from_env
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes, mode_strategy
 from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
-from .preflight import PreflightResult, preflight_case
+from .preflight import PreflightResult, preflight_case, prepare_preflight_context
 from .results import ResultWriter, summarize_results
 from .runner import BenchmarkRunner
 from sim import telemetry
@@ -260,6 +261,14 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
         generated_catalog_preloaded=args.generated_skills is not None,
     )
 
+    reference_path = getattr(args, "reference_manifest", None)
+    if reference_path:
+        reference = json.loads(Path(reference_path).read_text(encoding="utf-8"))
+        _validate_phase_reference(live, common, reference, getattr(args, "workers", 1))
+    context = prepare_preflight_context(
+        args.data, modes.existing_skills.catalog_path, args.model_catalog, selected.values(),
+    )
+
     # Validate every case x mode before the first model call.  Runner reuses
     # these immutable results instead of discovering a bad final case late.
     checked: dict[tuple[str, str], PreflightResult] = {}
@@ -275,10 +284,30 @@ def prepare(args: argparse.Namespace) -> PreparedBenchmark:
                 standard_catalog_path=modes.existing_skills.catalog_path,
                 model_catalog_path=args.model_catalog,
                 agent_config_version=refs[mode.name],
-                schema_path=args.schema,
+                schema_path=args.schema, prepared=context,
             )
+    context.verify_unchanged()
 
     return PreparedBenchmark(cases, live, selected, activator, checked)
+
+
+def _validate_phase_reference(
+    live: dict[str, Any], common: CommonConditions,
+    reference: dict[str, Any], workers: int,
+) -> None:
+    """Keep phases of one evaluation on the same effective stand conditions."""
+    if json.loads(json.dumps(asdict(common))) != reference["modes"][0]["common"]:
+        raise ValueError("benchmark conditions changed before this phase: model/prompt/snapshot/access")
+    previous = reference["live_stand"]
+    # All pinned arms share this config except for their tool subset.
+    current_config = live["configs"][live["refs"]["existing_skills"]]
+    previous_config = previous["configs"][previous["refs"]["existing_skills"]]
+    if current_config != previous_config:
+        raise ValueError("agent configuration changed before this phase")
+    if live["skill_registry_hash"] != previous["skill_registry_hash"]:
+        raise ValueError("executable registry changed before this phase")
+    if workers != reference.get("workers", 1):
+        raise ValueError("concurrency changed before this phase")
 
 
 def _eval_id(args: argparse.Namespace, default_prefix: str) -> str:
@@ -301,6 +330,8 @@ def _manifest(
         "check_only": check_only,
         "cases_path": str(Path(args.cases).resolve()),
         "case_ids": [case.case_id for case in prepared.cases],
+        "case_hashes": {case.case_id: hashlib.sha256(json.dumps(case.raw, sort_keys=True, ensure_ascii=False).encode()).hexdigest() for case in prepared.cases},
+        "workers": getattr(args, "workers", 1),
         "modes": [
             _serialized_mode(mode, getattr(args, "generated_variant_id", None))
             for mode in prepared.selected_modes.values()
@@ -337,7 +368,7 @@ def check(args: argparse.Namespace) -> ResultWriter:
     """
     prepared = prepare(args)
     eval_id = _eval_id(args, "check")
-    writer = ResultWriter(args.results, eval_id)
+    writer = ResultWriter(args.results, eval_id, resume=getattr(args, "resume", False))
     writer.write_manifest(_manifest(args, prepared, eval_id, check_only=True))
     report = [
         {
@@ -372,7 +403,7 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
     """
     prepared = prepare(args)
     eval_id = _eval_id(args, "benchmark")
-    writer = ResultWriter(args.results, eval_id)
+    writer = ResultWriter(args.results, eval_id, resume=getattr(args, "resume", False))
     writer.write_manifest(_manifest(args, prepared, eval_id, check_only=False))
     runner = BenchmarkRunner(
         eval_id,
@@ -408,6 +439,8 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
     ) as run_span:
         results = runner.run(
             prepared.cases, prepared.selected_modes, repetitions=args.repetitions,
+            workers=getattr(args, "workers", 1),
+            max_consecutive_unscored=getattr(args, "max_consecutive_unscored", None),
         )
         # ResultWriter has already persisted this same deterministic summary.
         # OpenLIT receives an observability copy, not another scoring pipeline.
@@ -449,10 +482,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--model-catalog", default="catalog/snapshot.json")
     result.add_argument("--schema", default=SCHEMA_RELATIVE)
     result.add_argument("--live-config", default="var/benchmark-live-config.json")
+    result.add_argument("--reference-manifest", help="stop before LLM calls if conditions differ from the first phase")
     result.add_argument("--results", default="benchmarking/results")
     result.add_argument("--modes", default=",".join(DEFAULT_MODES))
     result.add_argument("--limit", type=int, help="Run/check only the first N verified cases")
     result.add_argument("--repetitions", type=int, default=1)
+    result.add_argument("--workers", type=int, default=1)
+    result.add_argument("--max-consecutive-unscored", type=int, help="stop submitting new cells after repeated infrastructure failures")
+    result.add_argument("--resume", action="store_true", help="continue an unchanged experiment without repeating saved cells")
     result.add_argument("--eval-id")
     result.add_argument("--eval-prefix")
     result.add_argument("--check-only", action="store_true")
@@ -495,6 +532,12 @@ def main(argv: list[str] | None = None) -> int:
     """
     try:
         args = parser().parse_args(argv)
+        if args.max_consecutive_unscored is not None and args.max_consecutive_unscored < 1:
+            raise ValueError("max-consecutive-unscored must be >= 1")
+        if args.workers < 1:
+            raise ValueError("workers must be >= 1")
+        if args.resume and not args.eval_id:
+            raise ValueError("--resume requires an explicit --eval-id")
         if args.repetitions < 1:
             raise ValueError("repetitions must be >= 1")
         if args.check_only:

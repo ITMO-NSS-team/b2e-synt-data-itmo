@@ -43,7 +43,7 @@ def test_renderer_is_deterministic_and_contains_only_public_information() -> Non
     assert '"outcome"' in first and '"rows"' in first
     assert "expected_outcome" not in first
     assert '"employee_count": 3' not in first
-    assert PROMPT_RENDERER_VERSION == "benchmark-response-prompt@1"
+    assert PROMPT_RENDERER_VERSION == "benchmark-response-prompt@2"
     assert "{{query}}" in RESPONSE_PROMPT_PATH.read_text(encoding="utf-8")
     assert "{{schema}}" in RESPONSE_PROMPT_PATH.read_text(encoding="utf-8")
     assert gold_contract_hash(contract()).startswith("sha256:")

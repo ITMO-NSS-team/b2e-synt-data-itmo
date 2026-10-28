@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
+from io import StringIO
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +22,43 @@ from sim.agent.provider import runtime_agent_config
 
 def harness() -> OpenCodeHarness:
     return OpenCodeHarness(heimdall_url="http://heimdall:8081", heimdall_token="t")
+
+
+def test_stateless_invocations_use_separate_databases_but_resume_keeps_history(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("LLM_PROVIDER", "zai")
+    monkeypatch.setenv("ZAI_API_KEY", "test-key")
+    environments = []
+
+    def start(*args, **kwargs):
+        environments.append(kwargs["env"])
+        return SimpleNamespace(
+            stdout=StringIO(""), returncode=0,
+            wait=lambda: 0, kill=lambda: None,
+        )
+
+    @contextmanager
+    def timings():
+        yield SimpleNamespace(endpoint="http://127.0.0.1:1", apply=lambda *a, **k: None)
+
+    monkeypatch.setattr("sim.agent.opencode.subprocess.Popen", start)
+    monkeypatch.setattr("sim.agent.opencode.collect_native_timings", timings)
+    home = tmp_path / "home"
+    runner = OpenCodeHarness(
+        heimdall_url="http://unused", heimdall_token="test", opencode_home=str(home),
+    )
+    for index, mode in enumerate(("stateless", "stateless", "resume", "resume")):
+        runner._invoke(
+            "test", config=AgentConfig(harness="open_code", conversation_mode=mode),
+            config_path=tmp_path / f"opencode-{index}.json", workdir=tmp_path,
+            resume_session_id=None, keep_stream=False, on_event=None,
+        )
+    stores = [env["XDG_DATA_HOME"] for env in environments]
+    assert stores[0] != stores[1]
+    assert all(path not in stores[2:] for path in stores[:2])
+    assert stores[2:] == [str(home / ".local" / "share")] * 2
+    assert {env["HOME"] for env in environments} == {str(home)}
 
 
 @pytest.mark.parametrize("tool_subset,skill_enabled", [

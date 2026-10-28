@@ -8,13 +8,32 @@ import subprocess
 def _make(*arguments: str) -> str:
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        ["make", "-n", *arguments],
+        ["make", "-n", "DOCKER=true", "BENCH_LOCK_HELD=1", "BENCH_MODES=general_knowledge,skills_disabled,existing_skills", *arguments],
         cwd=root,
         text=True,
         capture_output=True,
         check=True,
     )
     return result.stdout
+
+
+def test_benchmark_env_overrides_inherited_shell(monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("BENCH_MODES", "stale")
+    monkeypatch.setenv("BENCH_SKILL_CATALOGS", "stale")
+    monkeypatch.setenv("CASES", "stale")
+    monkeypatch.setenv("BENCH_WORKERS", "99")
+    monkeypatch.setenv("GENERATED_SKILLS_DIR", "/tmp/stale")
+    result = subprocess.run(
+        ["make", "-s", "-f", "Makefile", "-f", "-", "print-bench-config",
+         "BENCH_ENV_FILE=sim/benchmark/.env.example"],
+        input='print-bench-config:\n\t@printf "%s|%s|%s|%s|%s" "$(BENCH_MODES)" "$(BENCH_SKILL_CATALOGS)" "$(CASES)" "$(BENCH_WORKERS)" "$(GENERATED_SKILLS_DIR)"\n',
+        cwd=root, text=True, capture_output=True, check=True,
+    )
+    assert result.stdout == (
+        "general_knowledge,skills_disabled,existing_skills||"
+        f"b2e-skill-benchmark/gold_dataset|1|{root}/var/empty-generated-skills"
+    )
 
 
 def test_benchmarking_uses_internal_agent_and_phoenix() -> None:
@@ -31,6 +50,10 @@ def test_benchmarking_uses_internal_agent_and_phoenix() -> None:
     assert '--modes "general_knowledge,skills_disabled,existing_skills"' in output
     assert 'HEIMDALL_SKILLS_ROOT="/app/heimdall-skill-catalog/existing"' in output
     assert "ssh" not in output
+
+
+def test_openlit_dashboard_uses_stand_env() -> None:
+    assert "--env-file deploy/.env" in _make("openlit-dashboard")
 
 
 def test_prepare_resolv_repairs_docker_created_directory() -> None:
@@ -95,7 +118,8 @@ def test_mixed_benchmark_splits_catalogs_and_merges_results() -> None:
     assert 'CASES="$$covered_cases"' in source
     assert 'BENCH_MODES="$$generated_mode"' in source
     assert 'BENCH_GENERATED_VARIANT_ID="$$variant"' in source
-    assert 'read -r slug cases catalog combined_catalog skill variant <&3' in source
+    assert 'read -r slug cases catalog combined_catalog skill variant group_modes <&3' in source
+    assert 'case ",$$group_modes," in *,"$$generated_mode",*)' in source
     assert 'done 3< "$$group_list"' in source
     assert 'CASES="$$cases" GENERATED_SKILLS_DIR="$$active_catalog"' in source
     assert "sim.benchmark.generated_plan" in source
@@ -103,6 +127,8 @@ def test_mixed_benchmark_splits_catalogs_and_merges_results() -> None:
     assert "sim.benchmark.merge" in source
     assert "--phase-telemetry" in source
     assert "sim.benchmark.publish" in source
+    assert "command -v flock" in source and "exec lockf -t 0" in source
+    assert 'if ! test -s "$$group_list"' in source
 
 
 def test_data_dir_override_is_used_by_preflight() -> None:

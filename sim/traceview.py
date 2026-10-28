@@ -25,6 +25,7 @@ as objects: the message layout is an indexed sequence, and a viewer handed
 from __future__ import annotations
 
 import json
+import os
 import statistics
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,20 @@ PLACEHOLDER = "__DATA__"
 
 
 # ------------------------------------------------------------------ reshaping
+
+def _admin_explorer_traces_max_bytes() -> int | None:
+    """Read the admin setting supplied by deployment environment (0 = unlimited)."""
+    key = "ADMIN_EXPLORER_TRACES_MAX_BYTES"
+    value = os.environ.get(key)
+    try:
+        limit = int(value if value is not None else "134217728")
+    except ValueError as exc:
+        raise ValueError(f"{key} must be a non-negative integer (0 = unlimited)") from exc
+    if limit < 0:
+        raise ValueError(f"{key} must be a non-negative integer (0 = unlimited)")
+    return limit or None
+
+ADMIN_EXPLORER_TRACES_MAX_BYTES = _admin_explorer_traces_max_bytes()
 
 
 def unflatten(flat: dict[str, Any]) -> dict[str, Any]:
@@ -480,12 +495,29 @@ def strip_input_messages(traces: list[dict[str, Any]]) -> int:
 
 def from_phoenix(client: Any, *, limit: int = 100, project: str = "b2e-sim",
                  source: str = "", include_input_messages: bool = False,
-                 exported_at: str = "") -> dict[str, Any]:
-    """The explorer document for the newest ``limit`` traces in Phoenix."""
-    raw = client.latest_traces(limit=limit)
+                 exported_at: str = "", span_limit: int = 50000,
+                 trace_id: str | None = None) -> dict[str, Any]:
+    """A live page with explicit loading limits, or one complete trace by ID."""
+    if trace_id:
+        selected = client.spans_for_trace(trace_id, limit=span_limit,
+                                         include_input_messages=include_input_messages,
+                                         max_bytes=ADMIN_EXPLORER_TRACES_MAX_BYTES)
+        raw = [{"trace_id": trace_id, "spans": selected,
+                "start_time": min((s["start_time"] for s in selected if s.get("start_time")), default=None),
+                "end_time": max((s["end_time"] for s in selected if s.get("end_time")), default=None)}] if selected else []
+    else:
+        raw = client.latest_traces(limit=limit, span_cap=span_limit,
+                                   include_input_messages=include_input_messages,
+                                   max_bytes=ADMIN_EXPLORER_TRACES_MAX_BYTES)
     traces = []
+    inputs_omitted_while_loading = False
     for entry in raw:
-        spans = [normalise_rest_span(s) for s in entry.get("spans") or []]
+        # Consume each raw trace after reshaping it rather than retaining two
+        # copies of the entire corpus until the document is assembled.
+        original_spans = entry.pop("spans", []) or []
+        inputs_omitted_while_loading |= any(s.get("_input_messages_omitted") for s in original_spans)
+        spans = [normalise_rest_span(s) for s in original_spans]
+        del original_spans
         spans.sort(key=lambda s: s.get("_start_epoch") or 0)
         for span in spans:
             span.pop("_start_epoch", None)
@@ -495,6 +527,7 @@ def from_phoenix(client: Any, *, limit: int = 100, project: str = "b2e-sim",
             "duration_s": round(_epoch(entry.get("end_time"))
                                 - _epoch(entry.get("start_time")), 3),
             "spans": spans,
+            "span_limit_reached": bool(entry.get("span_limit_reached")),
         }
         traces.append(enrich(trace))
     # Newest first in the list, which is the order a researcher wants when the
@@ -505,8 +538,15 @@ def from_phoenix(client: Any, *, limit: int = 100, project: str = "b2e-sim",
     about = {
         "source": source or f"Arize Phoenix REST, project '{project}'",
         "exported_at_utc": exported_at,
-        "selection": f"the {len(traces)} most recent traces by start time, "
-                     f"all spans, live from Phoenix.",
+        "selection": (f"trace {trace_id}, live from Phoenix." if trace_id else
+                      f"the {len(traces)} most recent traces by start time, live from Phoenix."),
+        "live": True,
+        "loading": {"trace_limit": limit, "span_limit": span_limit,
+                    "trace_id": trace_id or "", "include_input_messages": include_input_messages,
+                    "loaded_spans": sum(len(t["spans"]) for t in traces),
+                    "page_size_limit_mb": ADMIN_EXPLORER_TRACES_MAX_BYTES / (1024 * 1024) if ADMIN_EXPLORER_TRACES_MAX_BYTES is not None else None,
+                    "page_size_limit_reached": any(t.get("load_limit_reason") == "page_size" for t in raw),
+                    "span_limit_reached": any(t["span_limit_reached"] for t in traces)},
         "format": "the span tree in docs/span-schema.md for harness=claude_code: "
                   "AGENT root, CHAIN iteration.N per model call, LLM under its "
                   "iteration carrying reasoning and a measured ttft, TOOL under "
@@ -524,6 +564,10 @@ def from_phoenix(client: Any, *, limit: int = 100, project: str = "b2e-sim",
     }
     if dropped:
         about["caveats"].insert(0, _INPUT_MESSAGES_NOTE.format(dropped=dropped))
+    elif inputs_omitted_while_loading:
+        about["caveats"].insert(0, "Reconstructed llm.input_messages omitted before buffering this live page; enable reconstructed prompts to include them.")
+    if about["loading"]["span_limit_reached"]:
+        about["caveats"].insert(0, "Page size or span loading limit reached: some traces are incomplete or have no loaded spans. Open a trace by ID to fetch it separately.")
     return build_document(traces, about)
 
 
@@ -547,8 +591,34 @@ def render(document: dict[str, Any], template: str | None = None) -> str:
     and the payload here is agent output, which is exactly the input nobody
     should trust.
     """
+    return "".join(render_chunks(document, template))
+
+
+def json_chunks(document: dict[str, Any], *, escape_script: bool = False):
+    """Serialize a large live page without allocating a second full payload."""
+    encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"), default=str)
+    parts, size = [], 0
+    for piece in encoder.iterencode(document):
+        # JSON string tokens are emitted whole, so a closing script tag cannot
+        # straddle encoder pieces. Escape before grouping transport chunks.
+        if escape_script:
+            piece = piece.replace("</", "<\\/")
+        parts.append(piece)
+        size += len(piece)
+        if size >= 65536:
+            yield "".join(parts)
+            parts, size = [], 0
+    if parts:
+        yield "".join(parts)
+
+
+def render_chunks(document: dict[str, Any], template: str | None = None):
+    """Stream the same standalone viewer, retaining its script-escape rules."""
     if template is None:
         template = TEMPLATE.read_text(encoding="utf-8")
-    payload = json.dumps(document, ensure_ascii=False,
-                         separators=(",", ":"), default=str).replace("</", "<\\/")
-    return template.replace(PLACEHOLDER, payload)
+    before, marker, after = template.partition(PLACEHOLDER)
+    if not marker:
+        raise ValueError("viewer template has no data placeholder")
+    yield before
+    yield from json_chunks(document, escape_script=True)
+    yield after

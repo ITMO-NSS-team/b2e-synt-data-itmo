@@ -7,14 +7,16 @@ from pathlib import Path
 from .path_lib import ENV_PATH
 
 
-def load_env(path: str | Path | None = None) -> None:
-    """Fill missing ``os.environ`` keys from a local ``.env``.
+def load_env(path: str | Path | None = None, *, override: bool = False) -> None:
+    """Load a local ``.env`` into ``os.environ``.
 
-    Already-set process variables (Compose, Make) are left alone. A missing
-    file is allowed.
+    Service processes keep their existing variables by default. Host-side
+    benchmark entry points can prefer the file with ``override=True``.
+    A missing file is allowed.
 
     Args:
-        path: Env file. ``None`` uses ``deploy/.env`` at the repository root.
+        path: Env file. ``None`` uses ``sim/benchmark/.env`` at the repository root.
+        override: Replace existing process variables with values from the file.
     """
     env_path = Path(path) if path is not None else ENV_PATH
     if not env_path.is_file():
@@ -25,7 +27,7 @@ def load_env(path: str | Path | None = None) -> None:
             continue
         name, _, value = line.partition("=")
         key = name.strip()
-        if key and key not in os.environ:
+        if key and (override or key not in os.environ):
             os.environ[key] = value.strip().strip("'").strip('"')
 
 

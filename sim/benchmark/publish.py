@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,14 @@ def publish_summary(result_dir: str | Path) -> bool:
     summary = _read_object(root / "summary.json")
     if manifest.get("check_only"):
         raise ValueError("cannot publish a check-only benchmark")
+
+    digest = hashlib.sha256(
+        (root / "run-manifest.json").read_bytes() + b"\0" +
+        (root / "summary.json").read_bytes()
+    ).hexdigest()
+    marker = root / ".telemetry-published"
+    if marker.is_file() and marker.read_text(encoding="utf-8").strip() == digest:
+        return False
 
     provider = configure_metric_export()
     if provider is None:
@@ -38,6 +47,9 @@ def publish_summary(result_dir: str | Path) -> bool:
     finally:
         if provider.force_flush() is False:
             raise RuntimeError("merged benchmark telemetry export did not flush")
+    temporary = marker.with_suffix(".tmp")
+    temporary.write_text(digest + "\n", encoding="utf-8")
+    temporary.replace(marker)
     return True
 
 

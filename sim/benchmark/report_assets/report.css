@@ -24,7 +24,14 @@ h2 { margin: 0; font-size: 17px; }
 .card strong { display: block; margin-top: 4px; font-size: 26px; }
 .panel { padding: 18px; margin-bottom: 14px; min-width: 0; }
 .metrics-panel { overflow: hidden; }
-.table-scroll { overflow-x: auto; margin-top: 10px; }
+.table-scroll {
+  --mode-width: 126px;
+  --source-width: 94px;
+  --method-width: 88px;
+  --detail-width: 112px;
+  overflow-x: auto;
+  margin-top: 10px;
+}
 .chart-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .expand {
   padding: 6px 10px;
@@ -50,10 +57,28 @@ body.report-expanded { overflow: hidden; }
 .dot { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 50%; }
 .shape { display: inline-block; width: 18px; text-align: center; font-size: 16px; font-weight: 700; }
 .selection { min-height: 36px; margin-top: 10px; padding: 9px 11px; border-radius: 7px; background: #f8fafc; color: #344054; }
-table { width: 100%; border-collapse: collapse; white-space: nowrap; }
-th, td { padding: 9px 10px; border-bottom: 1px solid #edf0f5; text-align: right; }
+table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; white-space: nowrap; }
+th, td { padding: 8px; border-bottom: 1px solid #edf0f5; text-align: right; }
 th { background: #f8fafc; color: #475467; font-size: 12px; }
 th:first-child, td:first-child, th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: left; }
+th:nth-child(-n+4), td:nth-child(-n+4) {
+  position: sticky;
+  z-index: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+th:nth-child(-n+4) { z-index: 2; }
+td:nth-child(-n+4) { background: #fff; }
+th:nth-child(1), td:nth-child(1) { left: 0; width: var(--mode-width); min-width: var(--mode-width); max-width: var(--mode-width); }
+th:nth-child(2), td:nth-child(2) { left: var(--mode-width); width: var(--source-width); min-width: var(--source-width); max-width: var(--source-width); }
+th:nth-child(3), td:nth-child(3) { left: calc(var(--mode-width) + var(--source-width)); width: var(--method-width); min-width: var(--method-width); max-width: var(--method-width); }
+th:nth-child(4), td:nth-child(4) {
+  left: calc(var(--mode-width) + var(--source-width) + var(--method-width));
+  width: var(--detail-width);
+  min-width: var(--detail-width);
+  max-width: var(--detail-width);
+  box-shadow: 3px 0 5px #16233a18;
+}
 
 @media (max-width: 850px) { .cards, .charts { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { body { padding: 14px; } }
