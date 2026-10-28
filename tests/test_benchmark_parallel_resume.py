@@ -53,6 +53,38 @@ def test_resume_does_not_repeat_saved_cells(tmp_path):
     assert len(resumed.scores_path.read_text().splitlines()) == 4
 
 
+def test_resume_retries_only_the_last_response_without_a_score(tmp_path):
+    writer = ResultWriter(tmp_path, "test")
+    cases = [ready_case(f"case-{i:04d}-00") for i in range(3)]
+    first = _runner(writer, FakeExecutor())
+    for case in cases[:2]:
+        writer.write(first.run_one(case, mode(), 1))
+    writer.scores_path.write_text(writer.scores_path.read_text().splitlines()[0] + "\n")
+
+    executor = FakeExecutor()
+    resumed = ResultWriter(tmp_path, "test", resume=True)
+    results = _runner(resumed, executor).run(cases, [mode()])
+
+    assert len(results) == 3
+    assert len(executor.requests) == 2
+    assert len(resumed.responses_path.read_text().splitlines()) == 3
+    assert len(resumed.scores_path.read_text().splitlines()) == 3
+
+
+def test_resume_discards_a_truncated_last_jsonl_line(tmp_path):
+    writer = ResultWriter(tmp_path, "test")
+    case = ready_case()
+    writer.write(_runner(writer, FakeExecutor()).run_one(case, mode(), 1))
+    with writer.responses_path.open("ab") as handle:
+        handle.write(b'{"run_id":')
+
+    executor = FakeExecutor()
+    resumed = ResultWriter(tmp_path, "test", resume=True)
+    assert len(_runner(resumed, executor).run([case], [mode()])) == 1
+    assert executor.requests == []
+    assert len(resumed.responses_path.read_text().splitlines()) == 1
+
+
 def test_resume_rejects_incompatible_conditions(tmp_path):
     writer = ResultWriter(tmp_path, "test")
     manifest = {"eval_id": "test", "case_ids": [], "modes": [{
@@ -71,6 +103,25 @@ def test_resume_rejects_incompatible_conditions(tmp_path):
     manifest["modes"][0]["common"]["model_id"] = "two"
     with pytest.raises(ValueError, match="resume manifest differs"):
         resumed.write_manifest(manifest)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("max_output_tokens", 8192), ("max_tool_iterations", 20),
+])
+def test_resume_rejects_changed_agent_limits(tmp_path, field, value):
+    writer = ResultWriter(tmp_path, "test")
+    manifest = {
+        "eval_id": "test", "case_ids": [], "modes": [],
+        "live_stand": {
+            "refs": {"existing_skills": "agent@1"},
+            "configs": {"agent@1": {"max_output_tokens": 4096, "max_tool_iterations": 12}},
+        },
+    }
+    writer.write_manifest(manifest)
+    manifest["live_stand"]["configs"]["agent@1"][field] = value
+
+    with pytest.raises(ValueError, match="resume manifest differs"):
+        ResultWriter(tmp_path, "test", resume=True).write_manifest(manifest)
 
 
 def test_infrastructure_breaker_preserves_checkpoint_and_stops_submitting(tmp_path):

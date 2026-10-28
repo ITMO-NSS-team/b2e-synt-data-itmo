@@ -95,6 +95,9 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert '"generated_skill_loaded_count":2' in text
     assert '"delta_pp":100.0' in text
     assert (public / "eval-1" / "report.html").read_text() == text
+    assert ((public / "eval-1" / "report.html").stat().st_mode & 0o777) == (
+        (tmp_path / "eval-1" / "report.html").stat().st_mode & 0o777
+    )
     assert list((public / "eval-1").iterdir()) == [public / "eval-1" / "report.html"]
 
 

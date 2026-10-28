@@ -367,7 +367,7 @@ def check(args: argparse.Namespace) -> ResultWriter:
     """
     prepared = prepare(args)
     eval_id = _eval_id(args, "check")
-    writer = ResultWriter(args.results, eval_id)
+    writer = ResultWriter(args.results, eval_id, resume=getattr(args, "resume", False))
     writer.write_manifest(_manifest(args, prepared, eval_id, check_only=True))
     report = [
         {

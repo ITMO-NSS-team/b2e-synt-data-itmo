@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import shutil
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
@@ -17,11 +18,12 @@ from plotly.offline import get_plotlyjs
 _ASSETS = Path(__file__).with_name("report_assets")
 
 
-def write_report(result_dir: str | Path, results: Iterable[Any]) -> Path:
+def write_report(result_dir: str | Path, results: Iterable[Any], *, publish: bool = True) -> Path:
     """Write a self-contained report beside the benchmark JSON artifacts."""
     root = Path(result_dir)
     rows = [_result_row(result) for result in results]
-    return _publish(_write(root, rows), root.name)
+    path = _write(root, rows)
+    return publish_report(path, root.name) if publish else path
 
 
 def write_report_from_files(result_dir: str | Path) -> Path:
@@ -44,14 +46,21 @@ def write_report_from_files(result_dir: str | Path) -> Path:
             "status": response["status"],
             "metrics": metrics,
         })
-    return _publish(_write(root, rows), root.name)
+    return publish_report(_write(root, rows), root.name)
 
 
-def _publish(path: Path, eval_id: str) -> Path:
+def publish_report(path: Path, eval_id: str) -> Path:
     if public_root := (os.getenv("BENCHMARK_REPORT_DIR") or "").strip():
         public_path = Path(public_root) / eval_id / "report.html"
         public_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, public_path)
+        descriptor, temporary = tempfile.mkstemp(prefix=".report-", dir=public_path.parent)
+        os.close(descriptor)
+        try:
+            shutil.copyfile(path, temporary)
+            shutil.copymode(path, temporary)
+            os.replace(temporary, public_path)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
     return path
 
 

@@ -59,6 +59,8 @@ BENCH_MODES=existing_skills,existing_plus_catalog
 `make benchmarking` запускает весь выбранный эксперимент. Чтобы продолжить
 прерванный прогон, укажите прежний `BENCH_EVAL_ID` и `BENCH_RESUME=1` в
 `sim/benchmark/.env`; для следующего нового прогона удалите эти значения.
+При возобновлении готовые ячейки не вызывают модель повторно, а итоговый
+отчёт пересобирается из файлов фаз после их завершения.
 
 Описание режимов, метрик и формата результатов:
 [benchmark-execution-description.md](../../docs/benchmark-execution-description.md).

@@ -372,13 +372,10 @@ benchmarking:  ## полный прогон; generated skills изолируют
 		done 3< "$$group_list"; \
 		merge_args=""; \
 		while IFS= read -r phase; do merge_args="$$merge_args --phase $$phase"; done < "$$phase_list"; \
-		if test -z "$(BENCH_RESUME)" || ! test -f "$(BENCH_RESULTS)/$$eval_id/summary.json"; then \
-			BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.merge $$merge_args \
-				--generated-plan "$$plan" \
-				--results "$(BENCH_RESULTS)" --eval-id "$$eval_id"; \
-		else \
-			BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.report "$(BENCH_RESULTS)/$$eval_id"; \
-		fi; \
+		BENCHMARK_REPORT_DIR="$(CURDIR)/benchmarking/reports" $(PY) -m sim.benchmark.merge $$merge_args \
+			--generated-plan "$$plan" \
+			--results "$(BENCH_RESULTS)" --eval-id "$$eval_id" \
+			$(if $(BENCH_RESUME),--resume,); \
 		if test -z "$(BENCH_CHECK_ONLY)"; then \
 			$(BENCH_COMPOSE) --profile benchmark run --rm --no-deps \
 				--user "$$(id -u):$$(id -g)" benchmark-runner \

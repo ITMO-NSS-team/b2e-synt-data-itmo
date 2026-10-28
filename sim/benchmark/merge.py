@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
+from .report import publish_report
 from .results import ResultWriter, RunResult, summarize_results
 
 
@@ -24,22 +28,19 @@ def merge_phases(
     if not phases:
         if not plan or plan.get("selected_case_ids") or plan.get("groups"):
             raise ValueError("at least one benchmark phase directory is required")
-        writer = ResultWriter(results_root, eval_id, resume=resume)
-        writer.write_manifest({
+        manifest = {
             "schema_version": "1.1", "eval_id": eval_id,
             "check_only": check_only, "cases_path": plan["cases_source"],
             "case_ids": [], "modes": [], "repetitions": 0,
             "live_stand": {}, "generated_plan": plan, "catalog_phases": [],
-        })
-        if check_only:
-            (writer.root / "preflight.json").write_text("[]\n", encoding="utf-8")
-        else:
-            writer.write_summary([], extra=_selection_summary(plan))
+        }
+        writer = _write_merged(results_root, eval_id, manifest, [],
+                               preflight=[] if check_only else None,
+                               extra=_selection_summary(plan), resume=resume)
         return [], writer, check_only
     manifests = [_read_json(path / "run-manifest.json") for path in phases]
     _validate_manifests(manifests, eval_id)
     _validate_generated_plan_execution(manifests, plan)
-    writer = ResultWriter(results_root, eval_id)
     combined_manifest = dict(manifests[0])
     combined_manifest["schema_version"] = "1.1"
     combined_manifest["modes"] = _unique_modes(manifests)
@@ -56,8 +57,6 @@ def merge_phases(
         }
         for manifest in manifests
     ]
-    writer.write_manifest(combined_manifest)
-
     check_only = bool(manifests[0]["check_only"])
     if check_only:
         report = [
@@ -66,10 +65,8 @@ def merge_phases(
             for row in _read_json(phase / "preflight.json")
         ]
         report.sort(key=lambda row: (row["case_id"], row["mode"]))
-        (writer.root / "preflight.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        writer = _write_merged(results_root, eval_id, combined_manifest, [],
+                               preflight=report, resume=resume)
         return [], writer, True
 
     results: list[RunResult] = []
@@ -108,10 +105,58 @@ def merge_phases(
             ))
 
     results.sort(key=lambda row: (row.case_id, row.repetition, row.mode))
-    for result in results:
-        writer.write(result)
-    writer.write_summary(results, extra=_selection_summary(plan))
+    writer = _write_merged(results_root, eval_id, combined_manifest, results,
+                           extra=_selection_summary(plan), resume=resume)
     return results, writer, False
+
+
+def _write_merged(
+    results_root: str | Path, eval_id: str, manifest: dict[str, Any],
+    results: list[RunResult], *, preflight: list[dict[str, Any]] | None = None,
+    extra: dict[str, Any] | None = None, resume: bool = False,
+) -> ResultWriter:
+    """Build a complete derived result before replacing any published result."""
+    root = Path(results_root).resolve()
+    final = root / eval_id
+    if final.exists() and not resume:
+        raise ValueError(f"evaluation output already exists: {final}")
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".merge-{eval_id}-", dir=root) as temporary:
+        writer = ResultWriter(temporary, eval_id)
+        writer.write_manifest(manifest)
+        if preflight is not None:
+            (writer.root / "preflight.json").write_text(
+                json.dumps(preflight, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            for result in results:
+                writer.write(result)
+            writer.write_summary(results, extra=extra, publish_report=False)
+        if final.exists() and not _same_files(writer.root, final):
+            backup = root / f".backup-{Path(temporary).name}"
+            final.rename(backup)
+            try:
+                writer.root.rename(final)
+            except OSError:
+                backup.rename(final)
+                raise
+            shutil.rmtree(backup, ignore_errors=True)
+        elif not final.exists():
+            writer.root.rename(final)
+    if preflight is None:
+        publish_report(final / "report.html", eval_id)
+    return ResultWriter(root, eval_id, resume=True)
+
+
+def _same_files(left: Path, right: Path) -> bool:
+    """Leave an unchanged completed result in place on resume."""
+    files = {path.relative_to(left) for path in left.rglob("*") if path.is_file()}
+    previous = {path.relative_to(right) for path in right.rglob("*")
+                if path.is_file() and path.name != ".telemetry-published"}
+    return files == previous and all(
+        filecmp.cmp(left / name, right / name, shallow=False) for name in files
+    )
 
 
 def _validate_manifests(manifests: list[dict[str, Any]], eval_id: str) -> None:

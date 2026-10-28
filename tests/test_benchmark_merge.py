@@ -8,6 +8,7 @@ import pytest
 from sim.benchmark.merge import (
     _selection_summary, _validate_generated_plan_execution, merge_phases,
 )
+from sim.benchmark.results import ResultWriter
 
 
 def _phase(
@@ -71,6 +72,117 @@ def test_merge_phases_writes_one_summary_and_keeps_shared_group(tmp_path: Path) 
     manifest = json.loads((writer.root / "run-manifest.json").read_text())
     assert manifest["schema_version"] == "1.1"
     assert len(manifest["catalog_phases"]) == 2
+
+
+def test_resume_rebuilds_partial_final_without_duplicate_rows(tmp_path: Path) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    response = writer.responses_path.read_text()
+    writer.responses_path.write_text(response + response)
+    (writer.root / "summary.json").unlink()
+
+    resumed, final, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True,
+    )
+
+    assert len(results) == len(resumed) == 1
+    assert final.responses_path.read_text() == response
+    assert (final.root / "summary.json").is_file()
+    assert (final.root / "report.html").is_file()
+    assert not list((tmp_path / "results").glob(".merge-*"))
+
+
+def test_resume_keeps_unchanged_final_files(tmp_path: Path) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    _results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    original = (writer.root / "summary.json").stat().st_mtime_ns
+    (writer.root / ".telemetry-published").write_text("published\n")
+
+    merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True)
+
+    assert (writer.root / "summary.json").stat().st_mtime_ns == original
+    assert (writer.root / ".telemetry-published").read_text() == "published\n"
+    assert len(writer.responses_path.read_text().splitlines()) == 1
+
+
+def test_resume_refreshes_final_after_a_phase_gains_a_cell(tmp_path: Path) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    manifest_path = phase / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["case_ids"].append("case-0002-00")
+    manifest_path.write_text(json.dumps(manifest))
+    _run(phase, "existing_skills")
+    merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1")
+    raw = json.loads((phase / "responses.jsonl").read_text())
+    raw["case_id"] = "case-0002-00"
+    raw["run_id"] = "eval-1-case-0002-00-existing_skills-01"
+    raw["comparison_group_id"] = "eval-1-case-0002-00-01"
+    raw.pop("trace_path")
+    with (phase / "responses.jsonl").open("a") as handle:
+        handle.write(json.dumps(raw) + "\n")
+    with (phase / "scores.jsonl").open("a") as handle:
+        handle.write(json.dumps({"run_id": raw["run_id"], "metrics": {"answer_accuracy": 1}}) + "\n")
+    results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True,
+    )
+
+    assert len(results) == 2
+    assert len(writer.responses_path.read_text().splitlines()) == 2
+    assert json.loads((writer.root / "summary.json").read_text())["n_runs"] == 2
+
+
+def test_failed_rebuild_keeps_previous_final(tmp_path: Path, monkeypatch) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    _results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    original = writer.responses_path.read_bytes()
+    public = tmp_path / "public"
+    monkeypatch.setenv("BENCHMARK_REPORT_DIR", str(public))
+
+    def fail_summary(*_args, **_kwargs):
+        raise RuntimeError("interrupted merge")
+
+    monkeypatch.setattr(ResultWriter, "write_summary", fail_summary)
+    with pytest.raises(RuntimeError, match="interrupted merge"):
+        merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True)
+
+    assert writer.responses_path.read_bytes() == original
+    assert (writer.root / "summary.json").is_file()
+    assert not public.exists()
+    assert not list((tmp_path / "results").glob(".merge-*"))
+
+
+def test_failed_promotion_and_rollback_preserve_backup(tmp_path: Path, monkeypatch) -> None:
+    phase = _phase(tmp_path, "base", "existing_skills")
+    _run(phase, "existing_skills")
+    _results, writer, _ = merge_phases(
+        [phase], results_root=tmp_path / "results", eval_id="eval-1",
+    )
+    (writer.root / "summary.json").unlink()
+    original_rename = Path.rename
+
+    def fail_rename(path, target):
+        if path.name == "eval-1" and path.parent.name.startswith(".merge-"):
+            raise OSError("promotion failed")
+        if path.name.startswith(".backup-"):
+            raise OSError("rollback failed")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", fail_rename)
+    with pytest.raises(OSError, match="rollback failed"):
+        merge_phases([phase], results_root=tmp_path / "results", eval_id="eval-1", resume=True)
+
+    backups = list((tmp_path / "results").glob(".backup-*"))
+    assert len(backups) == 1
+    assert (backups[0] / "run-manifest.json").is_file()
 
 
 def test_generated_plan_checks_only_modes_assigned_to_each_group() -> None:

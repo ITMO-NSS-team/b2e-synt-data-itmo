@@ -54,6 +54,11 @@ def test_publish_uses_one_final_merged_summary(
         "span", summary, {"eval_id": "eval-1", "final": True},
     )
     assert captured["flushed"] is True
+    assert (tmp_path / ".telemetry-published").is_file()
+    def fail_provider():
+        raise AssertionError("duplicate export")
+    monkeypatch.setattr("sim.benchmark.publish.configure_metric_export", fail_provider)
+    assert publish_summary(tmp_path) is False
 
 
 def test_publish_is_optional_without_telemetry_endpoint(
