@@ -367,6 +367,38 @@ def test_combined_catalog_indexes_same_name_and_version(tmp_path: Path) -> None:
     assert registry.duplicates() == {}
 
 
+@pytest.mark.parametrize(
+    ("generated_version", "base_lookup"),
+    [("0.1.1", "standard@0.1.0"),
+     ("0.1.0", "standard@0.1.0#existing")],
+)
+def test_combined_catalog_pins_ambiguous_related_links_only_in_copy(
+    tmp_path: Path, generated_version: str, base_lookup: str,
+) -> None:
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    _case(cases, "case-0101-00", [f"standard-v{generated_version.replace('.', '-')}"])
+    base = tmp_path / "base"
+    _skill(base, "standard", version="0.1.0")
+    source = base / "source" / "SKILL.md"
+    _skill(base, "source")
+    source.write_text(source.read_text().replace(
+        "status: active\n", "status: active\nrelated:\n  - {name: standard}\n"
+    ))
+    generated = tmp_path / "generated"
+    _skill(generated, "standard", version=generated_version)
+
+    plan = build_generated_plan(
+        cases, generated, tmp_path / "work", schema_path=SCHEMA,
+        base_catalog_path=base, generated_modes=("existing_plus_generated",),
+    )
+    registry = Registry.load(plan["groups"][0]["combined_catalog_path"])
+    target = registry.get("source").related[0]["name"]
+    assert target == base_lookup
+    assert registry.get(target).version == "0.1.0"
+    assert "name: standard}" in source.read_text()
+
+
 def test_combined_catalog_keeps_existing_patch_versions(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     cases.mkdir()

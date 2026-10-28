@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+import yaml
+
 from heimdall.skills.registry import BENCHMARK_GENERATED_PREFIX, Registry, SkillFile, parse_text
 
 from .cli import load_cases_path
@@ -452,6 +454,8 @@ def _combined_catalog(
     generated_copy = target / f"{BENCHMARK_GENERATED_PREFIX}{index}"
     shutil.copytree(generated_catalog, generated_copy)
     registry = _loaded_registry(target)
+    if _pin_related_in_copy(registry, generated_copy):
+        registry = _loaded_registry(target)
     generated_names = tuple(item.name for item in registry.files()
                             if item.ok and item.name and item.path.is_relative_to(generated_copy))
     if not generated_names:
@@ -463,6 +467,45 @@ def _combined_catalog(
     return tuple(name for name in registry.active()
                  if registry.get(name).name == generated_skill_name
                  and registry.get(name).version == generated_version)
+
+
+def _pin_related_in_copy(registry: Registry, generated_copy: Path) -> bool:
+    """Keep old related links usable when generated skills duplicate their names."""
+    names = set(registry.all_names())
+    base_keys = {}
+    for key in sorted(names):
+        skill = registry.get(key)
+        if skill.path is not None and not skill.path.is_relative_to(generated_copy):
+            base_keys[skill.name] = key
+            base_keys[f"{skill.name}@{skill.version}"] = key
+
+    changed = False
+    for item in registry.files():
+        if not item.ok or not item.name:
+            continue
+        skill = registry.get(item.name)
+        replacements = {link["name"]: base_keys[link["name"]]
+                        for link in skill.related
+                        if link.get("name") in base_keys and link["name"] not in names}
+        if not replacements:
+            continue
+        text = item.path.read_text(encoding="utf-8")
+        if item.path.suffix == ".md":
+            end = text.index("\n---", 3)
+            meta = yaml.safe_load(text[3:end])
+            body = text[end + 4:].lstrip("\n")
+        else:
+            meta = yaml.safe_load(text)
+        for link in meta["related"]:
+            if link.get("name") in replacements:
+                link["name"] = replacements[link["name"]]
+        header = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False)
+        item.path.write_text(
+            f"---\n{header}---\n\n{body}" if item.path.suffix == ".md" else header,
+            encoding="utf-8",
+        )
+        changed = True
+    return changed
 
 
 def _exclude(case_id: str, expected: tuple[str, ...], status: str, reason: str) -> dict[str, Any]:
