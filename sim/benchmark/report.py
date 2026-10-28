@@ -124,6 +124,7 @@ def _point(row: dict[str, Any]) -> dict[str, Any]:
         "repetition": row["repetition"],
         "status": row["status"],
         "accuracy": metrics.get("answer_accuracy"),
+        "llm_judge_accuracy": metrics.get("llm_judge_accuracy"),
         "any_skill_loaded": metrics.get("any_skill_loaded"),
         "expected_skill_loaded": metrics.get("expected_skill_loaded"),
         "latency_s": latency / 1000 if latency is not None else None,
@@ -166,12 +167,19 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ),
     ):
         accuracy = _mean(point["accuracy"] for point in group)
+        judge_scores = [
+            point["llm_judge_accuracy"] for point in group
+            if point["llm_judge_accuracy"] is not None
+        ]
         output.append({
             "mode": mode,
             "method": method,
             "detail": detail,
             "runs": len(group),
             "accuracy": accuracy,
+            "llm_judge_accuracy": _mean(judge_scores),
+            "llm_judge_passed": sum(value == 1 for value in judge_scores),
+            "llm_judge_scored": len(judge_scores),
             "delta_pp": (
                 (accuracy - baseline) * 100
                 if accuracy is not None and baseline is not None

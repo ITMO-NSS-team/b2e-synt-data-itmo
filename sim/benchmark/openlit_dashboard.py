@@ -76,6 +76,8 @@ WITH
             toFloat64OrNull(nullIf(
                 SpanAttributes['b2e.metric.answer_accuracy'], '')) AS answer_score,
             toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.llm_judge_accuracy'], '')) AS judge_score,
+            toFloat64OrNull(nullIf(
                 SpanAttributes['b2e.metric.generated_skill_loaded'], '')) AS skill_loaded_score,
             toFloat64OrNull(nullIf(
                 SpanAttributes['b2e.metric.latency_ms'], '')) AS latency_ms,
@@ -109,6 +111,9 @@ WITH
                 'unknown'
             ) AS detail,
             avg(answer_score) AS answer_accuracy,
+            avg(judge_score) AS llm_judge_accuracy,
+            count(judge_score) AS llm_judge_scored,
+            countIf(judge_score = 1) AS llm_judge_passed,
             avg(skill_loaded_score) AS target_skill_loaded,
             quantileExactInclusive(0.5)(latency_ms) / 1000 AS median_latency_s,
             quantileExactInclusive(0.5)(mcp_queries) AS median_mcp_queries
@@ -131,6 +136,14 @@ SELECT
     g.method AS method,
     g.detail AS detail,
     round(g.answer_accuracy * 100, 1) AS answer_accuracy_pct,
+    if(
+        g.llm_judge_scored = 0,
+        NULL,
+        concat(
+            toString(round(g.llm_judge_accuracy * 100, 1)), '% (',
+            toString(g.llm_judge_passed), '/', toString(g.llm_judge_scored), ')'
+        )
+    ) AS llm_judge_accuracy,
     if(
         g.mode = 'existing_skills' OR b.existing_present = 0,
         NULL,
@@ -237,8 +250,8 @@ WIDGETS = (
         key="mode-comparison",
         title="Latest experiment metrics",
         description=(
-            "Последний benchmark в выбранном интервале: accuracy, прирост к "
-            "existing_skills, загрузка целевого generated skill и медианы "
+            "Последний benchmark в выбранном интервале: deterministic и LLM "
+            "judge accuracy, прирост к existing_skills, загрузка целевого skill и медианы "
             "времени и mcp_query. Метод и детализация извлекаются из variant_id."
         ),
         query=MODE_COMPARISON_QUERY,

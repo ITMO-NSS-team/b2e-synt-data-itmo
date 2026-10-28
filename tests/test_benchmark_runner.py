@@ -218,6 +218,88 @@ def test_runner_treats_blocked_bash_as_completed_when_answer_exists() -> None:
     assert result.score["reasons"] == []
 
 
+def test_llm_judge_is_supplemental_and_does_not_change_answer_accuracy() -> None:
+    class RejectingJudge:
+        def evaluate(self, **kwargs):
+            assert kwargs["query"].startswith(ready_case().raw["query"])
+            assert "Формат ответа для автоматической проверки" in kwargs["query"]
+            assert kwargs["candidate"]
+            return {
+                "applicable": True,
+                "pass": False,
+                "scores": {"semantic_correctness": 0},
+                "explanation": "Тестовый вердикт",
+                "model": "glm-test",
+                "prompt_version": "test@1",
+                "usage": None,
+                "error": None,
+            }
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=FakeExecutor(),
+        answer_judge=RejectingJudge(),
+    )
+
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+    summary = summarize_results([result])
+
+    assert result.score["metrics"]["answer_accuracy"] == 1
+    assert result.score["metrics"]["llm_judge_accuracy"] == 0
+    assert result.score["llm_judge"]["explanation"] == "Тестовый вердикт"
+    assert summary["by_mode"]["existing_skills"]["n_llm_judged"] == 1
+    assert summary["by_mode"]["existing_skills"]["n_llm_judge_passed"] == 0
+
+
+def test_llm_judge_failure_does_not_fail_the_benchmark_run() -> None:
+    class BrokenJudge:
+        def evaluate(self, **kwargs):
+            raise RuntimeError("judge unavailable")
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=FakeExecutor(),
+        answer_judge=BrokenJudge(),
+    )
+
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+
+    assert result.status == "completed"
+    assert result.score["metrics"]["answer_accuracy"] == 1
+    assert result.score["metrics"]["llm_judge_accuracy"] is None
+    assert result.score["llm_judge"]["error"] == "RuntimeError: judge unavailable"
+
+
+def test_llm_judge_is_not_called_for_non_answerable_cases() -> None:
+    class UnexpectedJudge:
+        def evaluate(self, **kwargs):
+            raise AssertionError("judge must only receive answerable cases")
+
+    source = ready_case()
+    raw = dict(source.raw)
+    raw["category"] = "no_data"
+    case = BenchmarkCase(source.source_path, raw)
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda item, selected: PreflightResult(
+            item.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=FakeExecutor(),
+        answer_judge=UnexpectedJudge(),
+    )
+
+    result = runner.run([case], {"existing_skills": mode()})[0]
+
+    assert result.score["metrics"]["llm_judge_accuracy"] is None
+    assert result.score["llm_judge"]["applicable"] is False
+
+
 def test_runner_skips_draft_and_mock_without_activation() -> None:
     executor, activator = FakeExecutor(), FakeActivator()
     states = {

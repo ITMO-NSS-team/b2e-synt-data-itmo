@@ -13,6 +13,7 @@ from .execution import (
     AgentRequest, AgentTurn, ModeActivator, SessionExecutor,
     fatal_turn_error, trace_observations,
 )
+from .judge import AnswerJudge
 from .modes import ModeConfig, ModeConfigs
 from .preflight import PreflightResult
 from .results import ResultWriter, RunResult
@@ -41,6 +42,7 @@ class BenchmarkRunner:
     writer: ResultWriter | None = None
     scorer_version: str = "benchmark-scorer@2"
     mode_labels: Mapping[str, str] | None = None
+    answer_judge: AnswerJudge | None = None
 
     def run(
         self,
@@ -154,6 +156,13 @@ class BenchmarkRunner:
                 "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
             ):
                 metrics[name] = None
+        judge_result = _judge_result(
+            self.answer_judge, case, rendered_query, turn.answer, status,
+        )
+        metrics["llm_judge_accuracy"] = (
+            int(judge_result["pass"])
+            if judge_result.get("pass") is not None else None
+        )
         response = {
             "condition_id": checked.fingerprint.condition_id if checked.fingerprint else None,
             "catalog_hash": activated.catalog_hash,
@@ -187,12 +196,7 @@ class BenchmarkRunner:
             "scorer_version": self.scorer_version,
             "normalized_answer": normalized.value,
             "metrics": metrics,
-            "llm_judge": {
-                "applicable": False,
-                "pass": None,
-                "scores": None,
-                "explanation": None,
-            },
+            "llm_judge": judge_result,
             "reasons": reasons,
         }
         result = RunResult(
@@ -212,6 +216,44 @@ class BenchmarkRunner:
             parent_span_id=root_span_id(turn.trace),
         )
         return result
+
+
+def _judge_result(
+    judge: AnswerJudge | None,
+    case: BenchmarkCase,
+    query: str,
+    candidate: str,
+    status: str,
+) -> dict[str, object]:
+    empty: dict[str, object] = {
+        "applicable": False,
+        "pass": None,
+        "scores": None,
+        "explanation": None,
+        "model": None,
+        "prompt_version": None,
+        "usage": None,
+        "error": None,
+    }
+    if (
+        judge is None
+        or case.raw["category"] != "answerable"
+        or status not in {"completed", "normalization_pending"}
+    ):
+        return empty
+    try:
+        return judge.evaluate(
+            query=query,
+            reference=case.raw["gold_answer"],
+            comparison=case.raw["gold_comparison"],
+            candidate=candidate,
+        )
+    except Exception as exc:  # Supplemental scoring must not invalidate the run.
+        return {
+            **empty,
+            "applicable": True,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
 
 def _mode_list(

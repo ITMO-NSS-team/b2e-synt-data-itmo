@@ -10,6 +10,7 @@ def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int, ste
         run_id=run_id, case_id="case-0001-00", mode=mode, repetition=1,
         status="completed", score={"metrics": {
             "answer_accuracy": accuracy,
+            "llm_judge_accuracy": accuracy,
             "generated_skill_loaded": 1 if "generated" in mode else None,
             "latency_ms": latency,
             "mcp_query_calls": calls,
@@ -62,6 +63,7 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert "Нажмите на точку" in text
     assert "Любой skill загружен" in text
     assert "Expected skill загружен" in text
+    assert "LLM judge accuracy" in text
     assert "Медиана шагов" in text
     assert "Шаги агента, шт." in text
     assert text.count('type: "scatter3d"') == 1
@@ -76,6 +78,9 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert '"median_latency_s":3.0' in text
     assert '"median_total_tokens":400.0' in text
     assert '"expected_skill_loaded":1.0' in text
+    assert '"llm_judge_accuracy":1.0' in text
+    assert '"llm_judge_passed":2' in text
+    assert '"llm_judge_scored":2' in text
     assert '"delta_pp":100.0' in text
     assert (public / "eval-1" / "report.html").read_text() == text
     assert list((public / "eval-1").iterdir()) == [public / "eval-1" / "report.html"]

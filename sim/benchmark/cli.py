@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 from .cases import BenchmarkCase, load_case, load_suite, validate_case
 from .execution import PinnedConfigActivator, StandSessionExecutor
+from .judge import from_env as answer_judge_from_env
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes, mode_strategy
 from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case
@@ -393,6 +394,7 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
             name: _result_mode_name(name, getattr(args, "generated_variant_id", None))
             for name in prepared.selected_modes
         },
+        answer_judge=answer_judge_from_env(),
     )
     with telemetry.benchmark_run(
         eval_id=eval_id,

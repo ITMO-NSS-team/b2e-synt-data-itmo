@@ -8,6 +8,7 @@ const colors = {
 };
 const symbols = { abstract: "circle", medium: "square", detailed: "diamond", "—": "cross" };
 const pct = value => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+const pctCount = (value, passed, scored) => value == null ? "—" : `${pct(value)} (${passed}/${scored})`;
 const num = value => value == null ? "—" : Number(value).toFixed(1);
 const esc = value => String(value).replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -26,6 +27,7 @@ document.getElementById("cards").innerHTML = [
 document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
   <td>${esc(row.mode)}</td><td>${esc(row.method)}</td><td>${esc(row.detail)}</td><td>${row.runs}</td>
   <td>${pct(row.accuracy)}</td>
+  <td>${pctCount(row.llm_judge_accuracy, row.llm_judge_passed, row.llm_judge_scored)}</td>
   <td>${row.delta_pp == null ? "—" : `${row.delta_pp > 0 ? "+" : ""}${row.delta_pp.toFixed(1)}`}</td>
   <td>${pct(row.any_skill_loaded)}</td><td>${pct(row.expected_skill_loaded)}</td>
   <td>${row.median_latency_s == null ? "—" : `${num(row.median_latency_s)} с`}</td>
@@ -65,7 +67,7 @@ const legend = (rows, correctness = false) => {
 
 const runs = data.runs.filter(row => row.accuracy != null && row.latency_s != null && row.iterations != null);
 const runCustom = runs.map(row => [
-  row.run_id, row.case_id, configName(row), row.accuracy, row.latency_s, row.mcp_queries, row.iterations,
+  row.run_id, row.case_id, configName(row), row.accuracy, row.latency_s, row.mcp_queries, row.iterations, row.llm_judge_accuracy,
 ]);
 Plotly.newPlot("efficiency", [{
   type: "scatter",
@@ -80,7 +82,7 @@ Plotly.newPlot("efficiency", [{
     line: { color: runs.map(row => row.accuracy === 1 ? "#067647" : "#d92d20"), width: 3 },
     opacity: 0.85,
   },
-  hovertemplate: "<b>%{customdata[0]}</b><br>case: %{customdata[1]}<br>%{customdata[2]}<br>accuracy: %{customdata[3]}<br>time: %{customdata[4]:.1f} s<br>mcp_query: %{customdata[5]}<br>steps: %{customdata[6]}<extra></extra>",
+  hovertemplate: "<b>%{customdata[0]}</b><br>case: %{customdata[1]}<br>%{customdata[2]}<br>accuracy: %{customdata[3]}<br>LLM judge: %{customdata[7]}<br>time: %{customdata[4]:.1f} s<br>mcp_query: %{customdata[5]}<br>steps: %{customdata[6]}<extra></extra>",
 }], {
   margin: { l: 68, r: 20, t: 24, b: 62 },
   paper_bgcolor: "transparent",

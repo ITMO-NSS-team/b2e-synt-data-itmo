@@ -189,11 +189,17 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             "n_review": sum(
                 row.status in _REVIEW_STATUSES for row in mode_rows
             ),
+            "n_llm_judged": sum(
+                metric.get("llm_judge_accuracy") is not None for metric in metrics
+            ),
+            "n_llm_judge_passed": sum(
+                metric.get("llm_judge_accuracy") == 1 for metric in metrics
+            ),
             **{
                 name: _mean(metric.get(name) for metric in metrics)
                 for name in (
                     "answer_accuracy", "exact_match", "outcome_accuracy",
-                    "correct_refusal", "any_skill_loaded",
+                    "correct_refusal", "llm_judge_accuracy", "any_skill_loaded",
                     "expected_skill_loaded", "generated_skill_loaded",
                     *OPERATIONAL_METRICS,
                 )
@@ -238,7 +244,8 @@ def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]
     output: dict[str, Any] = {}
     for name in (
         "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
-        "any_skill_loaded", "expected_skill_loaded", "generated_skill_loaded",
+        "llm_judge_accuracy", "any_skill_loaded", "expected_skill_loaded",
+        "generated_skill_loaded",
         *OPERATIONAL_METRICS,
     ):
         a, b = target.get(name), baseline.get(name)
@@ -285,7 +292,8 @@ def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     rows = list(metrics)
     names = (
         "answer_accuracy", "exact_match", "outcome_accuracy", "correct_refusal",
-        "any_skill_loaded", "expected_skill_loaded", "generated_skill_loaded",
+        "llm_judge_accuracy", "any_skill_loaded", "expected_skill_loaded",
+        "generated_skill_loaded",
         *OPERATIONAL_METRICS,
     )
     return {
