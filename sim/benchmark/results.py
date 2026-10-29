@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 from typing import Any, Iterable
 
 from .execution import OPERATIONAL_METRICS
@@ -350,12 +351,12 @@ def _paired_compare(
         for group in groups
         if (group, target_mode) in by_cell and (group, baseline_mode) in by_cell
     ]
-    target = _metric_means(item[0] for item in pairs)
-    baseline = _metric_means(item[1] for item in pairs)
+    target = _metric_aggregates(item[0] for item in pairs)
+    baseline = _metric_aggregates(item[1] for item in pairs)
     return {"n_pairs": len(pairs), **_compare(target, baseline)}
 
 
-def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
+def _metric_aggregates(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
     rows = list(metrics)
     names = (
         "answer_accuracy", "strict_answer_accuracy", "format_valid",
@@ -365,7 +366,9 @@ def _metric_means(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "generated_skill_loaded", "any_skill_loaded", "expected_skill_loaded", *OPERATIONAL_METRICS,
     )
     return {
-        name: _mean(row.get(name) for row in rows)
+        name: (_median if name in OPERATIONAL_METRICS else _mean)(
+            row.get(name) for row in rows
+        )
         for name in names
     }
 
@@ -376,6 +379,14 @@ def _mean(values: Iterable[Any]) -> float | None:
         if value is not None and not isinstance(value, bool)
     ]
     return sum(kept) / len(kept) if kept else None
+
+
+def _median(values: Iterable[Any]) -> float | None:
+    kept = [
+        float(value) for value in values
+        if value is not None and not isinstance(value, bool)
+    ]
+    return median(kept) if kept else None
 
 
 def _append_jsonl(path: Path, value: dict[str, Any]) -> None:

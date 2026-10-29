@@ -15,7 +15,7 @@ from sim.benchmark.modes import (
     BenchmarkMode, CommonConditions, ModeConfig,
 )
 from sim.benchmark.preflight import PreflightResult
-from sim.benchmark.results import ResultWriter, summarize_results
+from sim.benchmark.results import ResultWriter, _metric_aggregates, summarize_results
 from sim.benchmark.runner import BenchmarkRunner
 from sim.fingerprint import RunFingerprint
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE
@@ -65,6 +65,17 @@ def fingerprint() -> RunFingerprint:
         temperature=0, data_snapshot_hash="heimdall-sandbox@test",
         traps_enabled=True, latency_profile="instant", hr_employee_ids=(),
     )
+
+
+def test_comparison_uses_rates_for_quality_and_medians_for_operations() -> None:
+    metrics = _metric_aggregates([
+        {"answer_accuracy": 1, "latency_ms": 10},
+        {"answer_accuracy": 1, "latency_ms": 20},
+        {"answer_accuracy": 0, "latency_ms": 1000},
+    ])
+
+    assert metrics["answer_accuracy"] == pytest.approx(2 / 3)
+    assert metrics["latency_ms"] == 20
 
 
 class FakeActivator:
