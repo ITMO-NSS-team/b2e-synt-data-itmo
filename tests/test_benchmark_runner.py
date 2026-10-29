@@ -472,6 +472,73 @@ def test_runner_keeps_the_full_executor_traceback() -> None:
     assert summarize_results([result])["n_unscored"] == 1
 
 
+def test_runner_retries_a_transient_infrastructure_failure(monkeypatch) -> None:
+    class FlakyExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            if not self.requests:
+                self.requests.append(request)
+                return AgentTurn(
+                    answer="", error="HTTP 502: unknown certificate verification error",
+                )
+            return super().execute(request)
+
+    monkeypatch.setattr("sim.benchmark.runner.time.sleep", lambda _seconds: None)
+    executor = FlakyExecutor()
+    result = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=executor,
+    ).run([ready_case()], {"existing_skills": mode()})[0]
+
+    assert result.status == "completed"
+    assert result.response["execution_attempts"] == 2
+    assert len(executor.requests) == 2
+
+
+def test_runner_does_not_retry_a_non_infrastructure_failure(monkeypatch) -> None:
+    class FailedExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            self.requests.append(request)
+            return AgentTurn(answer="", error="invalid agent configuration")
+
+    monkeypatch.setattr("sim.benchmark.runner.time.sleep", lambda _seconds: None)
+    executor = FailedExecutor()
+    result = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=executor,
+    ).run([ready_case()], {"existing_skills": mode()})[0]
+
+    assert result.status == "unscored"
+    assert result.response["execution_attempts"] == 1
+    assert len(executor.requests) == 1
+
+
+def test_runner_limits_infrastructure_retries_to_two(monkeypatch) -> None:
+    class FailedExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            self.requests.append(request)
+            return AgentTurn(answer="", error="connection reset")
+
+    monkeypatch.setattr("sim.benchmark.runner.time.sleep", lambda _seconds: None)
+    executor = FailedExecutor()
+    result = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=executor,
+    ).run([ready_case()], {"existing_skills": mode()})[0]
+
+    assert result.status == "unscored"
+    assert result.response["execution_attempts"] == 3
+    assert len(executor.requests) == 3
+
+
 def test_missing_trace_is_unscored_even_when_json_matches() -> None:
     class NoTraceExecutor(FakeExecutor):
         def execute(self, request: AgentRequest) -> AgentTurn:

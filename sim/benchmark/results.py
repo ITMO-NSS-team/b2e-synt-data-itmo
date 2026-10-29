@@ -108,7 +108,7 @@ class ResultWriter:
         return path
 
     def read_checkpoint(self) -> list[RunResult]:
-        """Read saved cells without rewriting them or repeating an LLM call."""
+        """Read completed cells and remove unscored cells so resume retries them."""
         if not self.resume:
             return []
         responses, response_ends = _checkpoint_rows(self.responses_path)
@@ -123,6 +123,13 @@ class ResultWriter:
                 raise ValueError("incomplete checkpoint cell is not the last response")
             responses.pop()
             response_ends.pop()
+        retry_ids = {raw["run_id"] for raw in responses if raw["status"] == "unscored"}
+        if retry_ids:
+            responses = [raw for raw in responses if raw["run_id"] not in retry_ids]
+            score_rows = [raw for raw in score_rows if raw["run_id"] not in retry_ids]
+            scores = {row["run_id"]: row for row in score_rows}
+            _replace_jsonl(self.responses_path, responses)
+            _replace_jsonl(self.scores_path, score_rows)
         results, seen = [], set()
         for raw in responses:
             run_id = raw["run_id"]
@@ -138,10 +145,11 @@ class ResultWriter:
             ))
         if set(scores) - seen:
             raise ValueError("checkpoint contains scores without responses")
-        for path, ends in ((self.responses_path, response_ends), (self.scores_path, score_ends)):
-            if path.exists() and path.stat().st_size != ends[-1]:
-                with path.open("r+b") as handle:
-                    handle.truncate(ends[-1])
+        if not retry_ids:
+            for path, ends in ((self.responses_path, response_ends), (self.scores_path, score_ends)):
+                if path.exists() and path.stat().st_size != ends[-1]:
+                    with path.open("r+b") as handle:
+                        handle.truncate(ends[-1])
         return results
 
     def write_summary(
@@ -207,6 +215,12 @@ def _checkpoint_rows(path: Path) -> tuple[list[dict[str, Any]], list[int]]:
             break
         ends.append(ends[-1] + len(line))
     return rows, ends
+
+
+def _replace_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text("".join(_json(row) + "\n" for row in rows), encoding="utf-8")
+    temporary.replace(path)
 
 
 def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:

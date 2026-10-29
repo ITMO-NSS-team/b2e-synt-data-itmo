@@ -120,7 +120,7 @@ def test_old_result_files_backfill_skill_metrics(tmp_path) -> None:
         '{"run_id":"run-1","case_id":"case-1","mode":"existing_skills",'
         '"repetition":1,"status":"completed","observations":'
         '{"loaded_skills":["expected"]},"case_snapshot":'
-        '{"expected_skills":["expected"]}}\n',
+        '{"expected_skills":["expected-v2-extend"]}}\n',
         encoding="utf-8",
     )
 

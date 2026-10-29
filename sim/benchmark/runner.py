@@ -1,8 +1,10 @@
 """Orchestrate preflight, isolated turns, normalization, scoring and output."""
 from __future__ import annotations
 
-import traceback
 import contextvars
+import re
+import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
@@ -23,6 +25,14 @@ from .scoring import NormalizedAnswer, calculate_metrics, normalize_answer, resp
 from .trace import root_span_id
 from sim import telemetry
 from sim.fingerprint import RunFingerprint
+
+
+_RETRYABLE_INFRASTRUCTURE_ERROR = re.compile(
+    r"(?:\bHTTP\s+(?:408|429|5\d\d)\b|certificate|timed?\s*out|timeout|"
+    r"unable to connect|connection (?:closed|reset|refused)|closed mid-response)",
+    re.IGNORECASE,
+)
+_INFRASTRUCTURE_RETRIES = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,10 +197,7 @@ class BenchmarkRunner:
                     "prompt_renderer_version": PROMPT_RENDERER_VERSION,
                 },
             )
-            try:
-                turn = self.executor.execute(request)
-            except Exception:
-                turn = AgentTurn(answer="", error=traceback.format_exc())
+            turn, execution_attempts = self._execute(request)
         finally:
             self.activator.deactivate(mode)
 
@@ -231,6 +238,7 @@ class BenchmarkRunner:
                 "gold_comparison": case.raw["gold_comparison"],
             },
             "response": {"raw_answer": turn.answer, "error": review_reason},
+            "execution_attempts": execution_attempts,
             "observations": observations,
             "session_id": turn.session_id,
             "trace_id": turn.trace_id,
@@ -268,6 +276,18 @@ class BenchmarkRunner:
             parent_span_id=root_span_id(turn.trace),
         )
         return result
+
+    def _execute(self, request: AgentRequest) -> tuple[AgentTurn, int]:
+        """Retry only failures that cannot represent model quality."""
+        for attempt in range(1, _INFRASTRUCTURE_RETRIES + 2):
+            try:
+                turn = self.executor.execute(request)
+            except Exception:
+                turn = AgentTurn(answer="", error=traceback.format_exc())
+            if attempt > _INFRASTRUCTURE_RETRIES or not _retryable_failure(turn):
+                return turn, attempt
+            time.sleep(attempt)
+        raise AssertionError("unreachable")
 
 
 def _judge_result(
@@ -358,6 +378,13 @@ def _classify_turn(
     if normalized.value is None:
         return "normalization_pending", normalized.error
     return "completed", None
+
+
+def _retryable_failure(turn: AgentTurn) -> bool:
+    error = fatal_turn_error(turn.error, answer=turn.answer)
+    if error:
+        return bool(_RETRYABLE_INFRASTRUCTURE_ERROR.search(error))
+    return turn.trace is None
 
 
 def _fingerprint_error(
