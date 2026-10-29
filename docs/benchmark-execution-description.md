@@ -517,11 +517,13 @@ Generated skill с именем стандартного skill остаётся 
 skill может обслуживать любое число аугментаций кейса, а несколько вариантов
 или имён не размножают baseline-запуски.
 
-Связь с кейсом определяется по `name` и `version` внутри skill-файла; каталог
-задаёт только источник и уникальный идентификатор физического варианта. Поэтому
-`baseline/first/SKILL.md` и `skillfactory/second.md` могут проверяться отдельно
-на одном наборе кейсов, если их метаданные соответствуют `expected_skills`.
-Имя файла не переопределяет версию skill.
+Связь с кейсом определяется по полному имени файла generated skill без `.md`.
+Оно должно совпадать с одним из значений `expected_skills`, включая версию
+промпта и постфикс, например `compare_people-v2-extend.md`. `name` и `version`
+во frontmatter описывают runtime skill и в мэтчинге кейсов не участвуют.
+Физические варианты разнесены по каталогам, например
+`compact/detailed/compare_people-v2-extend.md` и
+`no-context/detailed/compare_people-v2-extend.md`.
 
 Все фазы используют один логический `eval_id`, а затем объединяются в общие
 `responses.jsonl`, `scores.jsonl`, `traces/` и `summary.json`. В `summary.json`
