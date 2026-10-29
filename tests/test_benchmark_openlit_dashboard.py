@@ -112,6 +112,7 @@ def test_dashboard_queries_include_trace_links_and_every_mode() -> None:
     assert "generated_skills" in MODE_COMPARISON_QUERY
     assert "general_knowledge" in MODE_COMPARISON_QUERY
     assert "accuracy_delta_vs_existing_skills_pp" in MODE_COMPARISON_QUERY
+    assert "llm_judge_accuracy" in MODE_COMPARISON_QUERY
     assert "('generated_skills', 'existing_plus_generated', 'existing_plus_catalog')" in MODE_COMPARISON_QUERY
     assert "quantileExactInclusive(0.5)(latency_ms)" in MODE_COMPARISON_QUERY
     assert "quantileExactInclusive(0.5)(mcp_queries)" in MODE_COMPARISON_QUERY

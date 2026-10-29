@@ -126,7 +126,7 @@ def emit_benchmark_metrics(
     trace_id: str | None = None,
     parent_span_id: str | None = None,
 ) -> None:
-    """Export one deterministic score beside the turn that produced it.
+    """Export one score record beside the turn that produced it.
 
     The answer span has already ended by the time gold comparison is legal.
     A late evaluator child keeps scoring out of the model path while making the

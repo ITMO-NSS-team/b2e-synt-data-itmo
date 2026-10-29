@@ -12,7 +12,7 @@ from sim.benchmark.modes import (
     GENERATED_SKILL_TOOLS, GENERAL_KNOWLEDGE_TOOLS, SKILL_TOOLS,
     BenchmarkMode, CommonConditions, ModeConfig,
 )
-from sim.benchmark.scoring import NormalizedAnswer, calculate_metrics, normalize_answer
+from sim.benchmark.scoring import NormalizedAnswer, calculate_metrics, normalize_answer, response_format_valid
 from tests.fixtures.constants import EXAMPLE
 
 
@@ -76,6 +76,21 @@ def test_normalizer_extracts_fenced_json_and_rejects_prose() -> None:
     missing = normalize_answer("Получилось пять сотрудников.", case.raw["gold_contract"])
     assert missing.value is None
     assert "no JSON object" in missing.error
+
+
+def test_response_format_checks_entire_message() -> None:
+    case = ready_case()
+    contract = case.raw["gold_contract"]
+    payload = json.dumps(case.raw["gold_answer"])
+    tail = "\n```answer\nverdict: ok\nids: []\nvalue: null\nrefused: false\nreason: null\n```"
+    for answer in (payload, payload + tail):
+        assert response_format_valid(answer, normalize_answer(answer, contract))
+    for answer in (
+        "Result: " + payload, payload + "\nExplanation", payload + payload,
+        "```json\n" + payload + "\n```", payload + tail + tail,
+        payload[:-1],
+    ):
+        assert not response_format_valid(answer, normalize_answer(answer, contract))
 
 
 def test_metrics_respect_order_tolerance_and_generated_routing() -> None:

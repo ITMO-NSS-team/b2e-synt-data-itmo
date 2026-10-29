@@ -172,6 +172,8 @@ def _point(row: dict[str, Any], group: dict[str, Any] | None = None) -> dict[str
         "repetition": row["repetition"],
         "status": row["status"],
         "accuracy": metrics.get("answer_accuracy"),
+        "format_valid": metrics.get("format_valid"),
+        "llm_judge_accuracy": metrics.get("llm_judge_accuracy"),
         "any_skill_loaded": metrics.get("any_skill_loaded"),
         "expected_skill_loaded": metrics.get("expected_skill_loaded"),
         "generated_skill_loaded": metrics.get("generated_skill_loaded"),
@@ -212,6 +214,8 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for (mode, variant), group in sorted(groups.items()):
         first = group[0]
         accuracy_values = [point["accuracy"] for point in group if point["accuracy"] is not None]
+        format_values = [point["format_valid"] for point in group if point["format_valid"] is not None]
+        judge_values = [point["llm_judge_accuracy"] for point in group if point["llm_judge_accuracy"] is not None]
         any_skill_values = [point["any_skill_loaded"] for point in group if point["any_skill_loaded"] is not None]
         expected_values = [point["expected_skill_loaded"] for point in group if point["expected_skill_loaded"] is not None]
         generated_values = [point["generated_skill_loaded"] for point in group if point["generated_skill_loaded"] is not None]
@@ -233,6 +237,12 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "accuracy": accuracy,
             "accuracy_correct": sum(accuracy_values),
             "accuracy_total": len(accuracy_values),
+            "format_valid": _mean(format_values),
+            "format_valid_count": sum(format_values),
+            "format_valid_total": len(format_values),
+            "llm_judge_accuracy": _mean(judge_values),
+            "llm_judge_passed": sum(judge_values),
+            "llm_judge_scored": len(judge_values),
             "n_pairs": len(pairs),
             "delta_pp": 100 * _mean(a - b for a, b in pairs) if pairs else None,
             "any_skill_loaded": _mean(any_skill_values),

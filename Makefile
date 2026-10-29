@@ -188,10 +188,13 @@ BENCH_GENERATED_VARIANT_ID ?=
 BENCH_MAX_UNSCORED := $(call benchmark_env,BENCH_MAX_UNSCORED)
 BENCH_WORKERS := $(or $(call benchmark_env,BENCH_WORKERS),1)
 BENCH_RESUME := $(call benchmark_env,BENCH_RESUME)
+BENCH_LLM_JUDGE_ENABLED := $(or $(call benchmark_env,BENCH_LLM_JUDGE_ENABLED),false)
+BENCH_LLM_JUDGE_MODEL := $(call benchmark_env,BENCH_LLM_JUDGE_MODEL)
 BENCH_REFERENCE_MANIFEST ?=
 BENCH_LOCK_HELD ?=
 export BENCH_MAX_UNSCORED BENCH_MODES BENCH_WORKERS BENCH_CHECK_ONLY BENCH_LIMIT
 export BENCH_REPETITIONS BENCH_EVAL_PREFIX BENCH_EVAL_ID BENCH_SKILL_CATALOGS BENCH_RESUME
+export BENCH_LLM_JUDGE_ENABLED BENCH_LLM_JUDGE_MODEL
 empty :=
 space := $(empty) $(empty)
 comma := ,
@@ -296,9 +299,9 @@ benchmarking:  ## полный прогон; generated skills изолируют
 	@mkdir -p var
 	@if test -z "$(BENCH_LOCK_HELD)"; then \
 		if command -v flock >/dev/null 2>&1; then \
-			exec flock -n var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+			exec flock -n var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1 BENCH_MODES="$(BENCH_MODES)" BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_LIMIT="$(BENCH_LIMIT)"; \
 		fi; \
-		exec lockf -t 0 var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1; \
+		exec lockf -t 0 var/benchmark-stand.lock $(MAKE) --no-print-directory benchmarking BENCH_LOCK_HELD=1 BENCH_MODES="$(BENCH_MODES)" BENCH_REPETITIONS="$(BENCH_REPETITIONS)" BENCH_LIMIT="$(BENCH_LIMIT)"; \
 	fi; \
 	if test -n "$(BENCH_GENERATED_MODE_LIST)"; then \
 		set -e; \

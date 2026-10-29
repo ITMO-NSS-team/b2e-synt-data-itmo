@@ -62,5 +62,9 @@ BENCH_MODES=existing_skills,existing_plus_catalog
 При возобновлении готовые ячейки не вызывают модель повторно, а итоговый
 отчёт пересобирается из файлов фаз после их завершения.
 
+Дополнительная семантическая оценка `answerable`-ответов включается через
+`BENCH_LLM_JUDGE_ENABLED=true` и `BENCH_LLM_JUDGE_MODEL=<model>` в этом же
+файле. Она отображается отдельно и не меняет детерминированную accuracy.
+
 Описание режимов, метрик и формата результатов:
 [benchmark-execution-description.md](../../docs/benchmark-execution-description.md).

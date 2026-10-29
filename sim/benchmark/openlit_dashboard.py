@@ -78,6 +78,8 @@ WITH
             toFloat64OrNull(nullIf(
                 SpanAttributes['b2e.metric.answer_accuracy'], '')) AS answer_score,
             toFloat64OrNull(nullIf(
+                SpanAttributes['b2e.metric.llm_judge_accuracy'], '')) AS judge_score,
+            toFloat64OrNull(nullIf(
                 SpanAttributes['b2e.metric.generated_skill_loaded'], '')) AS skill_loaded_score,
             toFloat64OrNull(nullIf(
                 SpanAttributes['b2e.metric.latency_ms'], '')) AS latency_ms,
@@ -104,6 +106,9 @@ WITH
             avg(answer_score) AS answer_accuracy,
             count(answer_score) AS answer_scored,
             countIf(answer_score = 1) AS answer_correct,
+            avg(judge_score) AS llm_judge_accuracy,
+            count(judge_score) AS llm_judge_scored,
+            countIf(judge_score = 1) AS llm_judge_passed,
             avg(skill_loaded_score) AS target_skill_loaded,
             count(skill_loaded_score) AS target_eligible,
             countIf(skill_loaded_score = 1) AS target_loaded,
@@ -148,6 +153,10 @@ SELECT
         toString(round(g.answer_accuracy * 100, 1)), '% (',
         toString(g.answer_correct), '/', toString(g.answer_scored), ')'
     )) AS answer_accuracy_pct,
+    if(g.llm_judge_scored = 0, NULL, concat(
+        toString(round(g.llm_judge_accuracy * 100, 1)), '% (',
+        toString(g.llm_judge_passed), '/', toString(g.llm_judge_scored), ')'
+    )) AS llm_judge_accuracy,
     if(
         g.mode = 'existing_skills' OR b.existing_present = 0,
         NULL,
@@ -260,7 +269,8 @@ WIDGETS = (
         key="mode-comparison",
         title="Latest experiment metrics",
         description=(
-            "Последний benchmark в выбранном интервале: accuracy, прирост к "
+            "Последний benchmark в выбранном интервале: deterministic и LLM "
+            "judge accuracy, прирост к "
             "existing_skills, загрузка целевого generated skill и медианы "
             "времени и mcp_query. Вариант показывается целиком; прирост считается "
             "только по одинаковым кейсам и повторам."

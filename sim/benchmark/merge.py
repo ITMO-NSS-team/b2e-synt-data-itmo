@@ -161,7 +161,7 @@ def _same_files(left: Path, right: Path) -> bool:
 
 def _validate_manifests(manifests: list[dict[str, Any]], eval_id: str) -> None:
     first = manifests[0]
-    stable = ("eval_id", "check_only", "repetitions")
+    stable = ("eval_id", "check_only", "repetitions", "answer_judge")
     if first.get("eval_id") != eval_id:
         raise ValueError("benchmark phase eval_id does not match merge eval_id")
     seen_cells: set[tuple[str, str]] = set()

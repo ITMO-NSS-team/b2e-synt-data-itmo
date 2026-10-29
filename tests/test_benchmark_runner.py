@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,9 @@ from sim.benchmark.modes import (
     BenchmarkMode, CommonConditions, ModeConfig,
 )
 from sim.benchmark.preflight import PreflightResult
-from sim.benchmark.results import ResultWriter, summarize_results
+from sim.benchmark.results import (
+    ResultWriter, RunResult, _paired_metric_aggregates, summarize_results,
+)
 from sim.benchmark.runner import BenchmarkRunner
 from sim.fingerprint import RunFingerprint
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE
@@ -64,6 +67,44 @@ def fingerprint() -> RunFingerprint:
         temperature=0, data_snapshot_hash="heimdall-sandbox@test",
         traps_enabled=True, latency_profile="instant", hr_employee_ids=(),
     )
+
+
+def test_comparison_uses_only_metric_pairs_present_in_both_modes() -> None:
+    target, baseline, counts = _paired_metric_aggregates([
+        ({"answer_accuracy": 1, "latency_ms": 10},
+         {"answer_accuracy": 1, "latency_ms": 20}),
+        ({"answer_accuracy": 1, "latency_ms": 20},
+         {"answer_accuracy": 0, "latency_ms": None}),
+        ({"answer_accuracy": 0, "latency_ms": 30},
+         {"answer_accuracy": 0, "latency_ms": 40}),
+        ({"answer_accuracy": 1, "latency_ms": 1000},
+         {"answer_accuracy": 0, "latency_ms": 2000}),
+    ])
+
+    assert target["answer_accuracy"] == pytest.approx(0.75)
+    assert baseline["answer_accuracy"] == pytest.approx(0.25)
+    assert target["latency_ms"] == 30
+    assert baseline["latency_ms"] == 40
+    assert counts["answer_accuracy"] == 4
+    assert counts["latency_ms"] == 3
+
+
+def test_summary_excludes_unscored_runs_and_reports_coverage() -> None:
+    scored = RunResult(
+        "run-1", "group-1", "case-1", "existing_skills", 1, "completed",
+        {}, {"metrics": {"answer_accuracy": 1}}, None,
+    )
+    unscored = replace(
+        scored, run_id="run-2", comparison_group_id="group-2", case_id="case-2",
+        status="unscored", score={"metrics": {"answer_accuracy": None}},
+    )
+
+    mode_summary = summarize_results([scored, unscored])["by_mode"]["existing_skills"]
+
+    assert mode_summary["answer_accuracy"] == 1
+    assert mode_summary["n_runs"] == 2
+    assert mode_summary["n_scored"] == 1
+    assert mode_summary["score_coverage"] == 0.5
 
 
 class FakeActivator:
@@ -153,6 +194,26 @@ def test_runner_never_sends_gold_or_expected_skill_to_agent() -> None:
     assert activator.activated == ["existing_skills", "existing_skills"]
     assert activator.deactivated == activator.activated
     assert all(result.score["metrics"]["answer_accuracy"] == 1 for result in results)
+    assert all(result.score["metrics"]["format_valid"] == 1 for result in results)
+
+
+def test_runner_reports_prose_around_json_without_changing_accuracy() -> None:
+    class ProseExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            turn = super().execute(request)
+            return replace(turn, answer="Результат: " + turn.answer)
+
+    runner = BenchmarkRunner(
+        "eval-format", preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ), activator=FakeActivator(), executor=ProseExecutor(),
+    )
+    result = runner.run([ready_case()], {"existing_skills": mode()}, repetitions=1)[0]
+    metrics = result.score["metrics"]
+    assert metrics["exact_match"] == 1
+    assert metrics["format_valid"] == 0
+    assert metrics["answer_accuracy"] == 1
+    assert metrics["strict_answer_accuracy"] == 1
 
 
 def test_generated_variant_has_distinct_result_arm_but_shared_comparison_group() -> None:
@@ -216,6 +277,90 @@ def test_runner_treats_blocked_bash_as_completed_when_answer_exists() -> None:
     assert result.response["response"]["error"] is None
     assert result.score["metrics"]["answer_accuracy"] == 1
     assert result.score["reasons"] == []
+
+
+def test_llm_judge_is_supplemental_and_does_not_change_answer_accuracy() -> None:
+    class RejectingJudge:
+        def evaluate(self, **kwargs):
+            case = ready_case()
+            assert kwargs["query"] == case.raw["query"]
+            assert kwargs["reference"] == case.raw["gold_answer"]
+            assert kwargs["comparison"] == case.raw["gold_comparison"]
+            assert kwargs["candidate"]
+            return {
+                "applicable": True,
+                "pass": False,
+                "scores": {"semantic_correctness": 0},
+                "explanation": "Тестовый вердикт",
+                "model": "glm-test",
+                "prompt_version": "test@1",
+                "usage": None,
+                "error": None,
+            }
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=FakeExecutor(),
+        answer_judge=RejectingJudge(),
+    )
+
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+    summary = summarize_results([result])
+
+    assert result.score["metrics"]["answer_accuracy"] == 1
+    assert result.score["metrics"]["llm_judge_accuracy"] == 0
+    assert result.score["llm_judge"]["explanation"] == "Тестовый вердикт"
+    assert summary["by_mode"]["existing_skills"]["n_llm_judged"] == 1
+    assert summary["by_mode"]["existing_skills"]["n_llm_judge_passed"] == 0
+
+
+def test_llm_judge_failure_does_not_fail_the_benchmark_run() -> None:
+    class BrokenJudge:
+        def evaluate(self, **kwargs):
+            raise RuntimeError("judge unavailable")
+
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=FakeExecutor(),
+        answer_judge=BrokenJudge(),
+    )
+
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+
+    assert result.status == "completed"
+    assert result.score["metrics"]["answer_accuracy"] == 1
+    assert result.score["metrics"]["llm_judge_accuracy"] is None
+    assert result.score["llm_judge"]["error"] == "RuntimeError: judge unavailable"
+
+
+def test_llm_judge_is_not_called_for_non_answerable_cases() -> None:
+    class UnexpectedJudge:
+        def evaluate(self, **kwargs):
+            raise AssertionError("judge must only receive answerable cases")
+
+    source = ready_case()
+    raw = dict(source.raw)
+    raw["category"] = "no_data"
+    case = BenchmarkCase(source.source_path, raw)
+    runner = BenchmarkRunner(
+        "eval-1",
+        preflight=lambda item, selected: PreflightResult(
+            item.case_id, selected.name, "ready", fingerprint()
+        ),
+        activator=FakeActivator(), executor=FakeExecutor(),
+        answer_judge=UnexpectedJudge(),
+    )
+
+    result = runner.run([case], {"existing_skills": mode()})[0]
+
+    assert result.score["metrics"]["llm_judge_accuracy"] is None
+    assert result.score["llm_judge"]["applicable"] is False
 
 
 def test_runner_skips_draft_and_mock_without_activation() -> None:

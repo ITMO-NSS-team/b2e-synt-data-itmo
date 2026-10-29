@@ -373,6 +373,8 @@ services:
     <<: [*python-image, *hardening]
     profiles: ["benchmark"]
     restart: "no"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["python3.12", "-m", "sim.benchmark.cli", "--help"]
     environment:
       PYTHONPATH: /app
@@ -381,6 +383,14 @@ services:
       PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-b2e-itmo}
       OPENLIT_OTLP_ENDPOINT: ${OPENLIT_OTLP_ENDPOINT:-}
+      BENCH_LLM_JUDGE_ENABLED: ${BENCH_LLM_JUDGE_ENABLED:-false}
+      BENCH_LLM_JUDGE_MODEL: ${BENCH_LLM_JUDGE_MODEL:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_OPENAI_BASE_URL: ${ZAI_OPENAI_BASE_URL:-}
+      API_TIMEOUT_MS: ${API_TIMEOUT_MS:-600000}
+      HTTP_PROXY: ${AGENT_HTTP_PROXY:-}
+      HTTPS_PROXY: ${AGENT_HTTP_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,::1,b2e-agent,heimdall-emulator,phoenix,host.docker.internal
     volumes:
       - *resolv-overlay
       - ../sim:/app/sim:ro
@@ -395,7 +405,7 @@ services:
       - ../catalog:/app/catalog:ro
       - ../var:/app/var
       - ${DATA_DIR:-../data}:/data/snapshot:ro
-    networks: [internal]
+    networks: [edge, internal]
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777

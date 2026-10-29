@@ -46,6 +46,8 @@ if (data.coverage) {
 document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
   <td title="${esc(row.mode)}">${esc(shortMode[row.mode] || row.mode)}</td><td title="${esc(row.source)}">${esc(row.source)}</td><td title="${esc(row.method)}">${esc(row.method)}</td><td title="${esc(row.detail)}">${esc(row.detail)}</td><td>${esc(row.skill)}</td><td>${esc(row.variant)}</td><td>${row.runs}</td>
   <td>${pct(row.accuracy, row.accuracy_correct, row.accuracy_total)}</td>
+  <td>${pct(row.format_valid, row.format_valid_count, row.format_valid_total)}</td>
+  <td>${pct(row.llm_judge_accuracy, row.llm_judge_passed, row.llm_judge_scored)}</td>
   <td>${row.n_pairs || "—"}</td>
   <td>${row.delta_pp == null ? "—" : `${row.delta_pp > 0 ? "+" : ""}${row.delta_pp.toFixed(1)}`}</td>
   <td>${pct(row.any_skill_loaded, row.any_skill_loaded_count, row.any_skill_loaded_total)}</td><td>${pct(row.expected_skill_loaded, row.expected_skill_loaded_count, row.expected_skill_loaded_total)}</td>
