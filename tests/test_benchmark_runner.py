@@ -15,7 +15,9 @@ from sim.benchmark.modes import (
     BenchmarkMode, CommonConditions, ModeConfig,
 )
 from sim.benchmark.preflight import PreflightResult
-from sim.benchmark.results import ResultWriter, _metric_aggregates, summarize_results
+from sim.benchmark.results import (
+    ResultWriter, RunResult, _paired_metric_aggregates, summarize_results,
+)
 from sim.benchmark.runner import BenchmarkRunner
 from sim.fingerprint import RunFingerprint
 from tests.fixtures.constants import EMPTY_HASH, EXAMPLE
@@ -67,15 +69,42 @@ def fingerprint() -> RunFingerprint:
     )
 
 
-def test_comparison_uses_rates_for_quality_and_medians_for_operations() -> None:
-    metrics = _metric_aggregates([
-        {"answer_accuracy": 1, "latency_ms": 10},
-        {"answer_accuracy": 1, "latency_ms": 20},
-        {"answer_accuracy": 0, "latency_ms": 1000},
+def test_comparison_uses_only_metric_pairs_present_in_both_modes() -> None:
+    target, baseline, counts = _paired_metric_aggregates([
+        ({"answer_accuracy": 1, "latency_ms": 10},
+         {"answer_accuracy": 1, "latency_ms": 20}),
+        ({"answer_accuracy": 1, "latency_ms": 20},
+         {"answer_accuracy": 0, "latency_ms": None}),
+        ({"answer_accuracy": 0, "latency_ms": 30},
+         {"answer_accuracy": 0, "latency_ms": 40}),
+        ({"answer_accuracy": 1, "latency_ms": 1000},
+         {"answer_accuracy": 0, "latency_ms": 2000}),
     ])
 
-    assert metrics["answer_accuracy"] == pytest.approx(2 / 3)
-    assert metrics["latency_ms"] == 20
+    assert target["answer_accuracy"] == pytest.approx(0.75)
+    assert baseline["answer_accuracy"] == pytest.approx(0.25)
+    assert target["latency_ms"] == 30
+    assert baseline["latency_ms"] == 40
+    assert counts["answer_accuracy"] == 4
+    assert counts["latency_ms"] == 3
+
+
+def test_summary_excludes_unscored_runs_and_reports_coverage() -> None:
+    scored = RunResult(
+        "run-1", "group-1", "case-1", "existing_skills", 1, "completed",
+        {}, {"metrics": {"answer_accuracy": 1}}, None,
+    )
+    unscored = replace(
+        scored, run_id="run-2", comparison_group_id="group-2", case_id="case-2",
+        status="unscored", score={"metrics": {"answer_accuracy": None}},
+    )
+
+    mode_summary = summarize_results([scored, unscored])["by_mode"]["existing_skills"]
+
+    assert mode_summary["answer_accuracy"] == 1
+    assert mode_summary["n_runs"] == 2
+    assert mode_summary["n_scored"] == 1
+    assert mode_summary["score_coverage"] == 0.5
 
 
 class FakeActivator:

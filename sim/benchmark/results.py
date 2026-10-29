@@ -180,6 +180,13 @@ _SKIP_STATUSES = frozenset({
     "generated_skill_unavailable_skipped",
 })
 _SCORED_STATUSES = frozenset({"completed", "normalization_pending"})
+_METRIC_NAMES = (
+    "answer_accuracy", "strict_answer_accuracy", "format_valid",
+    "llm_judge_accuracy", "response_schema_valid_without_repair",
+    "normalization_repaired", "exact_match", "outcome_accuracy",
+    "correct_refusal", "generated_skill_loaded", "any_skill_loaded",
+    "expected_skill_loaded", *OPERATIONAL_METRICS,
+)
 
 
 def _checkpoint_rows(path: Path) -> tuple[list[dict[str, Any]], list[int]]:
@@ -262,14 +269,7 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             ),
             **{
                 name: _mean(metric.get(name) for metric in metrics)
-                for name in (
-                    "answer_accuracy", "strict_answer_accuracy", "format_valid",
-                    "llm_judge_accuracy",
-                    "response_schema_valid_without_repair", "normalization_repaired",
-                    "exact_match", "outcome_accuracy",
-                    "correct_refusal", "generated_skill_loaded", "any_skill_loaded", "expected_skill_loaded",
-                    *OPERATIONAL_METRICS,
-                )
+                for name in _METRIC_NAMES
             },
         }
     comparisons = {}
@@ -351,26 +351,35 @@ def _paired_compare(
         for group in groups
         if (group, target_mode) in by_cell and (group, baseline_mode) in by_cell
     ]
-    target = _metric_aggregates(item[0] for item in pairs)
-    baseline = _metric_aggregates(item[1] for item in pairs)
-    return {"n_pairs": len(pairs), **_compare(target, baseline)}
+    target, baseline, metric_pairs = _paired_metric_aggregates(pairs)
+    comparison = _compare(target, baseline)
+    for name, count in metric_pairs.items():
+        comparison[name]["n_pairs"] = count
+    return {"n_pairs": len(pairs), **comparison}
 
 
-def _metric_aggregates(metrics: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    rows = list(metrics)
-    names = (
-        "answer_accuracy", "strict_answer_accuracy", "format_valid",
-        "llm_judge_accuracy",
-        "response_schema_valid_without_repair", "normalization_repaired",
-        "exact_match", "outcome_accuracy", "correct_refusal",
-        "generated_skill_loaded", "any_skill_loaded", "expected_skill_loaded", *OPERATIONAL_METRICS,
-    )
-    return {
-        name: (_median if name in OPERATIONAL_METRICS else _mean)(
-            row.get(name) for row in rows
-        )
-        for name in names
+def _paired_metric_aggregates(
+    pairs: Iterable[tuple[dict[str, Any], dict[str, Any]]],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, int]]:
+    rows = list(pairs)
+    matched = {
+        name: [
+            (left[name], right[name]) for left, right in rows
+            if left.get(name) is not None and right.get(name) is not None
+        ]
+        for name in _METRIC_NAMES
     }
+    return (
+        {name: _aggregate_metric(name, (left for left, _ in values))
+         for name, values in matched.items()},
+        {name: _aggregate_metric(name, (right for _, right in values))
+         for name, values in matched.items()},
+        {name: len(values) for name, values in matched.items()},
+    )
+
+
+def _aggregate_metric(name: str, values: Iterable[Any]) -> float | None:
+    return (_median if name in OPERATIONAL_METRICS else _mean)(values)
 
 
 def _mean(values: Iterable[Any]) -> float | None:
