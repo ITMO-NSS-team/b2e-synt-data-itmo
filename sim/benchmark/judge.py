@@ -1,6 +1,7 @@
 """Optional semantic answer judge backed by the configured Z.AI model."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ JSON-блок и структурированный хвост оцениваю�
 Верни только JSON без Markdown:
 {"pass": true или false, "explanation": "краткая причина на русском"}
 """
+PROMPT_SHA256 = hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()
 
 
 class AnswerJudge(Protocol):
@@ -104,7 +106,20 @@ class ZaiAnswerJudge:
         }
 
 
-def from_env() -> AnswerJudge | None:
+def manifest_config(judge: ZaiAnswerJudge | None) -> dict[str, Any]:
+    """Return the secret-free judge identity pinned by a benchmark run."""
+    if judge is None:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "provider": "zai",
+        "model": judge.model,
+        "prompt_version": PROMPT_VERSION,
+        "prompt_sha256": PROMPT_SHA256,
+    }
+
+
+def from_env() -> ZaiAnswerJudge | None:
     """Build the judge only when explicitly enabled for a live benchmark."""
     if (os.getenv("BENCH_LLM_JUDGE_ENABLED") or "").lower() not in {
         "1", "true", "yes", "on",

@@ -4,7 +4,10 @@ import json
 
 import httpx
 
-from sim.benchmark.judge import PROMPT_VERSION, SYSTEM_PROMPT, ZaiAnswerJudge, from_env
+from sim.benchmark.judge import (
+    PROMPT_SHA256, PROMPT_VERSION, SYSTEM_PROMPT, ZaiAnswerJudge, from_env,
+    manifest_config,
+)
 
 
 def test_zai_judge_sends_only_answer_material_and_parses_verdict() -> None:
@@ -64,6 +67,14 @@ def test_judge_uses_its_own_model(monkeypatch) -> None:
 
     assert isinstance(judge, ZaiAnswerJudge)
     assert judge.model == "glm-judge"
+    assert manifest_config(judge) == {
+        "enabled": True,
+        "provider": "zai",
+        "model": "glm-judge",
+        "prompt_version": PROMPT_VERSION,
+        "prompt_sha256": PROMPT_SHA256,
+    }
+    assert "secret" not in json.dumps(manifest_config(judge))
 
 
 def test_judge_retries_one_transport_failure() -> None:

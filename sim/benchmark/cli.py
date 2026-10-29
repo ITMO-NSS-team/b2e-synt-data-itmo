@@ -14,7 +14,10 @@ from typing import Any, Iterable
 
 from .cases import BenchmarkCase, load_case, load_suite, validate_case
 from .execution import PinnedConfigActivator, StandSessionExecutor
-from .judge import from_env as answer_judge_from_env
+from .judge import (
+    from_env as answer_judge_from_env,
+    manifest_config as judge_manifest_config,
+)
 from .modes import BenchmarkMode, CommonConditions, ModeConfig, build_modes, mode_strategy
 from .path_lib import ENV_RELATIVE, SCHEMA_RELATIVE
 from .preflight import PreflightResult, preflight_case, prepare_preflight_context
@@ -323,6 +326,7 @@ def _manifest(
     eval_id: str,
     *,
     check_only: bool,
+    answer_judge: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.0",
@@ -338,6 +342,7 @@ def _manifest(
         ],
         "repetitions": 0 if check_only else args.repetitions,
         "live_stand": prepared.live,
+        "answer_judge": answer_judge or {"enabled": False},
     }
 
 
@@ -403,8 +408,12 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
     """
     prepared = prepare(args)
     eval_id = _eval_id(args, "benchmark")
+    answer_judge = answer_judge_from_env()
     writer = ResultWriter(args.results, eval_id, resume=getattr(args, "resume", False))
-    writer.write_manifest(_manifest(args, prepared, eval_id, check_only=False))
+    writer.write_manifest(_manifest(
+        args, prepared, eval_id, check_only=False,
+        answer_judge=judge_manifest_config(answer_judge),
+    ))
     runner = BenchmarkRunner(
         eval_id,
         preflight=lambda case, mode: prepared.checked[(case.case_id, mode.name)],
@@ -425,7 +434,7 @@ def run(args: argparse.Namespace) -> tuple[list[Any], ResultWriter]:
             name: _result_mode_name(name, getattr(args, "generated_variant_id", None))
             for name in prepared.selected_modes
         },
-        answer_judge=answer_judge_from_env(),
+        answer_judge=answer_judge,
     )
     with telemetry.benchmark_run(
         eval_id=eval_id,

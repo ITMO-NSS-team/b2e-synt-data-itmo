@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from sim.benchmark.merge import (
-    _selection_summary, _validate_generated_plan_execution, merge_phases,
+    _selection_summary, _validate_generated_plan_execution, _validate_manifests,
+    merge_phases,
 )
 from sim.benchmark.results import ResultWriter
 
@@ -72,6 +73,18 @@ def test_merge_phases_writes_one_summary_and_keeps_shared_group(tmp_path: Path) 
     manifest = json.loads((writer.root / "run-manifest.json").read_text())
     assert manifest["schema_version"] == "1.1"
     assert len(manifest["catalog_phases"]) == 2
+
+
+def test_merge_rejects_phases_with_different_answer_judges() -> None:
+    common = {
+        "eval_id": "eval-1", "check_only": False, "repetitions": 1,
+        "case_ids": [], "modes": [],
+    }
+    first = {**common, "answer_judge": {"enabled": True, "model": "judge-one"}}
+    second = {**common, "answer_judge": {"enabled": True, "model": "judge-two"}}
+
+    with pytest.raises(ValueError, match="phases differ by answer_judge"):
+        _validate_manifests([first, second], "eval-1")
 
 
 def test_resume_rebuilds_partial_final_without_duplicate_rows(tmp_path: Path) -> None:

@@ -124,6 +124,26 @@ def test_resume_rejects_changed_agent_limits(tmp_path, field, value):
         ResultWriter(tmp_path, "test", resume=True).write_manifest(manifest)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("enabled", False), ("model", "judge-two"),
+    ("prompt_version", "judge@2"), ("prompt_sha256", "changed"),
+])
+def test_resume_rejects_changed_answer_judge(tmp_path, field, value):
+    writer = ResultWriter(tmp_path, "test")
+    manifest = {
+        "eval_id": "test", "case_ids": [], "modes": [],
+        "answer_judge": {
+            "enabled": True, "provider": "zai", "model": "judge-one",
+            "prompt_version": "judge@1", "prompt_sha256": "original",
+        },
+    }
+    writer.write_manifest(manifest)
+    manifest["answer_judge"][field] = value
+
+    with pytest.raises(ValueError, match="resume manifest differs"):
+        ResultWriter(tmp_path, "test", resume=True).write_manifest(manifest)
+
+
 def test_infrastructure_breaker_preserves_checkpoint_and_stops_submitting(tmp_path):
     from sim.benchmark.execution import AgentTurn
     class Failed(FakeExecutor):

@@ -400,6 +400,7 @@ def _resume_signature(manifest: dict[str, Any]) -> dict[str, Any]:
     base_ref = live.get("refs", {}).get("existing_skills")
     signature = {
         **{key: manifest.get(key) for key in ("eval_id", "check_only", "case_ids", "case_hashes", "repetitions", "workers")},
+        "answer_judge": manifest.get("answer_judge"),
         "skill_registry_hash": live.get("skill_registry_hash"),
         "agent_config": live.get("configs", {}).get(base_ref),
         "modes": [
