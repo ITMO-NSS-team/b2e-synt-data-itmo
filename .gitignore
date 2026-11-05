@@ -57,6 +57,8 @@ data-small-notraps/
 .ua/
 *.md
 *.txt
+!retrieval_eval/README.md
+retrieval_eval/results/
 
 # Backups
 *backup*
