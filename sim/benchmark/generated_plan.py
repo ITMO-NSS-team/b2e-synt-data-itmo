@@ -27,15 +27,6 @@ from .path_lib import SCHEMA_RELATIVE
 
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 _SOURCE_LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
-_VERSION_SUFFIX = re.compile(r"-v[0-9]+-[0-9]+-[0-9]+$")
-_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-_HASHED_SKILL = re.compile(
-    r"^(?P<base>.+)-(?P<method>no-context|compact|full)-"
-    r"(?P<prompt_hash>[0-9a-f]{10})(?:-(?P<generation_hash>[0-9a-f]{10}))?$"
-)
-# shortcut: SF's trailing 10-hex hash is naming convention; use explicit logical metadata if names can end that way.
-_CONTENT_HASHED_SKILL = re.compile(r"^(?P<base>.+)-[0-9a-f]{10}$")
-_VERSIONED_SKILL = re.compile(r"(?P<logical>.+)-v[0-9]+-[0-9]+-[0-9]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +245,7 @@ def build_generated_plan(
         catalog = Path(artifact.catalog_path)
         skill_dir = catalog / artifact.skill_name
         skill_dir.mkdir(parents=True)
-        _copy_skill_artifact(Path(artifact.source_path), sources[artifact.source], skill_dir)
+        _copy_skill_artifact(Path(artifact.source_path), skill_dir)
         isolated = _loaded_registry(catalog)
         if isolated.active() != [artifact.skill_name]:
             raise ValueError(
@@ -308,8 +299,15 @@ def build_generated_plan(
                 Path(base_catalog_path).resolve(), source, combined,
             )
             registry = _loaded_registry(combined)
+            source_artifacts = [item for item in artifacts if item.source == label]
             targets = {
-                name: set(_expected_names(registry.get(name).name, registry.get(name).version))
+                name: {
+                    expected
+                    for artifact in source_artifacts
+                    if artifact.skill_name == registry.get(name).name
+                    and artifact.version == registry.get(name).version
+                    for expected in artifact.expected_skills
+                }
                 for name in runtime_names
             }
             available_expected = set().union(*targets.values())
@@ -396,6 +394,11 @@ def _discover_artifacts(
         if base_registry is not None else set()
     )
     for item in files:
+        if item.path.name == "SKILL.md":
+            raise ValueError(
+                "generated skill filenames must be the full methodologist prompt id, "
+                "for example compare_people-v2-extend.md"
+            )
         variant_id = variant_prefix + _variant_id(item, source)
         if variant_id in used_variant_ids:
             raise ValueError(f"duplicate generated variant_id: {variant_id}")
@@ -410,10 +413,10 @@ def _discover_artifacts(
             )
         artifacts.append(GeneratedArtifact(
             skill_name=skill.name,
-            expected_skills=_expected_names(skill.name, skill.version),
+            expected_skills=(item.path.stem,),
             source=source_label,
             source_path=str(item.path),
-            path_labels=tuple(item.path.relative_to(source).parts[:-2]),
+            path_labels=tuple(item.path.relative_to(source).parts[:-1]),
             version=skill.version,
             variant_id=variant_id,
             catalog_path=str(catalogs_root / "generated-only" / slug),
@@ -428,11 +431,7 @@ def _discover_artifacts(
 
 def _variant_id(item: SkillFile, source: Path) -> str:
     path = item.path
-    if path.name == "SKILL.md":
-        relative_parent = path.parent.relative_to(source)
-        raw = "--".join(relative_parent.parts) or str(item.name)
-    else:
-        raw = str(path.relative_to(source).with_suffix("")).replace("/", "--")
+    raw = str(path.relative_to(source).with_suffix("")).replace("/", "--")
     variant_id = _SAFE.sub("-", raw).strip(".-")
     if not variant_id:
         raise ValueError(f"cannot derive generated variant_id from {path}")
@@ -540,20 +539,6 @@ def _write_cases(
     )
 
 
-def _expected_skill(skill_name: str) -> str:
-    match = _HASHED_SKILL.fullmatch(skill_name) or _CONTENT_HASHED_SKILL.fullmatch(skill_name)
-    return match.group("base") if match else skill_name
-
-
-def _expected_names(skill_name: str, version: str) -> tuple[str, ...]:
-    name = _expected_skill(skill_name)
-    base = _VERSION_SUFFIX.sub("", name)
-    if _VERSION.fullmatch(version) and version != "0.0.0":
-        versioned = f"{base}-v{version.replace('.', '-')}"
-        return (versioned,) if base != name else (name, versioned)
-    return (name,) if base == name else ()
-
-
 def _source_hash(source: Path) -> str:
     digest = hashlib.sha256()
     for path in sorted(p for p in source.rglob("*") if p.is_file()):
@@ -572,11 +557,8 @@ def _configured_sources(raw: str) -> dict[str, Path]:
     return sources
 
 
-def _copy_skill_artifact(source_file: Path, source_root: Path, target: Path) -> None:
-    """Copy one skill and its colocated resources into an isolated catalog."""
-    if source_file.name == "SKILL.md" and source_file.parent != source_root:
-        shutil.copytree(source_file.parent, target, dirs_exist_ok=True)
-        return
+def _copy_skill_artifact(source_file: Path, target: Path) -> None:
+    """Copy one generated skill file into an isolated catalog."""
     shutil.copy2(source_file, target / source_file.name)
 
 

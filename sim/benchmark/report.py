@@ -14,6 +14,8 @@ from typing import Any, Iterable
 
 from plotly.offline import get_plotlyjs
 
+from .scoring import expected_skill_loaded
+
 
 _ASSETS = Path(__file__).with_name("report_assets")
 
@@ -82,7 +84,7 @@ def _add_skill_metrics(metrics: dict[str, Any], response: dict[str, Any]) -> Non
     loaded = set((response.get("observations") or {}).get("loaded_skills") or ())
     expected = set((response.get("case_snapshot") or {}).get("expected_skills") or ())
     metrics.setdefault("any_skill_loaded", int(bool(loaded)))
-    metrics.setdefault("expected_skill_loaded", int(bool(loaded & expected)))
+    metrics.setdefault("expected_skill_loaded", expected_skill_loaded(expected, loaded))
 
 
 def _write(root: Path, rows: list[dict[str, Any]]) -> Path:

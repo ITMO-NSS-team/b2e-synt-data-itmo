@@ -6,7 +6,7 @@ import math
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, Iterable
 
 from heimdall.skills.registry import Registry
 from jsonschema import Draft202012Validator
@@ -19,7 +19,10 @@ from .modes import ModeConfig
 _FENCED_JSON = re.compile(r"[\x60]{3}(?:json)?\s*\n(.*?)\n[\x60]{3}", re.DOTALL | re.IGNORECASE)
 _ANSWER_TAIL = re.compile(r"```answer[ \t]*\r?\n(?:(?!```)[\s\S])*\r?\n```", re.IGNORECASE)
 _REFUSAL_OUTCOMES = frozenset({"access_control", "missing_skill", "out_of_scope"})
-_VERSIONED_NAME = re.compile(r".+-v[0-9]+-[0-9]+-[0-9]+$")
+_PROMPT_SKILL_ID = re.compile(r"^(?P<base>.+)-v[0-9]+(?:-[a-z0-9]+)*$")
+_RUNTIME_SKILL_ALIAS = re.compile(
+    r"^(?P<base>.+)@[0-9]+\.[0-9]+\.[0-9]+(?:#[a-z0-9_-]+)?$"
+)
 _QUARTER = re.compile(r"^([0-9]{4})[ -]Q([1-4])$")
 
 
@@ -173,7 +176,7 @@ def calculate_metrics(
         "outcome_accuracy": outcome_accuracy,
         "correct_refusal": correct_refusal,
         "any_skill_loaded": int(bool(loaded_skills)),
-        "expected_skill_loaded": _expected_skill_loaded(
+        "expected_skill_loaded": expected_skill_loaded(
             expected_skills, loaded_skills, mode.catalog_path,
         ),
         "generated_skill_loaded": generated_loaded,
@@ -208,19 +211,30 @@ def _missing_root_brace_candidates(text: str):
             yield value
 
 
-def _expected_skill_loaded(
-    expected: set[str], loaded: set[str], catalog_path: str | None,
+def expected_skill_loaded(
+    expected_skills: Iterable[str],
+    loaded_skills: Iterable[str],
+    catalog_path: str | None = None,
 ) -> int:
-    if not loaded or not catalog_path:
-        return int(bool(expected & loaded))
-    identities = _catalog_identities(catalog_path)
-    for name in loaded & identities.keys():
-        logical, version = identities[name]
-        if f"{logical}-v{version.replace('.', '-')}" in expected:
-            return 1
-        if name in expected and not _VERSIONED_NAME.fullmatch(name):
-            return 1
-    return 0
+    """Match case prompt ids to loaded runtime skill identities."""
+    expected = set(expected_skills)
+    loaded = set(loaded_skills)
+    if expected & loaded:
+        return 1
+    expected_logical = {
+        match.group("base") if (match := _PROMPT_SKILL_ID.fullmatch(name)) else name
+        for name in expected
+    }
+    loaded_logical = {
+        match.group("base") if (match := _RUNTIME_SKILL_ALIAS.fullmatch(name)) else name
+        for name in loaded
+    }
+    if catalog_path:
+        identities = _catalog_identities(catalog_path)
+        loaded_logical.update(
+            identities[name][0] for name in loaded if name in identities
+        )
+    return int(bool(expected_logical & loaded_logical))
 
 
 @lru_cache(maxsize=32)

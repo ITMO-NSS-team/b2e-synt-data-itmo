@@ -53,6 +53,41 @@ def test_resume_does_not_repeat_saved_cells(tmp_path):
     assert len(resumed.scores_path.read_text().splitlines()) == 4
 
 
+def test_resume_retries_unscored_but_keeps_scored_failures(tmp_path):
+    from sim.benchmark.results import RunResult
+
+    writer = ResultWriter(tmp_path, "test")
+    cases = [ready_case("case-0001-00"), ready_case("case-0002-00")]
+    writer.write(RunResult(
+        "test-case-0001-00-existing_skills-01", "test-case-0001-00-01",
+        "case-0001-00", "existing_skills", 1, "unscored",
+        {"response": {"raw_answer": "", "error": "HTTP 502"}},
+        {
+            "run_id": "test-case-0001-00-existing_skills-01",
+            "metrics": {"answer_accuracy": None}, "reasons": ["HTTP 502"],
+        }, None,
+    ))
+    writer.write(RunResult(
+        "test-case-0002-00-existing_skills-01", "test-case-0002-00-01",
+        "case-0002-00", "existing_skills", 1, "completed",
+        {"response": {"raw_answer": "wrong", "error": None}},
+        {
+            "run_id": "test-case-0002-00-existing_skills-01",
+            "metrics": {"answer_accuracy": 0}, "reasons": [],
+        }, None,
+    ))
+
+    executor = FakeExecutor()
+    resumed = ResultWriter(tmp_path, "test", resume=True)
+    results = _runner(resumed, executor).run(cases, [mode()])
+
+    assert len(results) == 2
+    assert len(executor.requests) == 1
+    assert executor.requests[0].metadata["case_id"] == "case-0001-00"
+    assert len(resumed.responses_path.read_text().splitlines()) == 2
+    assert len(resumed.scores_path.read_text().splitlines()) == 2
+
+
 def test_resume_retries_only_the_last_response_without_a_score(tmp_path):
     writer = ResultWriter(tmp_path, "test")
     cases = [ready_case(f"case-{i:04d}-00") for i in range(3)]

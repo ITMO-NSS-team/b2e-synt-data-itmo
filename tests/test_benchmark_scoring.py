@@ -192,7 +192,7 @@ def test_generated_routing_requires_skill_expected_by_case() -> None:
     assert metrics["expected_skill_loaded"] == 0
 
 
-def test_existing_skill_load_matches_catalog_version_only(tmp_path: Path) -> None:
+def test_existing_skill_load_matches_methodologist_prompt_id(tmp_path: Path) -> None:
     (tmp_path / "compare_people.md").write_text(
         "---\nname: compare_people\ntitle: Compare people\nkind: reference\n"
         "domain: general\ndescription: Compare employees\nversion: 1.0.0\n"
@@ -204,27 +204,14 @@ def test_existing_skill_load_matches_catalog_version_only(tmp_path: Path) -> Non
     observations = {"loaded_skills": ["compare_people"]}
     existing = replace(mode(), catalog_path=str(tmp_path))
 
-    case.raw["expected_skills"] = ["compare_people-v1-0-0"]
+    case.raw["expected_skills"] = ["compare_people-v2-extend"]
     assert calculate_metrics(
         case, existing, actual, observations,
     )["expected_skill_loaded"] == 1
 
-    case.raw["expected_skills"] = ["compare_people-v1-0-1"]
+    case.raw["expected_skills"] = ["employee_profile-v1"]
     assert calculate_metrics(
         case, existing, actual, observations,
-    )["expected_skill_loaded"] == 0
-
-    versioned_dir = tmp_path / "versioned"
-    versioned_dir.mkdir()
-    (versioned_dir / "skill.md").write_text(
-        "---\nname: compare_people-v1-0-1\ntitle: Compare people\nkind: reference\n"
-        "domain: general\ndescription: Compare employees\nversion: 1.0.0\n"
-        "status: active\n---\n\nCompare two people.\n",
-        encoding="utf-8",
-    )
-    observations["loaded_skills"] = ["compare_people-v1-0-1"]
-    assert calculate_metrics(
-        case, replace(existing, catalog_path=str(versioned_dir)), actual, observations,
     )["expected_skill_loaded"] == 0
 
 
@@ -261,7 +248,7 @@ def test_combined_mode_scores_only_the_generated_target() -> None:
     assert loaded["generated_skill_loaded"] == 1
 
 
-def test_existing_multiversion_catalog_scores_exact_version(tmp_path: Path) -> None:
+def test_prompt_revision_is_independent_of_runtime_skill_version(tmp_path: Path) -> None:
     for version in ("0.1.0", "0.1.1"):
         (tmp_path / f"standard-{version}.md").write_text(
             "---\nname: standard\ntitle: Standard\nkind: reference\n"
@@ -269,13 +256,13 @@ def test_existing_multiversion_catalog_scores_exact_version(tmp_path: Path) -> N
             "status: active\n---\n\nUse this skill.\n", encoding="utf-8",
         )
     case = ready_case()
-    case.raw["expected_skills"] = ["standard-v0-1-1"]
+    case.raw["expected_skills"] = ["standard-v2-reuse"]
     actual = NormalizedAnswer(case.raw["gold_answer"], None)
     existing = replace(mode(), catalog_path=str(tmp_path))
 
     old = calculate_metrics(case, existing, actual, {"loaded_skills": ["standard@0.1.0"]})
     new = calculate_metrics(case, existing, actual, {"loaded_skills": ["standard@0.1.1"]})
-    assert old["expected_skill_loaded"] == 0
+    assert old["expected_skill_loaded"] == 1
     assert new["expected_skill_loaded"] == 1
 
 
@@ -287,7 +274,7 @@ def test_same_name_versions_score_the_loaded_version() -> None:
 
     old = calculate_metrics(case, combined, actual, {"loaded_skills": ["standard@0.1.0"]})
     new = calculate_metrics(case, combined, actual, {"loaded_skills": ["standard@0.1.1"]})
-    assert (old["expected_skill_loaded"], old["generated_skill_loaded"]) == (0, 0)
+    assert (old["expected_skill_loaded"], old["generated_skill_loaded"]) == (1, 0)
     assert (new["expected_skill_loaded"], new["generated_skill_loaded"]) == (1, 1)
 
 

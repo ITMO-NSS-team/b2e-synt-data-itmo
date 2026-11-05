@@ -99,6 +99,8 @@ def _tool_use(name: str, args: dict, call_id: str = "tu_1") -> LLMResponse:
 def test_prompt_renders_with_supplied_variables():
     out = render(DEFAULT_SYSTEM_PROMPT, {"employee_id": "123", "memory_block": ""})
     assert "123" in out
+    assert "соблюдай его вместо формата из\nнавыка" in out
+    assert "Блок answer добавляй после\nJSON-объекта" in out
 
 
 def test_missing_variable_is_an_error_not_an_empty_string():
