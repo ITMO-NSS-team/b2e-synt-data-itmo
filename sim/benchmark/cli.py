@@ -165,7 +165,7 @@ def common_conditions(
         raise ValueError("live stand manifest has no refs for all requested modes")
     selected = [configs[refs[name]] for name in mode_names]
     stable_fields = (
-        "model_id", "harness", "temperature", "code_execution",
+        "model_id", "harness", "temperature", "top_p", "reasoning_effort", "code_execution",
         "conversation_mode",
     )
     for field in stable_fields:
@@ -178,6 +178,8 @@ def common_conditions(
     return CommonConditions(
         model_id=selected[0]["model_id"],
         temperature=selected[0]["temperature"],
+        top_p=selected[0].get("top_p"),
+        reasoning_effort=selected[0].get("reasoning_effort"),
         prompt_registry_version=next(iter(prompt_refs)),
         snapshot_id=emulator["data_snapshot_hash"],
         traps_enabled=emulator["traps_enabled"],
