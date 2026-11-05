@@ -74,6 +74,8 @@ class CommonConditions:
     hr_employee_ids: tuple[str, ...]
     harness: str = "claude_code"
     code_execution: str = "forbidden"
+    top_p: float | None = None
+    reasoning_effort: str | None = None
 
     def __post_init__(self) -> None:
         for field in ("model_id", "snapshot_id"):

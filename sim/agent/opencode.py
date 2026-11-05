@@ -172,6 +172,12 @@ class OpenCodeHarness:
         base_url = (os.environ.get("ZAI_OPENAI_BASE_URL") or "").strip()
         if is_zai() and base_url:
             provider[provider_id]["options"] = {"baseURL": base_url}
+        model_options: dict[str, Any] = {}
+        if config.reasoning_effort is not None:
+            model_options["reasoningEffort"] = config.reasoning_effort
+            if model_id.startswith("glm-"):
+                model_options["thinking"] = {"type": "enabled"}
+        provider[provider_id]["models"][model_id]["options"] = model_options
         return {
             "$schema": "https://opencode.ai/config.json",
             "model": model,
@@ -196,6 +202,7 @@ class OpenCodeHarness:
                     "model": model,
                     "prompt": system_prompt + "\n" + self.harness_note(config),
                     "temperature": config.temperature,
+                    **({"top_p": config.top_p} if config.top_p is not None else {}),
                     "permission": self._permissions(config),
                 }
             },
