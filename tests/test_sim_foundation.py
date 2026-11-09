@@ -27,6 +27,8 @@ GOOD = dict(
     harness="claude_code",
     model_id="claude-haiku-4-5-20251001",
     temperature=0.0,
+    top_p=None,
+    reasoning_effort=None,
     data_snapshot_hash="heimdall-sandbox@78d53675db91e17f",
     traps_enabled=True,
     latency_profile="realistic",
@@ -41,6 +43,17 @@ def test_fingerprint_accepts_complete_run():
     fp = RunFingerprint.create(**GOOD)
     assert len(fp.as_span_attributes()) == len(FINGERPRINT_FIELDS)
     assert all(k.startswith("b2e.run.") for k in fp.as_span_attributes())
+    for name in ("top_p", "reasoning_effort"):
+        assert fp.as_dict()[name] is None
+        assert fp.as_span_attributes()[f"b2e.run.{name}"] == "provider_default"
+
+
+@pytest.mark.parametrize("field,value", [("top_p", 0.95), ("reasoning_effort", "high")])
+def test_condition_id_distinguishes_model_settings(field, value):
+    default = RunFingerprint.create(**GOOD)
+    configured = RunFingerprint.create(**{**GOOD, field: value})
+    assert configured.condition_id != default.condition_id
+    assert configured.as_span_attributes()[f"b2e.run.{field}"] == value
 
 
 @pytest.mark.parametrize("field", FINGERPRINT_FIELDS)

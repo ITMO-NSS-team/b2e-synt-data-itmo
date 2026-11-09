@@ -143,18 +143,21 @@ timing, none.** Background and remaining work: `docs/subprocess-tracing-plan.md`
 
 ## 2. The run fingerprint
 
-**Every root span carries all nine fields. A run with any field unset does not
-start.** Enforced in `sim/fingerprint.py`; `RunFingerprint.create` raises
-`IncompleteFingerprint` before a token is spent, and a blank string counts as
-unset because that is how a missing environment variable actually arrives.
+Every root span carries all twelve fields below. `RunFingerprint.create` in
+`sim/fingerprint.py` raises `IncompleteFingerprint` before a token is spent if
+any key is missing or a value is blank. `top_p` and `reasoning_effort` allow an
+explicit `None` to select the provider default; other fields require a value.
 
 | Attribute | Type | Source |
 |---|---|---|
 | `b2e.run.agent_config_version` | str | registry ref, e.g. `agent_config@3` |
 | `b2e.run.prompt_registry_version` | str | registry ref, e.g. `system_prompt@7` |
 | `b2e.run.skill_registry_hash` | str | SHA-256 over active skill hashes |
+| `b2e.run.harness` | str | runtime executing the turn |
 | `b2e.run.model_id` | str | e.g. `claude-haiku-4-5-20251001` |
 | `b2e.run.temperature` | float | sampling temperature |
+| `b2e.run.top_p` | float or str | nucleus sampling; `provider_default` when unset |
+| `b2e.run.reasoning_effort` | str | `low` / `medium` / `high`; `provider_default` when unset |
 | `b2e.run.data_snapshot_hash` | str | snapshot manifest id |
 | `b2e.run.traps_enabled` | bool | RQ1 independent variable |
 | `b2e.run.latency_profile` | str | `instant` / `realistic` / `degraded` |
@@ -162,6 +165,11 @@ unset because that is how a missing environment variable actually arrives.
 
 Flat scalar keys, not a nested object: OTel attribute values are scalars, and
 Phoenix filters on flat keys.
+
+The serialized fingerprint retains `null` for provider defaults. Span attributes
+use the string `provider_default` because OpenTelemetry does not accept `None`.
+Both values come from the effective agent config and can be set or cleared on
+`/admin/config` with the `open_code` harness.
 
 `hr_employee_ids` is a sorted comma-joined string rather than a list, for that
 same reason, and `none` rather than `""` because an empty string is what this
@@ -175,7 +183,7 @@ redundant. Traps exist at two layers — channel quirks toggle per request, but 
 data traps in `b2e/traps.py` are baked into the corpus at build time. A traps-off
 run is served from a *different snapshot*. Only the pair identifies the condition.
 
-`condition_id` (SHA-256 over all eight, first 16 hex chars) is derived, not
+`condition_id` (SHA-256 over all twelve fields, first 16 hex chars) is derived, not
 stored: two runs are comparable exactly when their `condition_id` matches.
 
 ---

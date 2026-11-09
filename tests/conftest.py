@@ -49,6 +49,8 @@ def fingerprint() -> RunFingerprint:
         harness="claude_code",
         model_id="claude-haiku-4-5-20251001",
         temperature=0.0,
+        top_p=None,
+        reasoning_effort=None,
         data_snapshot_hash="heimdall-sandbox@test",
         traps_enabled=True,
         latency_profile="realistic",
