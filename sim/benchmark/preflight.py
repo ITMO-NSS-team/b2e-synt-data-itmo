@@ -269,6 +269,8 @@ def preflight_case(
         harness=mode.common.harness,
         model_id=mode.common.model_id,
         temperature=mode.common.temperature,
+        top_p=mode.common.top_p,
+        reasoning_effort=mode.common.reasoning_effort,
         data_snapshot_hash=manifest["snapshot_id"],
         traps_enabled=mode.common.traps_enabled,
         latency_profile=mode.common.latency_profile,

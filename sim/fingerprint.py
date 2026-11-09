@@ -20,6 +20,8 @@ The fields are fixed by the research questions:
 ``harness``                which agent runtime executed the turn
 ``model_id``               which model answered
 ``temperature``            sampling temperature
+``top_p``                  nucleus sampling, or provider default
+``reasoning_effort``       reasoning level, or provider default
 ``data_snapshot_hash``     which corpus snapshot was served
 ``traps_enabled``          RQ1's independent variable
 ``latency_profile``        RQ2's independent variable
@@ -61,6 +63,8 @@ FINGERPRINT_FIELDS: tuple[str, ...] = (
     "harness",
     "model_id",
     "temperature",
+    "top_p",
+    "reasoning_effort",
     "data_snapshot_hash",
     "traps_enabled",
     "latency_profile",
@@ -126,6 +130,8 @@ class RunFingerprint:
     harness: str
     model_id: str
     temperature: float
+    top_p: float | None
+    reasoning_effort: str | None
     data_snapshot_hash: str
     traps_enabled: bool
     latency_profile: str
@@ -137,9 +143,8 @@ class RunFingerprint:
     def create(cls, **fields: Any) -> "RunFingerprint":
         """Build and validate. Raises :class:`IncompleteFingerprint` if unusable.
 
-        Treats ``None`` and empty string as unset. A field that is present but
-        empty is the common real failure — an unset environment variable that
-        arrived as ``""`` — and it must fail exactly like a missing key.
+        Every key must be present. ``None`` is an explicit provider default for
+        ``top_p`` and ``reasoning_effort``; otherwise it and blank strings are unset.
         """
         # Normalised before the completeness check, and only when the key is
         # actually present. The distinction matters: *not declaring* the HR
@@ -152,8 +157,9 @@ class RunFingerprint:
 
         missing = [
             name for name in FINGERPRINT_FIELDS
-            if fields.get(name) is None
-            or (isinstance(fields.get(name), str) and not fields[name].strip())
+            if name not in fields
+            or (fields[name] is None and name not in ("top_p", "reasoning_effort"))
+            or (isinstance(fields[name], str) and not fields[name].strip())
         ]
         if missing:
             raise IncompleteFingerprint(missing)
@@ -175,6 +181,11 @@ class RunFingerprint:
             harness=str(fields["harness"]),
             model_id=str(fields["model_id"]),
             temperature=float(fields["temperature"]),
+            top_p=float(fields["top_p"]) if fields["top_p"] is not None else None,
+            reasoning_effort=(
+                str(fields["reasoning_effort"])
+                if fields["reasoning_effort"] is not None else None
+            ),
             data_snapshot_hash=str(fields["data_snapshot_hash"]),
             traps_enabled=bool(fields["traps_enabled"]),
             latency_profile=str(profile),
@@ -185,7 +196,12 @@ class RunFingerprint:
 
     def as_span_attributes(self) -> dict[str, Any]:
         """Flat OTel attributes for the root span, one key per field."""
-        return {ATTR_PREFIX + name: getattr(self, name) for name in FINGERPRINT_FIELDS}
+        return {
+            ATTR_PREFIX + name: (
+                getattr(self, name) if getattr(self, name) is not None else "provider_default"
+            )
+            for name in FINGERPRINT_FIELDS
+        }
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

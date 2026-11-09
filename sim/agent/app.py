@@ -308,6 +308,8 @@ class AgentState:
                 harness=config.harness,
                 model_id=config.model_id,
                 temperature=config.temperature,
+                top_p=config.top_p,
+                reasoning_effort=config.reasoning_effort,
                 data_snapshot_hash=condition.get("data_snapshot_hash"),
                 traps_enabled=condition.get("traps_enabled"),
                 latency_profile=condition.get("latency_profile"),

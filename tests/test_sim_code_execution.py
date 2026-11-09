@@ -151,6 +151,7 @@ def test_the_two_arms_are_different_conditions(tmp_path):
             skill_registry_hash="sha256:" + "00" * 32,
             harness="claude_code",
             model_id="claude-haiku-4-5-20251001", temperature=0.0,
+            top_p=None, reasoning_effort=None,
             data_snapshot_hash="snap@1", traps_enabled=True,
             latency_profile="realistic", hr_employee_ids=[])
         a = RunFingerprint.create(agent_config_version=control.ref, **base)
