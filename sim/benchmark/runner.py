@@ -309,7 +309,7 @@ def _judge_result(
     }
     if (
         judge is None
-        or case.raw["category"] != "answerable"
+        or case.raw["category"] not in {"answerable", "answerable_with_skill"}
         or status not in {"completed", "normalization_pending"}
     ):
         return empty

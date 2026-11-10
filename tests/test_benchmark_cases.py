@@ -109,6 +109,24 @@ def test_missing_skill_can_expect_base_tool_answer_or_honest_refusal() -> None:
     validate_case(refusal, schema_path=SCHEMA)
 
 
+def test_answerable_with_skill_requires_answer_and_drafts_are_skipped(tmp_path: Path) -> None:
+    raw = ready_case()
+    raw["category"] = "answerable_with_skill"
+    validate_case(raw, schema_path=SCHEMA)
+    missing = copy.deepcopy(raw)
+    missing["expected_skills"] = []
+    with pytest.raises(ValueError, match="requires expected_skills"):
+        validate_case(missing, schema_path=SCHEMA)
+    bad = copy.deepcopy(raw)
+    bad["gold_answer"]["outcome"] = "missing_skill"
+    bad["gold_answer"]["rows"] = []
+    with pytest.raises(ValueError, match="incompatible with category"):
+        validate_case(bad, schema_path=SCHEMA)
+    raw["status"] = "draft"
+    (tmp_path / "case-9999-00.json").write_text(json.dumps(raw), encoding="utf-8")
+    assert load_suite(tmp_path, schema_path=SCHEMA) == []
+
+
 def test_rejects_invalid_authorial_fields() -> None:
     baseline = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     bad = copy.deepcopy(baseline)

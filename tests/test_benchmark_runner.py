@@ -280,7 +280,8 @@ def test_runner_treats_blocked_bash_as_completed_when_answer_exists() -> None:
     assert result.score["reasons"] == []
 
 
-def test_llm_judge_is_supplemental_and_does_not_change_answer_accuracy() -> None:
+@pytest.mark.parametrize("category", ["answerable", "answerable_with_skill"])
+def test_llm_judge_is_supplemental_and_does_not_change_answer_accuracy(category: str) -> None:
     class RejectingJudge:
         def evaluate(self, **kwargs):
             case = ready_case()
@@ -308,7 +309,9 @@ def test_llm_judge_is_supplemental_and_does_not_change_answer_accuracy() -> None
         answer_judge=RejectingJudge(),
     )
 
-    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+    case = ready_case()
+    case.raw["category"] = category
+    result = runner.run([case], {"existing_skills": mode()})[0]
     summary = summarize_results([result])
 
     assert result.score["metrics"]["answer_accuracy"] == 1

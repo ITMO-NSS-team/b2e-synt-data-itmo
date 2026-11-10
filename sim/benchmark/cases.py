@@ -229,10 +229,13 @@ def require_ready(raw: dict[str, Any]) -> None:
             f"{raw['case_id']}: verified requires actor, snapshot, contract and gold_answer"
         )
     expected = raw["gold_answer"].get("outcome")
+    if raw["category"] == "answerable_with_skill" and not raw["expected_skills"]:
+        raise ValueError(f"{raw['case_id']}: answerable_with_skill requires expected_skills")
     if expected not in _EVALUATION_OUTCOMES:
         raise ValueError(f"{raw['case_id']}: gold_answer.outcome is unknown")
     fixed = {
         "answerable": {"answer"},
+        "answerable_with_skill": {"answer"},
         "access_control": {"access_control"},
         "no_data": {"no_data"},
         "out_of_scope": {"out_of_scope"},

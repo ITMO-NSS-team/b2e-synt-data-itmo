@@ -31,6 +31,7 @@
     "category": {
       "enum": [
         "answerable",
+        "answerable_with_skill",
         "no_data",
         "missing_skill",
         "access_control",
