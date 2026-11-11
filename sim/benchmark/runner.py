@@ -205,6 +205,10 @@ class BenchmarkRunner:
         normalized = normalize_answer(turn.answer, case.raw["gold_contract"])
         status, review_reason = _classify_turn(checked, turn, normalized)
         metrics = calculate_metrics(case, mode, normalized, observations)
+        metrics["efficiency_valid"] = int(
+            status not in {"condition_invalid", "unscored"}
+            and not metrics.get("infrastructure_error_calls")
+        )
         metrics["format_valid"] = int(response_format_valid(turn.answer, normalized))
         # Contract failures score 0; full-response format is reported separately.
         # Invalid experimental conditions and infrastructure failures are excluded.

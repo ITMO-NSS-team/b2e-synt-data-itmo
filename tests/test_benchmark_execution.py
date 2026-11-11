@@ -132,6 +132,9 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     assert observed["loaded_skills"] == ["generated_headcount"]
     assert observed["mcp_query_calls"] == 1
     assert observed["failed_tool_calls"] == 1
+    assert observed["other_error_calls"] == 1
+    assert observed["infrastructure_error_calls"] == 0
+    assert observed["access_denial_calls"] == 0
     assert observed["http_statuses"] == [400]
     assert observed["error_codes"] == ["bad_request"]
     assert observed["mcp_query_rows"] == [0]
@@ -150,6 +153,68 @@ def test_trace_observations_extract_calls_skills_errors_and_time() -> None:
     assert observed["http_error_count"] == 1
     assert observed["heimdall_response_bytes"] == 256
     assert observed["tool_time_ratio"] == 0.3
+
+
+def test_trace_observations_separates_agent_infrastructure_and_access_errors() -> None:
+    children = [
+        {
+            "name": "heimdall.mcp_query",
+            "status": {"status_code": "ERROR"},
+            "attributes": {
+                "b2e.heimdall.endpoint": "mcp_query",
+                "b2e.http.status": status,
+                "b2e.heimdall.error_code": code,
+            },
+        }
+        for status, code in (
+            (422, "request-validation-error"),
+            (429, "rate-limit"),
+            (403, "forbidden"),
+        )
+    ]
+
+    observed = trace_observations(AgentTurn(
+        "", trace={"tree": [{"name": "agent.turn", "children": children}]},
+    ))
+
+    assert observed["failed_tool_calls"] == 3
+    assert observed["other_error_calls"] == 1
+    assert observed["infrastructure_error_calls"] == 1
+    assert observed["access_denial_calls"] == 1
+
+
+def test_non_heimdall_timeout_remains_an_agent_error() -> None:
+    trace = {"spans": [{
+        "name": "tool.Bash",
+        "status_code": "ERROR",
+        "attributes": {
+            "tool.name": "Bash",
+            "b2e.tool.is_error": True,
+            "output.value": "command timed out",
+        },
+    }]}
+
+    observed = trace_observations(AgentTurn("", trace=trace))
+
+    assert observed["other_error_calls"] == 1
+    assert observed["infrastructure_error_calls"] == 0
+
+
+def test_heimdall_transport_error_without_http_status_is_infrastructure() -> None:
+    trace = {"spans": [{
+        "name": "tool.mcp__heimdall__mcp_query",
+        "status_code": "ERROR",
+        "attributes": {
+            "tool.name": "mcp__heimdall__mcp_query",
+            "b2e.tool.is_error": True,
+            "output.value": "certificate verification failed",
+        },
+    }]}
+
+    observed = trace_observations(AgentTurn("", trace=trace))
+
+    assert observed["other_error_calls"] == 0
+    assert observed["infrastructure_error_calls"] == 1
 
 
 def test_trace_observations_without_turn_span_count_denials_only() -> None:

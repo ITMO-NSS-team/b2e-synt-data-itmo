@@ -45,6 +45,8 @@ if (data.coverage) {
 
 document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
   <td title="${esc(row.mode)}">${esc(shortMode[row.mode] || row.mode)}</td><td title="${esc(row.source)}">${esc(row.source)}</td><td title="${esc(row.method)}">${esc(row.method)}</td><td title="${esc(row.detail)}">${esc(row.detail)}</td><td>${esc(row.skill)}</td><td>${esc(row.variant)}</td><td>${row.runs}</td>
+  <td>${pct(row.efficiency_valid, row.efficiency_valid_count, row.efficiency_total)}</td>
+  <td>${pct(row.agent_error_rate, row.agent_error_runs, row.agent_error_total)}</td>
   <td>${pct(row.accuracy, row.accuracy_correct, row.accuracy_total)}</td>
   <td>${pct(row.format_valid, row.format_valid_count, row.format_valid_total)}</td>
   <td>${pct(row.llm_judge_accuracy, row.llm_judge_passed, row.llm_judge_scored)}</td>
@@ -53,7 +55,7 @@ document.getElementById("metrics").innerHTML = data.aggregates.map(row => `<tr>
   <td>${pct(row.any_skill_loaded, row.any_skill_loaded_count, row.any_skill_loaded_total)}</td><td>${pct(row.expected_skill_loaded, row.expected_skill_loaded_count, row.expected_skill_loaded_total)}</td>
   <td>${pct(row.generated_skill_loaded, row.generated_skill_loaded_count, row.generated_skill_loaded_total)}</td>
   <td>${row.median_latency_s == null ? "—" : `${num(row.median_latency_s)} с`}</td>
-  <td>${num(row.median_mcp_queries)}</td><td>${num(row.median_iterations)}</td><td>${num(row.median_input_tokens)}</td><td>${num(row.median_output_tokens)}</td>
+  <td>${num(row.median_mcp_queries)}</td><td>${num(row.median_iterations)}</td><td>${num(row.median_tool_calls)}</td><td>${num(row.median_input_tokens)}</td><td>${num(row.median_output_tokens)}</td>
 </tr>`).join("");
 
 const plotConfig = {
@@ -87,7 +89,7 @@ const legend = (rows, correctness = false) => {
   return html;
 };
 
-const runs = data.runs.filter(row => row.accuracy != null && row.latency_s != null && row.iterations != null);
+const runs = data.runs.filter(row => row.efficiency_valid === 1 && row.accuracy != null && row.latency_s != null && row.iterations != null);
 const runCustom = runs.map(row => [
   row.run_id, row.case_id, configName(row), row.accuracy, row.latency_s, row.mcp_queries, row.iterations,
 ]);

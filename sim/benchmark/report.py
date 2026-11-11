@@ -162,6 +162,9 @@ def _point(row: dict[str, Any], group: dict[str, Any] | None = None) -> dict[str
         skill = f"{len(names)} skills" if group.get("scope") == "catalog" else ", ".join(names)
     metrics = row["metrics"]
     latency = metrics.get("latency_ms")
+    efficiency_valid = metrics.get("efficiency_valid")
+    if efficiency_valid is None:
+        efficiency_valid = int(row["status"] in {"completed", "normalization_pending"})
     return {
         "run_id": row["run_id"],
         "case_id": row["case_id"],
@@ -182,6 +185,11 @@ def _point(row: dict[str, Any], group: dict[str, Any] | None = None) -> dict[str
         "latency_s": latency / 1000 if latency is not None else None,
         "mcp_queries": metrics.get("mcp_query_calls"),
         "iterations": metrics.get("iterations"),
+        "tool_calls": metrics.get("tool_calls"),
+        "agent_error_calls": metrics.get("agent_error_calls"),
+        "infrastructure_error_calls": metrics.get("infrastructure_error_calls"),
+        "expected_access_denials": metrics.get("expected_access_denials"),
+        "efficiency_valid": efficiency_valid,
         "prompt_tokens": metrics.get("prompt_tokens"),
         "completion_tokens": metrics.get("completion_tokens"),
         "total_tokens": metrics.get("total_tokens"),
@@ -215,6 +223,10 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     output = []
     for (mode, variant), group in sorted(groups.items()):
         first = group[0]
+        efficiency = [point for point in group if point["efficiency_valid"] == 1]
+        agent_error_points = [
+            point for point in efficiency if point["agent_error_calls"] is not None
+        ]
         accuracy_values = [point["accuracy"] for point in group if point["accuracy"] is not None]
         format_values = [point["format_valid"] for point in group if point["format_valid"] is not None]
         judge_values = [point["llm_judge_accuracy"] for point in group if point["llm_judge_accuracy"] is not None]
@@ -256,12 +268,25 @@ def _aggregate(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "generated_skill_loaded": _mean(generated_values),
             "generated_skill_loaded_count": sum(generated_values),
             "generated_skill_loaded_total": len(generated_values),
-            "median_latency_s": _median(point["latency_s"] for point in group),
-            "median_mcp_queries": _median(point["mcp_queries"] for point in group),
-            "median_iterations": _median(point["iterations"] for point in group),
-            "median_input_tokens": _median(point["prompt_tokens"] for point in group),
-            "median_output_tokens": _median(point["completion_tokens"] for point in group),
-            "median_total_tokens": _median(point["total_tokens"] for point in group),
+            "efficiency_valid": len(efficiency) / len(group) if group else None,
+            "efficiency_valid_count": len(efficiency),
+            "efficiency_total": len(group),
+            "agent_error_rate": (
+                sum(point["agent_error_calls"] > 0 for point in agent_error_points)
+                / len(agent_error_points)
+                if agent_error_points else None
+            ),
+            "agent_error_runs": sum(
+                point["agent_error_calls"] > 0 for point in agent_error_points
+            ),
+            "agent_error_total": len(agent_error_points),
+            "median_latency_s": _median(point["latency_s"] for point in efficiency),
+            "median_mcp_queries": _median(point["mcp_queries"] for point in efficiency),
+            "median_iterations": _median(point["iterations"] for point in efficiency),
+            "median_tool_calls": _median(point["tool_calls"] for point in efficiency),
+            "median_input_tokens": _median(point["prompt_tokens"] for point in efficiency),
+            "median_output_tokens": _median(point["completion_tokens"] for point in efficiency),
+            "median_total_tokens": _median(point["total_tokens"] for point in efficiency),
         })
     return output
 
