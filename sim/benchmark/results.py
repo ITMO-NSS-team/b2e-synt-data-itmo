@@ -194,7 +194,11 @@ _METRIC_NAMES = (
     "normalization_repaired", "exact_match", "outcome_accuracy",
     "correct_refusal", "generated_skill_loaded", "any_skill_loaded",
     "expected_skill_loaded", *OPERATIONAL_METRICS,
+    "agent_error_calls", "expected_access_denials", "efficiency_valid",
 )
+_EFFICIENCY_METRICS = (
+    frozenset(OPERATIONAL_METRICS) - {"infrastructure_error_calls"}
+) | {"agent_error_calls", "expected_access_denials"}
 
 
 def _checkpoint_rows(path: Path) -> tuple[list[dict[str, Any]], list[int]]:
@@ -257,6 +261,9 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
         completed = [row for row in complete if row.mode == mode]
         skipped = [row for row in mode_rows if row.status in _SKIP_STATUSES]
         metrics = [row.score["metrics"] for row in group]
+        efficiency_metrics = [
+            metric for metric in metrics if metric.get("efficiency_valid", 1) == 1
+        ]
         skip_statuses = {
             status: sum(row.status == status for row in skipped)
             for status in sorted({row.status for row in skipped})
@@ -281,8 +288,25 @@ def summarize_results(results: Iterable[RunResult]) -> dict[str, Any]:
             "n_llm_judge_passed": sum(
                 metric.get("llm_judge_accuracy") == 1 for metric in metrics
             ),
+            "n_efficiency_valid": len(efficiency_metrics),
+            "n_agent_error_runs": sum(
+                (metric.get("agent_error_calls") or 0) > 0
+                for metric in efficiency_metrics
+            ),
+            "n_infrastructure_error_runs": sum(
+                (metric.get("infrastructure_error_calls") or 0) > 0
+                for metric in metrics
+            ),
             **{
-                name: _mean(metric.get(name) for metric in metrics)
+                name: _aggregate_metric(
+                    name,
+                    (
+                        metric.get(name)
+                        for metric in metrics
+                        if name not in _EFFICIENCY_METRICS
+                        or metric.get("efficiency_valid", 1) == 1
+                    ),
+                )
                 for name in _METRIC_NAMES
             },
         }
@@ -323,13 +347,7 @@ def _review_reason(row: RunResult) -> str | None:
 
 def _compare(target: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
     output: dict[str, Any] = {}
-    for name in (
-        "answer_accuracy", "strict_answer_accuracy", "format_valid",
-        "llm_judge_accuracy",
-        "response_schema_valid_without_repair", "normalization_repaired",
-        "exact_match", "outcome_accuracy", "correct_refusal", "any_skill_loaded", "expected_skill_loaded",
-        "generated_skill_loaded", *OPERATIONAL_METRICS,
-    ):
+    for name in _METRIC_NAMES:
         a, b = target.get(name), baseline.get(name)
         if a is None or b is None:
             output[name] = {"delta": None, "relative_change": None}
@@ -380,6 +398,11 @@ def _paired_metric_aggregates(
         name: [
             (left[name], right[name]) for left, right in rows
             if left.get(name) is not None and right.get(name) is not None
+            and (
+                name not in _EFFICIENCY_METRICS
+                or left.get("efficiency_valid", 1) == 1
+                and right.get("efficiency_valid", 1) == 1
+            )
         ]
         for name in _METRIC_NAMES
     }
@@ -393,7 +416,7 @@ def _paired_metric_aggregates(
 
 
 def _aggregate_metric(name: str, values: Iterable[Any]) -> float | None:
-    return (_median if name in OPERATIONAL_METRICS else _mean)(values)
+    return (_median if name in _EFFICIENCY_METRICS else _mean)(values)
 
 
 def _mean(values: Iterable[Any]) -> float | None:

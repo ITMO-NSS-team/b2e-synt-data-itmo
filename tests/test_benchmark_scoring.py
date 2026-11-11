@@ -340,6 +340,8 @@ def test_access_refusal_requires_heimdall_403_and_empty_rows() -> None:
         "failed_tool_calls": 1, "total_tokens": 1, "latency_ms": 1,
         "agent_duration_ms": 1, "tool_time_ms": 1,
         "http_statuses": [403], "error_codes": ["forbidden"],
+        "access_denial_calls": 1, "other_error_calls": 0,
+        "infrastructure_error_calls": 0,
         "mcp_query_rows": [],
     }
     metrics = calculate_metrics(
@@ -353,6 +355,8 @@ def test_access_refusal_requires_heimdall_403_and_empty_rows() -> None:
     assert metrics["outcome_accuracy"] == 1
     assert metrics["correct_refusal"] == 1
     assert metrics["answer_accuracy"] == 1
+    assert metrics["agent_error_calls"] == 0
+    assert metrics["expected_access_denials"] == 1
 
     no_heimdall = dict(observations, heimdall_calls=0, http_statuses=[])
     metrics = calculate_metrics(
@@ -377,6 +381,19 @@ def test_access_refusal_requires_heimdall_403_and_empty_rows() -> None:
     )
     assert leaked["correct_refusal"] == 0
     assert leaked["answer_accuracy"] == 0
+
+
+def test_unexpected_access_denial_counts_as_agent_error() -> None:
+    case = ready_case()
+    metrics = calculate_metrics(
+        case, mode(), NormalizedAnswer(case.raw["gold_answer"], None), {
+            "loaded_skills": [], "access_denial_calls": 1,
+            "other_error_calls": 2, "infrastructure_error_calls": 0,
+        },
+    )
+
+    assert metrics["agent_error_calls"] == 3
+    assert metrics["expected_access_denials"] == 0
 
 
 def test_policy_refusal_requires_no_data_query() -> None:
@@ -411,6 +428,14 @@ def test_policy_refusal_requires_no_data_query() -> None:
     )
     assert queried["correct_refusal"] == 0
     assert queried["answer_accuracy"] == 0
+
+    forbidden = calculate_metrics(
+        case, mode(), refusal, dict(
+            observations, mcp_query_calls=1, access_denial_calls=1,
+        ),
+    )
+    assert forbidden["agent_error_calls"] == 1
+    assert forbidden["expected_access_denials"] == 0
 
 
 def test_format_failure_is_scored_as_incorrect() -> None:

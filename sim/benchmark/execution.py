@@ -24,10 +24,18 @@ _TRANSPORT_FAILURE_ANSWER = re.compile(
     r"^\s*API Error:\s*(?:Unable to connect to API\b|Connection closed mid-response\b)",
     re.IGNORECASE,
 )
+_INFRASTRUCTURE_FAILURE = re.compile(
+    r"(?:\b(?:408|429|5\d\d)\b|certificate|timed?[ _-]?out|timeout|"
+    r"rate[ _-]?limit|too many requests|service[ _-]?unavailable|"
+    r"internal[ _-]?error|unable to connect|connection (?:closed|reset|refused)|"
+    r"closed mid-response|auth(?:entication)?[ _-]?failed|unauthori[sz]ed)",
+    re.IGNORECASE,
+)
 
 OPERATIONAL_METRICS = (
     "iterations", "tool_calls", "heimdall_calls", "mcp_query_calls",
     "failed_tool_calls", "permission_denials", "http_error_count",
+    "infrastructure_error_calls",
     "bash_attempts", "skill_runs", "skill_successes",
     "mcp_query_rows_total", "heimdall_response_bytes", "prompt_tokens",
     "uncached_prompt_tokens", "cache_read_tokens", "cache_creation_tokens",
@@ -343,7 +351,7 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
     loaded: set[str] = set()
     bridge_mcp = []
     tool_mcp = []
-    failed_bridge = []
+    failed_bridge: list[tuple[dict[str, Any], dict[str, Any]]] = []
     failed_tool: list[tuple[dict[str, Any], dict[str, Any]]] = []
     http_statuses: list[int] = []
     error_codes: list[str] = []
@@ -393,7 +401,7 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             heimdall_response_bytes.append(int(response_bytes))
         if (_failed_span(span, attrs) or denied) and _is_tool_span(span, attrs):
             if _attr(attrs, "b2e.heimdall.endpoint"):
-                failed_bridge.append(span)
+                failed_bridge.append((span, attrs))
             else:
                 failed_tool.append((span, attrs))
 
@@ -407,6 +415,21 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
     agent_duration_ms = _number(_attr(root_attrs, "b2e.turn.duration_ms"))
     tool_time_ms = _number(_attr(root_attrs, "b2e.turn.tool_time_ms"))
     recorded_denials = _attr(root_attrs, "b2e.permission_denials")
+    failed_calls = (
+        failed_bridge
+        + [
+            (span, attrs)
+            for span, attrs in failed_tool
+            if not _looks_like_heimdall_tool(span, attrs)
+            or _attr(attrs, "b2e.tool.permission_denied") is True
+            or _permission_denied(_decode(_attr(attrs, "output.value")))
+        ]
+        if failed_bridge
+        else failed_tool
+    )
+    failure_categories = [
+        _failure_category(span, attrs) for span, attrs in failed_calls
+    ]
     return {
         "found_skills": sorted(found),
         "loaded_skills": sorted(loaded),
@@ -417,14 +440,10 @@ def trace_observations(turn: AgentTurn) -> dict[str, Any]:
             stats.get("heimdall_calls"), _attr(root_attrs, "b2e.turn.heimdall_calls")
         ),
         "mcp_query_calls": len(bridge_mcp or tool_mcp),
-        "failed_tool_calls": (
-            len(failed_bridge)
-            + sum(not _looks_like_heimdall_tool(span, attrs)
-                  or _attr(attrs, "b2e.tool.permission_denied") is True
-                  or _permission_denied(_decode(_attr(attrs, "output.value")))
-                  for span, attrs in failed_tool)
-            if failed_bridge else len(failed_tool)
-        ),
+        "failed_tool_calls": len(failed_calls),
+        "infrastructure_error_calls": failure_categories.count("infrastructure"),
+        "access_denial_calls": failure_categories.count("access_denial"),
+        "other_error_calls": failure_categories.count("other"),
         "http_statuses": http_statuses,
         "error_codes": error_codes,
         "mcp_query_rows": mcp_query_rows,
@@ -541,6 +560,28 @@ def _failed_span(span: dict[str, Any], attrs: dict[str, Any]) -> bool:
         or _attr(attrs, "b2e.tool.is_error") is True
         or str(status_code or "").upper() == "ERROR"
     )
+
+
+def _failure_category(span: dict[str, Any], attrs: dict[str, Any]) -> str:
+    status = _attr(attrs, "b2e.http.status")
+    code = str(_attr(attrs, "b2e.heimdall.error_code") or "")
+    if status == 403 or code.lower() == "forbidden":
+        return "access_denial"
+    if (
+        status == 401
+        or status in (408, 429)
+        or isinstance(status, (int, float)) and status >= 500
+    ):
+        return "infrastructure"
+    if _INFRASTRUCTURE_FAILURE.search(code):
+        return "infrastructure"
+    if (isinstance(status, (int, float)) and status >= 400) or code:
+        return "other"
+    if not _looks_like_heimdall_tool(span, attrs):
+        return "other"
+    output = _attr(attrs, "output.value")
+    rendered = output if isinstance(output, str) else json.dumps(output, default=str)
+    return "infrastructure" if _INFRASTRUCTURE_FAILURE.search(rendered) else "other"
 
 
 def _skill_names(value: Any) -> set[str]:

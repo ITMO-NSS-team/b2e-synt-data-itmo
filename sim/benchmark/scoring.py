@@ -165,6 +165,16 @@ def calculate_metrics(
         case.raw["expected_skills"],
         observations["loaded_skills"],
     )
+    access_denials = int(observations.get("access_denial_calls") or 0)
+    expects_backend_denial = (
+        expected_outcome == "access_control"
+        and case.raw["gold_comparison"].get("refusal_evidence", "backend_403")
+        == "backend_403"
+    )
+    expected_access_denials = access_denials if expects_backend_denial else 0
+    agent_error_calls = int(observations.get("other_error_calls") or 0) + (
+        0 if expects_backend_denial else access_denials
+    )
     loaded_skills = set(observations["loaded_skills"])
     expected_skills = set(case.raw["expected_skills"])
     return {
@@ -181,6 +191,8 @@ def calculate_metrics(
         ),
         "generated_skill_loaded": generated_loaded,
         **{name: observations.get(name) for name in OPERATIONAL_METRICS},
+        "agent_error_calls": agent_error_calls,
+        "expected_access_denials": expected_access_denials,
     }
 
 
