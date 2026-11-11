@@ -149,6 +149,8 @@ class AgentConfig:
     # ---- model
     model_id: str = DEFAULT_MODEL
     temperature: float = 0.0
+    top_p: float | None = None
+    reasoning_effort: str | None = None
     max_output_tokens: int = 64_000
     context_window_tokens: int = 200_000
 
@@ -187,6 +189,12 @@ class AgentConfig:
     windowed_turns: int = 6
 
     def __post_init__(self) -> None:
+        if self.top_p is not None and not 0 <= self.top_p <= 1:
+            raise ValueError("top_p must be between 0 and 1")
+        if self.reasoning_effort not in (None, "low", "medium", "high"):
+            raise ValueError("reasoning_effort must be low, medium or high")
+        if (self.top_p is not None or self.reasoning_effort is not None) and self.harness != "open_code":
+            raise ValueError("top_p and reasoning_effort require the open_code harness")
         if self.harness not in HARNESSES:
             raise ValueError(f"harness {self.harness!r} not in {HARNESSES}")
         if self.code_execution not in CODE_EXECUTION_MODES:

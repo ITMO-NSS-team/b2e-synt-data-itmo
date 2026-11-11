@@ -147,6 +147,40 @@ def test_invalid_config_is_rejected_not_committed(client):
     assert state.registry.head("agent_config").version == before
 
 
+def test_model_settings_can_be_saved_and_cleared_with_runtime_harness(client, monkeypatch):
+    c, state = client
+    monkeypatch.setenv("B2E_HARNESS", "open_code")
+    token = _token(c)
+    r = c.post("/config", auth=AUTH, follow_redirects=False,
+               data={"top_p": "0.95", "reasoning_effort": "high", CSRF_FIELD: token})
+    assert r.status_code == 303
+    stored = state.registry.load("agent_config")[1]
+    assert stored["top_p"] == 0.95
+    assert stored["reasoning_effort"] == "high"
+    form = c.get("/config", auth=AUTH).text
+    assert 'name=top_p value="0.95"' in form
+    assert '<option selected>high</option>' in form
+    assert "not loadable" not in form
+    r = c.post("/config", auth=AUTH, follow_redirects=False,
+               data={"top_p": "", "reasoning_effort": "", CSRF_FIELD: token})
+    assert r.status_code == 303
+    stored = state.registry.load("agent_config")[1]
+    assert stored["top_p"] is None
+    assert stored["reasoning_effort"] is None
+
+
+@pytest.mark.parametrize("value", ["invalid", "1.1", "nan"])
+def test_invalid_top_p_is_rejected_not_committed(client, monkeypatch, value):
+    c, state = client
+    monkeypatch.setenv("B2E_HARNESS", "open_code")
+    token = _token(c)
+    before = state.registry.head("agent_config").version
+    r = c.post("/config", auth=AUTH, follow_redirects=False,
+               data={"top_p": value, CSRF_FIELD: token})
+    assert r.status_code == 422
+    assert state.registry.head("agent_config").version == before
+
+
 def test_a_context_strategy_the_harness_cannot_honour_is_rejected(client):
     """The env-selected CLI cannot silently accept loop-only context packing."""
     c, state = client

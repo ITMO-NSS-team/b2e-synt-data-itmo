@@ -65,6 +65,7 @@ def fingerprint() -> RunFingerprint:
         agent_config_version="agent@1", prompt_registry_version="prompt@1",
         skill_registry_hash=EMPTY_HASH, harness="claude_code", model_id="model",
         temperature=0, data_snapshot_hash="heimdall-sandbox@test",
+        top_p=None, reasoning_effort=None,
         traps_enabled=True, latency_profile="instant", hr_employee_ids=(),
     )
 

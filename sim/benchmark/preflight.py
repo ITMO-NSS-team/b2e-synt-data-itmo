@@ -21,7 +21,7 @@ from .modes import BenchmarkMode, ModeConfig, ModeConfigs, _loaded_registry
 
 _JSON_FENCE = re.compile(r"[\x60]{3}(json|jsonc)\s*\n(.*?)\n[\x60]{3}", re.IGNORECASE | re.DOTALL)
 _PINNED_VERSION = re.compile(r"^[^@\s]+@[1-9][0-9]*$")
-_DATE_PARAMETER = re.compile(r"<[^<>\r\n]+>")
+_REFERENCE_PARAMETER = re.compile(r"<[^<>\r\n]+>")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,10 @@ def _check_query(body: dict, catalog: Catalog, label: str) -> None:
 
 def _check_reference_query(body: dict, catalog: Catalog, label: str) -> None:
     """Compile documented templates with sample dates, without editing the skill."""
+    # Model placeholders illustrate a query form to fill after model discovery.
+    if any(isinstance(body.get(key), str) and _REFERENCE_PARAMETER.fullmatch(body[key])
+           for key in ("schema", "logic_model")):
+        return
     example = deepcopy(body)
     dimensions = example.get("time_dimensions")
     for dimension in dimensions if isinstance(dimensions, list) else []:
@@ -65,7 +69,7 @@ def _check_reference_query(body: dict, catalog: Catalog, label: str) -> None:
             continue
         for boundary, other, offset in (("from", "to", -1), ("to", "from", 1)):
             value = bounds.get(boundary)
-            if not isinstance(value, str) or not _DATE_PARAMETER.fullmatch(value):
+            if not isinstance(value, str) or not _REFERENCE_PARAMETER.fullmatch(value):
                 continue
             try:
                 anchor = date.fromisoformat(bounds.get(other, ""))
@@ -265,6 +269,8 @@ def preflight_case(
         harness=mode.common.harness,
         model_id=mode.common.model_id,
         temperature=mode.common.temperature,
+        top_p=mode.common.top_p,
+        reasoning_effort=mode.common.reasoning_effort,
         data_snapshot_hash=manifest["snapshot_id"],
         traps_enabled=mode.common.traps_enabled,
         latency_profile=mode.common.latency_profile,

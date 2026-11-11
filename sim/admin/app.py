@@ -129,7 +129,9 @@ def _config_for_form(body_json: dict[str, Any]) -> tuple[dict[str, Any], str | N
     """
     merged = {**AgentConfig().as_dict(), **body_json}
     try:
-        AgentConfig.from_dict(body_json)
+        from sim.agent.provider import runtime_agent_config
+
+        runtime_agent_config(body_json, require=False)
     except (ValueError, TypeError) as exc:
         return merged, str(exc)
     return merged, None
@@ -484,6 +486,8 @@ approval.</p>
 <table>
 <tr><th>model_id</th><td><code>{esc(runtime["model_id"])}</code> <span class=mut>from B2E_MODEL</span></td></tr>
 {field("temperature", current["temperature"])}
+{field("top_p", current["top_p"] if current["top_p"] is not None else "")}
+{field("reasoning_effort", current["reasoning_effort"] or "", ("", "low", "medium", "high"))}
 {field("max_output_tokens", current["max_output_tokens"])}
 {field("context_window_tokens", current["context_window_tokens"])}
 {field("max_tool_iterations", current["max_tool_iterations"])}
@@ -501,6 +505,8 @@ approval.</p>
 <p class=mut><code>model_id</code> and <code>harness</code> are intentionally not
 editable here. Change <code>B2E_MODEL</code> or <code>B2E_HARNESS</code> in
 <code>deploy/.env</code> and recreate the agent/admin containers.</p>
+<p class=mut><code>top_p</code> (0–1) and <code>reasoning_effort</code> require
+<code>harness=open_code</code>. Leave either blank to use the provider default.</p>
 <p class=mut><code>context_strategy=windowed</code> and <code>summarised</code> are
 implemented only by the messages_api loop's packer, so they require
 <code>harness=messages_api</code>. CLI harnesses own their context window.</p>
@@ -520,14 +526,19 @@ implemented only by the messages_api loop's packer, so they require
                     "memory_strategy", "code_execution"):
             if key in form:
                 updated[key] = str(form[key])
-        for key in ("temperature",):
-            if key in form:
-                updated[key] = float(form[key])
-        for key in ("max_output_tokens", "context_window_tokens",
-                    "max_tool_iterations"):
-            if key in form:
-                updated[key] = int(form[key])
         try:
+            for key in ("temperature",):
+                if key in form:
+                    updated[key] = float(form[key])
+            if "top_p" in form:
+                value = str(form["top_p"]).strip()
+                updated["top_p"] = float(value) if value else None
+            if "reasoning_effort" in form:
+                updated["reasoning_effort"] = str(form["reasoning_effort"]).strip() or None
+            for key in ("max_output_tokens", "context_window_tokens",
+                        "max_tool_iterations"):
+                if key in form:
+                    updated[key] = int(form[key])
             from sim.agent.provider import runtime_agent_config
 
             runtime_agent_config(updated)
