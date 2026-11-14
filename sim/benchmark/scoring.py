@@ -199,12 +199,19 @@ def calculate_metrics(
 def _missing_root_brace_candidates(text: str):
     """Close one root object at EOF without completing strings or data values.
 
-    Only whole direct/fenced responses are considered. A complete JSON value
-    must precede EOF; numeric literals are excluded because truncation could
-    have changed their value. Nested omissions still fail ``json.loads``.
-    No gold values are inspected by this syntax recovery.
+    Whole direct/fenced responses and an embedded object beside the structured
+    answer tail are considered. A complete JSON value must precede the missing
+    brace; numeric literals are excluded because truncation could have changed
+    their value. Nested omissions still fail ``json.loads``. No gold values are
+    inspected by this syntax recovery.
     """
-    for attempt in [text.strip(), *(_FENCED_JSON.findall(text))]:
+    attempts = [text.strip(), *(_FENCED_JSON.findall(text))]
+    if tail := _ANSWER_TAIL.search(text):
+        prefix = text[:tail.start()].rstrip()
+        suffix = text[tail.end():].strip()
+        attempts.extend(prefix[index:] for index, char in enumerate(prefix) if char == "{")
+        attempts.extend(suffix[index:] for index, char in enumerate(suffix) if char == "{")
+    for attempt in attempts:
         attempt = attempt.strip()
         if not attempt.startswith("{") or not attempt.endswith(("}", "]", '"')):
             continue

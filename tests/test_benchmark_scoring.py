@@ -154,6 +154,23 @@ def test_normalizer_recovers_only_missing_root_brace_and_records_strict_failure(
     assert metrics["normalization_repaired"] == 1
 
 
+@pytest.mark.parametrize("answer_first", [False, True])
+def test_normalizer_recovers_embedded_root_brace_beside_answer_tail(answer_first) -> None:
+    case = ready_case()
+    payload = json.dumps(case.raw["gold_answer"], ensure_ascii=False)[:-1]
+    tail = (
+        "```answer\nverdict: ok\nids: []\nvalue: null\n"
+        "refused: false\nreason: null\n```"
+    )
+    parts = (tail, payload) if answer_first else (payload, tail)
+    answer = "Пояснение перед результатом.\n" + "\n".join(parts)
+
+    normalized = normalize_answer(answer, case.raw["gold_contract"])
+
+    assert normalized.value == case.raw["gold_answer"]
+    assert normalized.repair == "missing_final_object_brace"
+
+
 @pytest.mark.parametrize("answer", [
     '{"outcome":"answer","rows":[{"grade":10,"employee_count":',
     '{"outcome":"answer","rows":[{"grade":10,"employee_count":3',
