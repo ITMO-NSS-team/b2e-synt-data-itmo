@@ -283,8 +283,8 @@ def _results_equal(
     expected: Any,
     comparison: dict[str, Any],
 ) -> bool:
-    actual = _normalize_quarters(actual)
-    expected = _normalize_quarters(expected)
+    actual = _normalize_comparison_values(actual)
+    expected = _normalize_comparison_values(expected)
     if not isinstance(actual, list) or not isinstance(expected, list):
         return _value_equal(
             actual, expected, float(comparison["numeric_absolute_tolerance"])
@@ -332,13 +332,15 @@ def _results_equal(
     )
 
 
-def _normalize_quarters(value: Any) -> Any:
+def _normalize_comparison_values(value: Any) -> Any:
     if isinstance(value, str):
-        return _QUARTER.sub(r"\1-Q\2", value)
+        return _QUARTER.sub(r"\1-Q\2", value).casefold()
     if isinstance(value, list):
-        return [_normalize_quarters(item) for item in value]
+        return [_normalize_comparison_values(item) for item in value]
     if isinstance(value, dict):
-        return {key: _normalize_quarters(item) for key, item in value.items()}
+        return {
+            key: _normalize_comparison_values(item) for key, item in value.items()
+        }
     return value
 
 

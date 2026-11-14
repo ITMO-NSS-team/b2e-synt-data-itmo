@@ -117,6 +117,27 @@ def test_metrics_respect_order_tolerance_and_generated_routing() -> None:
     assert metrics["generated_skill_loaded"] == 1
 
 
+def test_exact_match_ignores_string_case() -> None:
+    case = ready_case()
+    case.raw["gold_answer"]["rows"] = [{
+        "employee_full_name": "ИВАНОВ СЕРГЕЙ СЕРГЕЕВИЧ",
+        "position": "РУКОВОДИТЕЛЬ",
+    }]
+    case.raw["gold_comparison"]["row_key"] = ["employee_full_name"]
+    actual = NormalizedAnswer({
+        "outcome": "answer",
+        "rows": [{
+            "employee_full_name": "Иванов Сергей Сергеевич",
+            "position": "Руководитель",
+        }],
+    }, None)
+
+    metrics = calculate_metrics(case, mode(), actual, {"loaded_skills": []})
+
+    assert metrics["exact_match"] == 1
+    assert actual.value["rows"][0]["employee_full_name"] == "Иванов Сергей Сергеевич"
+
+
 @pytest.mark.parametrize("fenced", [False, True])
 def test_normalizer_recovers_only_missing_root_brace_and_records_strict_failure(fenced) -> None:
     case = ready_case()
