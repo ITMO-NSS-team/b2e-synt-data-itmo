@@ -165,6 +165,16 @@ def calculate_metrics(
         case.raw["expected_skills"],
         observations["loaded_skills"],
     )
+    access_denials = int(observations.get("access_denial_calls") or 0)
+    expects_backend_denial = (
+        expected_outcome == "access_control"
+        and case.raw["gold_comparison"].get("refusal_evidence", "backend_403")
+        == "backend_403"
+    )
+    expected_access_denials = access_denials if expects_backend_denial else 0
+    agent_error_calls = int(observations.get("other_error_calls") or 0) + (
+        0 if expects_backend_denial else access_denials
+    )
     loaded_skills = set(observations["loaded_skills"])
     expected_skills = set(case.raw["expected_skills"])
     return {
@@ -181,18 +191,27 @@ def calculate_metrics(
         ),
         "generated_skill_loaded": generated_loaded,
         **{name: observations.get(name) for name in OPERATIONAL_METRICS},
+        "agent_error_calls": agent_error_calls,
+        "expected_access_denials": expected_access_denials,
     }
 
 
 def _missing_root_brace_candidates(text: str):
     """Close one root object at EOF without completing strings or data values.
 
-    Only whole direct/fenced responses are considered. A complete JSON value
-    must precede EOF; numeric literals are excluded because truncation could
-    have changed their value. Nested omissions still fail ``json.loads``.
-    No gold values are inspected by this syntax recovery.
+    Whole direct/fenced responses and an embedded object beside the structured
+    answer tail are considered. A complete JSON value must precede the missing
+    brace; numeric literals are excluded because truncation could have changed
+    their value. Nested omissions still fail ``json.loads``. No gold values are
+    inspected by this syntax recovery.
     """
-    for attempt in [text.strip(), *(_FENCED_JSON.findall(text))]:
+    attempts = [text.strip(), *(_FENCED_JSON.findall(text))]
+    if tail := _ANSWER_TAIL.search(text):
+        prefix = text[:tail.start()].rstrip()
+        suffix = text[tail.end():].strip()
+        attempts.extend(prefix[index:] for index, char in enumerate(prefix) if char == "{")
+        attempts.extend(suffix[index:] for index, char in enumerate(suffix) if char == "{")
+    for attempt in attempts:
         attempt = attempt.strip()
         if not attempt.startswith("{") or not attempt.endswith(("}", "]", '"')):
             continue
@@ -271,8 +290,8 @@ def _results_equal(
     expected: Any,
     comparison: dict[str, Any],
 ) -> bool:
-    actual = _normalize_quarters(actual)
-    expected = _normalize_quarters(expected)
+    actual = _normalize_comparison_values(actual)
+    expected = _normalize_comparison_values(expected)
     if not isinstance(actual, list) or not isinstance(expected, list):
         return _value_equal(
             actual, expected, float(comparison["numeric_absolute_tolerance"])
@@ -320,13 +339,15 @@ def _results_equal(
     )
 
 
-def _normalize_quarters(value: Any) -> Any:
+def _normalize_comparison_values(value: Any) -> Any:
     if isinstance(value, str):
-        return _QUARTER.sub(r"\1-Q\2", value)
+        return _QUARTER.sub(r"\1-Q\2", value).casefold()
     if isinstance(value, list):
-        return [_normalize_quarters(item) for item in value]
+        return [_normalize_comparison_values(item) for item in value]
     if isinstance(value, dict):
-        return {key: _normalize_quarters(item) for key, item in value.items()}
+        return {
+            key: _normalize_comparison_values(item) for key, item in value.items()
+        }
     return value
 
 

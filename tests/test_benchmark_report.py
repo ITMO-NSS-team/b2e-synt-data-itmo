@@ -17,6 +17,11 @@ def _result(run_id: str, mode: str, accuracy: int, latency: int, calls: int, ste
             "latency_ms": latency,
             "mcp_query_calls": calls,
             "iterations": steps,
+            "tool_calls": calls + 2,
+            "agent_error_calls": 0,
+            "infrastructure_error_calls": 0,
+            "expected_access_denials": 0,
+            "efficiency_valid": 1,
             "prompt_tokens": 80 * calls,
             "completion_tokens": 20 * calls,
             "total_tokens": 100 * calls,
@@ -75,6 +80,9 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert 'existing_plus_generated: "existing + gen"' in text
     assert 'title="${esc(row.mode)}"' in text
     assert "Медиана шагов" in text
+    assert "Медиана tool calls" in text
+    assert "Efficiency valid" in text
+    assert "Запуски с ошибками агента" in text
     assert "Входные токены, медиана" in text
     assert "Выходные токены, медиана" in text
     assert "Шаги агента, шт." in text
@@ -85,6 +93,9 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
     assert 'dragmode: "orbit"' in text
     assert '"iterations":7' in text
     assert '"median_iterations":5.0' in text
+    assert '"median_tool_calls":6.0' in text
+    assert '"efficiency_valid_count":2' in text
+    assert '"agent_error_runs":0' in text
     assert '"method":"compact"' in text
     assert '"detail":"medium"' in text
     assert '"median_latency_s":3.0' in text
@@ -107,6 +118,22 @@ def test_report_has_one_point_per_run_and_aggregate_medians(
         (tmp_path / "eval-1" / "report.html").stat().st_mode & 0o777
     )
     assert list((public / "eval-1").iterdir()) == [public / "eval-1" / "report.html"]
+
+
+def test_report_efficiency_ignores_infrastructure_contaminated_runs(tmp_path) -> None:
+    clean = _result("clean", "existing_skills", 1, 1000, 2, 4)
+    contaminated = _result("contaminated", "existing_skills", 1, 1000, 20, 40)
+    contaminated.score["metrics"].update({
+        "efficiency_valid": 0,
+        "infrastructure_error_calls": 1,
+    })
+
+    text = write_report(tmp_path / "efficiency", [clean, contaminated]).read_text()
+
+    assert '"efficiency_valid_count":1' in text
+    assert '"efficiency_total":2' in text
+    assert '"median_mcp_queries":2.0' in text
+    assert '"median_iterations":4.0' in text
 
 
 def test_old_result_files_backfill_skill_metrics(tmp_path) -> None:

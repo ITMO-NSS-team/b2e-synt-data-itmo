@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sim.agent.config import AgentConfig
+from sim.agent.provider import runtime_agent_config
 from sim.benchmark.modes import DATA_TOOLS, DOCS_ONLY_TOOLS, GENERATED_SKILL_TOOLS
 from sim.registry import Registry
 
@@ -15,7 +15,7 @@ SOURCE_REF = "agent_config"
 
 def pin(registry: Registry, source_ref: str = SOURCE_REF) -> dict[str, str]:
     _, raw = registry.load(source_ref)
-    on = AgentConfig.from_dict(raw).as_dict()
+    on = runtime_agent_config(raw).as_dict()
     disabled = dict(on)
     disabled["tool_subset"] = list(DATA_TOOLS)
     general = dict(on)

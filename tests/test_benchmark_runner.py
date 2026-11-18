@@ -108,6 +108,34 @@ def test_summary_excludes_unscored_runs_and_reports_coverage() -> None:
     assert mode_summary["score_coverage"] == 0.5
 
 
+def test_summary_excludes_infrastructure_contaminated_efficiency_metrics() -> None:
+    clean = RunResult(
+        "clean", "group-1", "case-1", "existing_skills", 1, "completed",
+        {}, {"metrics": {
+            "answer_accuracy": 1, "iterations": 4, "agent_error_calls": 1,
+            "infrastructure_error_calls": 0, "efficiency_valid": 1,
+        }}, None,
+    )
+    contaminated = replace(
+        clean, run_id="contaminated", comparison_group_id="group-2",
+        case_id="case-2", score={"metrics": {
+            "answer_accuracy": 1, "iterations": 40, "agent_error_calls": 0,
+            "infrastructure_error_calls": 1, "efficiency_valid": 0,
+        }},
+    )
+
+    mode_summary = summarize_results([clean, contaminated])["by_mode"]["existing_skills"]
+
+    assert mode_summary["answer_accuracy"] == 1
+    assert mode_summary["iterations"] == 4
+    assert mode_summary["agent_error_calls"] == 1
+    assert mode_summary["infrastructure_error_calls"] == 0.5
+    assert mode_summary["efficiency_valid"] == 0.5
+    assert mode_summary["n_efficiency_valid"] == 1
+    assert mode_summary["n_agent_error_runs"] == 1
+    assert mode_summary["n_infrastructure_error_runs"] == 1
+
+
 class FakeActivator:
     def __init__(self) -> None:
         self.activated: list[str] = []
@@ -215,6 +243,34 @@ def test_runner_reports_prose_around_json_without_changing_accuracy() -> None:
     assert metrics["format_valid"] == 0
     assert metrics["answer_accuracy"] == 1
     assert metrics["strict_answer_accuracy"] == 1
+
+
+def test_runner_excludes_infrastructure_contaminated_turn_from_efficiency() -> None:
+    class RateLimitedExecutor(FakeExecutor):
+        def execute(self, request: AgentRequest) -> AgentTurn:
+            turn = super().execute(request)
+            turn.trace["tree"][0]["children"][0].update({
+                "status": {"status_code": "ERROR"},
+                "attributes": {
+                    "b2e.heimdall.endpoint": "mcp_query",
+                    "b2e.http.status": 429,
+                    "b2e.heimdall.error_code": "rate-limit",
+                },
+            })
+            return turn
+
+    runner = BenchmarkRunner(
+        "eval-efficiency", preflight=lambda case, selected: PreflightResult(
+            case.case_id, selected.name, "ready", fingerprint()
+        ), activator=FakeActivator(), executor=RateLimitedExecutor(),
+    )
+
+    result = runner.run([ready_case()], {"existing_skills": mode()})[0]
+
+    assert result.status == "completed"
+    assert result.score["metrics"]["answer_accuracy"] == 1
+    assert result.score["metrics"]["infrastructure_error_calls"] == 1
+    assert result.score["metrics"]["efficiency_valid"] == 0
 
 
 def test_generated_variant_has_distinct_result_arm_but_shared_comparison_group() -> None:

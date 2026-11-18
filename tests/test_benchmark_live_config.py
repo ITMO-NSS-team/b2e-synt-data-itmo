@@ -135,6 +135,8 @@ def test_real_pinner_separates_general_data_only_and_skill_tools(
             "model_id": "model",
             "system_prompt_ref": "system_prompt",
             "tool_subset": list(SKILL_TOOLS),
+            "top_p": 0.95,
+            "reasoning_effort": "high",
         }, actor="test",
     )
 
@@ -150,6 +152,8 @@ def test_real_pinner_separates_general_data_only_and_skill_tools(
     assert tuple(existing["tool_subset"]) == SKILL_TOOLS
     assert tuple(generated["tool_subset"]) == GENERATED_SKILL_TOOLS
     assert tuple(combined["tool_subset"]) == SKILL_TOOLS
+    assert existing["model_id"] == "env-model"
+    assert existing["harness"] == "open_code"
     registry.close()
 
 
